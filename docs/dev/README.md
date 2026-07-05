@@ -62,7 +62,7 @@ Command alias system design:
 ---
 
 ### [TUI_DESIGN.md](TUI_DESIGN.md)
-Interactive terminal UI (`dtctl tui`) design proposal — a k9s-style navigator over observability primitives:
+Interactive terminal UI (`dtctl tui`) design — a k9s-style navigator over observability primitives (Phase 1 implemented in `cmd/tui.go` + `pkg/tui/`):
 - **View Catalog** - Services, hosts, K8s, cloud infra, frontends, logs, traces, problems, security, costs as declarative ViewSpecs
 - **Navigation Model** - Command-bar aliases, a universal drill-down key vocabulary, topology hops via Smartscape, scope pinning
 - **Investigation Flows** - Problem → entities → logs → traces with automatic scoping; DQL as substrate with a reveal-query escape hatch

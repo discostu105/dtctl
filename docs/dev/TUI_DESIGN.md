@@ -1,6 +1,6 @@
 # TUI (Interactive Mode) Design Proposal
 
-**Status:** Design Proposal
+**Status:** Phase 1 implemented (`cmd/tui.go`, `pkg/tui/`); Phases 2–4 proposed
 **Created:** 2026-07-05
 **Author:** dtctl team
 
@@ -692,7 +692,7 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 
 ## Implementation Phases
 
-### Phase 1 — Shell + the core map (services, hosts, problems, logs)
+### Phase 1 — Shell + the core map (services, hosts, problems, logs) ✅ implemented
 
 - `cmd/tui.go` guards; app shell: command bar, breadcrumbs, footer, help,
   theme adapter, timeframe picker.

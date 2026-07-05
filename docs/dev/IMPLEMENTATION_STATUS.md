@@ -29,6 +29,7 @@ This document tracks the current implementation status of dtctl. For future plan
 - [x] Machine-readable command catalog (`dtctl commands`) for AI agent bootstrap
 - [x] [NO_COLOR](https://no-color.org/) standard: color disabled when piped, `NO_COLOR` env var, `FORCE_COLOR=1` override
 - [x] Consistent help text: all parent verb commands have `Long` descriptions and Cobra `Example` fields
+- [x] Interactive TUI (`dtctl tui`) — Phase 1 of [TUI_DESIGN.md](TUI_DESIGN.md): k9s-style navigator with problems/services/hosts/logs/events views, scoped drill-downs (l/m/p/v), record inspector, canned metrics charts, command bar, timeframe picker, command echo
 
 ### Verbs Implemented
 - [x] `get` - List/retrieve resources
