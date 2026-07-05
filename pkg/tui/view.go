@@ -48,6 +48,12 @@ type inspectMsg struct {
 	rec   map[string]any
 }
 
+// detailMsg opens the tabbed entity detail page.
+type detailMsg struct {
+	entity catalog.Entity
+	rec    map[string]any // selected row's record; nil = fetch on open
+}
+
 // metricsMsg opens the canned metrics charts for an entity.
 type metricsMsg struct {
 	entity catalog.Entity
@@ -70,4 +76,17 @@ func statusErr(text string) tea.Cmd {
 // bodySizeMsg tells views how much room the body has (chrome excluded).
 type bodySizeMsg struct {
 	width, height int
+}
+
+// claimKey is a no-op command a view returns to consume a key press the app
+// would otherwise act on itself, e.g. esc that clears a filter instead of
+// popping the stack (bubbletea discards nil messages).
+var claimKey tea.Cmd = func() tea.Msg { return nil }
+
+// entityName is the display label for an entity (ID when unnamed).
+func entityName(e catalog.Entity) string {
+	if e.Name != "" {
+		return e.Name
+	}
+	return e.ID
 }

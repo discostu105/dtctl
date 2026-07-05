@@ -83,7 +83,12 @@ func (v *tableView) Echo() string {
 }
 
 func (v *tableView) Hints() []keyHint {
-	hints := []keyHint{{"enter", "inspect"}}
+	var hints []keyHint
+	if v.spec.Kind == catalog.KindEntity {
+		hints = append(hints, keyHint{"enter", "details"}, keyHint{"d", "record"})
+	} else {
+		hints = append(hints, keyHint{"enter", "inspect"})
+	}
 	// Stable order for the drill keys.
 	for _, k := range []string{"l", "s", "m", "p", "v"} {
 		if target, ok := v.spec.Drills[k]; ok {
@@ -164,16 +169,26 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			v.filterInput.SetValue("")
 			v.filter = ""
 			v.applyFilter()
-			return nil
+			return claimKey
 		}
 		return nil // app pops the stack
-	case "enter", "d":
-		if rec := v.selected(); rec != nil {
-			title := v.spec.Name
-			if e := v.entityOf(rec); e != nil && e.Name != "" {
-				title = e.Name
+	case "enter":
+		rec := v.selected()
+		if rec == nil {
+			return nil
+		}
+		// Entity rows open the tabbed detail page; signal rows (logs,
+		// events, problems) open the record inspector.
+		if v.spec.Kind == catalog.KindEntity {
+			if e := v.entityOf(rec); e != nil {
+				entity := *e
+				return func() tea.Msg { return detailMsg{entity: entity, rec: rec} }
 			}
-			return func() tea.Msg { return inspectMsg{title: title, rec: rec} }
+		}
+		return v.inspect(rec)
+	case "d":
+		if rec := v.selected(); rec != nil {
+			return v.inspect(rec)
 		}
 	default:
 		if target, ok := v.spec.Drills[msg.String()]; ok {
@@ -181,6 +196,15 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+// inspect opens the raw record inspector for a row.
+func (v *tableView) inspect(rec map[string]any) tea.Cmd {
+	title := v.spec.Name
+	if e := v.entityOf(rec); e != nil && e.Name != "" {
+		title = e.Name
+	}
+	return func() tea.Msg { return inspectMsg{title: title, rec: rec} }
 }
 
 // drill opens the target view scoped to the selected row's entity.

@@ -699,6 +699,10 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 - ViewSpec engine (table shell + detail shell) with the first catalog slice:
   **problems, services, hosts, logs** — enough for the core triage loop.
 - Drill-down vocabulary (`l m p v d o enter esc -`), command echo, refresh.
+- Tabbed entity detail page (`enter` on an entity row): curated key-facts
+  panel + full properties, with metrics / logs / events / problems as
+  lazily-loaded pre-scoped tabs (`tab` / digits to switch). Record inspector
+  with a highlights block and `/` property search.
 - Read-only. Success criterion: the incident-triage journey works end to end.
 
 ### Phase 2 — Topology + traces + Kubernetes

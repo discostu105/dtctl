@@ -34,6 +34,8 @@ var (
 	// Content
 	Dim        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	Label      = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
+	FactLabel  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+	Hit        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
 	GroupTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	Chart      = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	Spinner    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))

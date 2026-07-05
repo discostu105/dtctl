@@ -110,14 +110,22 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, a.handleKey(msg)
 
 	case dataMsg:
-		// Deliver to the issuing view wherever it sits on either stack, so a
-		// parent still loading below a drill-down completes too.
+		// Deliver to every view on either stack (deduped — the stacks share
+		// views), so a parent still loading below a drill-down completes and
+		// detail pages can forward results to their tabs. Views drop results
+		// they don't own.
+		seen := map[viewModel]bool{}
+		var cmds []tea.Cmd
 		for _, v := range append(append([]viewModel{}, a.stack...), a.prev...) {
-			if any(v) == msg.owner {
-				return a, v.Update(msg)
+			if seen[v] {
+				continue
+			}
+			seen[v] = true
+			if cmd := v.Update(msg); cmd != nil {
+				cmds = append(cmds, cmd)
 			}
 		}
-		return a, nil
+		return a, tea.Batch(cmds...)
 
 	case pushViewMsg:
 		view := newTableView(a.ds, msg.spec, msg.scope)
@@ -125,6 +133,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case inspectMsg:
 		return a, a.navigate(newInspectorView(msg.title, msg.rec), false)
+
+	case detailMsg:
+		return a, a.navigate(newDetailView(a.ds, msg.entity, msg.rec, a.tf), false)
 
 	case metricsMsg:
 		return a, a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
@@ -436,10 +447,11 @@ func (a *app) renderHelp() string {
 	}{
 		{"Navigation", []keyHint{
 			{":", "command bar (view aliases, fuzzy)"},
-			{"enter", "inspect selection"},
+			{"enter", "entity details / inspect record"},
+			{"tab / 1-5", "switch detail-page tabs"},
 			{"esc", "back (breadcrumb stack)"},
 			{"-", "toggle last two views"},
-			{"/", "filter current table"},
+			{"/", "filter table / search properties"},
 			{"j/k ↑/↓ g/G", "move"},
 		}},
 		{"Drill-down (pre-scoped to selection)", []keyHint{

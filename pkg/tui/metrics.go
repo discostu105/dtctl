@@ -53,11 +53,7 @@ func (v *metricsView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 func (v *metricsView) InputActive() bool { return false }
 
 func (v *metricsView) Crumb() string {
-	name := v.entity.Name
-	if name == "" {
-		name = v.entity.ID
-	}
-	return fmt.Sprintf("metrics (%s)", name)
+	return fmt.Sprintf("metrics (%s)", entityName(v.entity))
 }
 
 func (v *metricsView) Echo() string {
