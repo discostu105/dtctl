@@ -61,6 +61,17 @@ Command alias system design:
 
 ---
 
+### [TUI_DESIGN.md](TUI_DESIGN.md)
+Interactive terminal UI (`dtctl ui`) design proposal — a k9s-style navigator over observability primitives:
+- **View Catalog** - Services, hosts, K8s, cloud infra, frontends, logs, traces, problems, security, costs as declarative ViewSpecs
+- **Navigation Model** - Command-bar aliases, a universal drill-down key vocabulary, topology hops via Smartscape, scope pinning
+- **Investigation Flows** - Problem → entities → logs → traces with automatic scoping; DQL as substrate with a reveal-query escape hatch
+- **Architecture** - bubbletea/lipgloss layer over existing resource handlers, safety-gated mutations
+
+**Use this for**: Understanding the planned interactive mode, its phasing, and how it reuses existing packages.
+
+---
+
 ### [../LIVE_DEBUGGER.md](../LIVE_DEBUGGER.md)
 User-facing Live Debugger workflow documentation:
 - **Workspace Filters** - Target runtimes with `dtctl update breakpoint --filters`
