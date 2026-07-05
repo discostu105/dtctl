@@ -6,7 +6,7 @@
 
 ## Overview
 
-This document proposes an interactive terminal UI for dtctl — `dtctl ui` — in the
+This document proposes an interactive terminal UI for dtctl — `dtctl tui` — in the
 spirit of [k9s](https://k9scli.io/) for Kubernetes: a persistent, keyboard-driven
 navigator over the **primitives of an observability platform**. The user thinks
 in nouns — services, hosts, pods, logs, traces, problems, frontends, cloud
@@ -265,9 +265,9 @@ correlation path.
 ### Entry point
 
 ```bash
-dtctl ui                # launch, home view, current context
-dtctl ui pods           # launch directly into a view (any alias works)
-dtctl ui --context prod # launch against a specific context
+dtctl tui                # launch, home view, current context
+dtctl tui pods           # launch directly into a view (any alias works)
+dtctl tui --context prod # launch against a specific context
 ```
 
 Guards, checked before entering the alternate screen: not a TTY → error; agent
@@ -328,6 +328,240 @@ On management assets (`e`dit, `ctrl-d`elete, e`x`ecute workflow):
 
 ---
 
+## Detail Pages
+
+`enter` on any row opens a detail page. The designs below are grounded in a
+live-tenant exploration with dtctl itself (Smartscape node shapes, verified
+edge types, `fieldsSnapshot logs/spans`, the `metrics` command, and the
+`dt.semantic_dictionary` tables) — every field and metric named here was
+confirmed to exist. Where the tenant taught us a gotcha, it's called out.
+
+### Common anatomy
+
+Every detail page shares one chrome:
+
+```
+┌ svc: checkout-svc ──────────────── SERVICE · SERVICE-4F2A9C… · ⧉ 2 problems ┐
+│ runs on 3 pods · prod-cluster/shop · seen 42d · last 2h                      │
+│ ╭──────────╮──────────────────────────────────────────────────────────────  │
+│ │ Overview │ Endpoints   Infrastructure   Problems                          │
+│ ╰──────────╯                                                                 │
+│  <tab body>                                                                  │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ <tab>/[ ] switch tab  <l s m p v x u> signals  <o>pen <d>escribe <esc> back │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Identity header** (2 lines): display name, type badge, entity ID
+  (truncated, `y` to yank), problem indicator, and a *relationship one-liner*
+  built from Smartscape references (where it runs, what it belongs to, age
+  from `lifetime`).
+- **Tab bar**: `tab` / `shift-tab` (also `[` / `]`) cycle tabs. Tabs hold
+  content that *belongs to* the object (summaries, embedded lists, charts).
+  The signal keys (`l s m p v`) keep their global meaning — they *leave* the
+  page into a full, pre-scoped signal view. Rule of thumb: tabs answer "what
+  is this thing's state?", signal keys answer "let me dig into its telemetry".
+- **Lazy tabs**: each tab loads on first focus (spinner per tab), so opening a
+  detail page costs one query, not five.
+- Every chart on a tab is a `timeseries` query over the global timeframe;
+  every embedded list is `enter`-able (rows navigate to their own detail or a
+  scoped signal view).
+
+### Problem detail (`:problems` → enter)
+
+The most bespoke page — it is the front door of every investigation.
+Grounded in `dt.davis.problems` fields.
+
+```
+┌ problem: P-2508 ────────────── DAVIS_PROBLEM · CRITICAL · ACTIVE · 34m ─────┐
+│ Failure rate increase on checkout-svc                                        │
+│ ╭──────────╮───────────────────────────────────────────────────────────────  │
+│ │ Overview │ Evidence   Impact   Related                                     │
+│ ╰──────────╯                                                                  │
+│ Started    14:02:11 (34m ago)          Status      ACTIVE (open → active)    │
+│ Category   ERROR                        Impact      SERVICE                   │
+│ Cluster    prod-cluster                 Namespace   shop                      │
+│ Workload   checkout (deployment)                                              │
+│ Flags      ⚑ frequent-event  ·  not muted  ·  no maintenance window          │
+│                                                                               │
+│ Davis says:                                                                   │
+│  The failure rate of checkout-svc increased to 12.4% (baseline 0.3%).        │
+│  Root cause: connection pool exhaustion on payments-gw.        (event.descr.) │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+| Tab | Content | Source |
+|---|---|---|
+| **Overview** | title, severity/status badges with `event.status_transition`, start + duration, `event.description` (Davis's own explanation, wrapped), impact level, K8s context (`k8s.cluster.name`, `k8s.namespace.name`, `k8s.workload.kind/name`), flags (`dt.davis.is_duplicate`, `is_frequent_event`, `mute.status`, `maintenance.is_under_maintenance`) | `dt.davis.problems` |
+| **Evidence** | timeline of the constituent Davis events — kind, type (e.g. `RESOURCE_CONTENTION_EVENT`), start, source entity; `enter` → event detail | `dt.davis.event_ids` → `dt.davis.events` |
+| **Impact** | affected-entities table (name, type, → entity detail) | `smartscape.affected_entity.ids/types` + `affected_entity_names` |
+| **Related** | related (non-affected) entities — the wider blast radius | `smartscape.related_entity.ids` |
+
+Signal keys are scoped to **the problem's affected entities and its time
+window** (`event.start` → now/close): `l` error logs grouped by pattern, `s`
+failed traces, `m` metrics of the root-cause entity, `v` events in the window.
+This is the canonical `dt-troubleshoot-problem` flow as four keystrokes.
+
+### Service detail (`:svc` → enter)
+
+**Tenant gotcha**: SERVICE Smartscape nodes are sparse (little more than
+`name` and detection version) — everything interesting comes from metrics and
+spans. The page is therefore chart- and span-driven.
+
+| Tab | Content | Source |
+|---|---|---|
+| **Overview** | three braille charts over the timeframe: request rate, failure rate %, response time (`avg`, with p90 toggle where percentiles exist); totals + delta vs previous window | `timeseries` on `dt.service.request.count`, `.failure_count`, `.response_time` |
+| **Endpoints** | table: endpoint, req/min, fail %, avg/max duration; sortable; `enter` → traces view filtered to that endpoint | `fetch spans \| filter dt.smartscape.service == <id> \| summarize by:{endpoint.name}` |
+| **Infrastructure** | where it runs, as an indented tree: pods → containers → nodes → hosts; each row `enter`-able | Smartscape `runs_on` / `belongs_to` edges (verified: SERVICE runs_on K8S_POD/CONTAINER/HOST/PROCESS) |
+| **Problems** | problems whose affected entities include this service | `dt.davis.problems` filtered on `affected_entity_ids` |
+
+`u` lists SLOs targeting the service; `s` opens the full traces view scoped to
+it; `x` walks `calls` edges (callers/callees).
+
+### Host detail (`:hosts` → enter)
+
+HOST nodes are field-rich (`os.*`, `cores`, `memory`, `ip`, `cloud.provider`,
+`aws.*`, `hypervisor.type`, `dt.host_group.id`) and the tenant confirms DISK
+and NETWORK_INTERFACE as child entities plus a deep `dt.host.*` metric
+namespace — enough for a btop-style page.
+
+```
+│ ╭──────────╮────────────────────────────────────────────────────────────────
+│ │ Overview │ Processes   Disks   Network   Containers
+│ ╰──────────╯
+│ Ubuntu 22.04 (x86_64) · 8 cores (16 logical) · 32 GiB · AWS ec2 m6i.2xlarge
+│ ip 10.179.57.179 · host group prod-eu · uptime 42d · OneAgent monitored
+│
+│ CPU   ▂▃▅▇▆▅▃▂▁▂▃▄  61%      MEM  ▄▄▅▅▅▆▆▆▆▇▇▇  78%     LOAD  2.1 / 5m
+│ DISK r/w ▁▂▁▁▃▁     34 MB/s  NET rx/tx ▂▃▂▂▅▃   210 Mb/s
+```
+
+| Tab | Content | Source |
+|---|---|---|
+| **Overview** | identity block + four charts: CPU (`dt.host.cpu.usage`, stacked user/system/iowait/steal toggle), memory (`dt.host.memory.avail.percent`), load (`.cpu.load/load5m/load15m`), disk & net top-lines; the EC2 instance behind it linked via `runs_on AWS_EC2_INSTANCE` | `dt.host.*` metrics + node fields |
+| **Processes** | table: name, technology, CPU, memory (sortable — "what's eating this host") | PROCESS `runs_on` HOST + `dt.process.*` metrics |
+| **Disks** | per-disk table: mount, used % (gradient bar), free, IOPS r/w, latency, inodes | DISK `belongs_to` HOST + `dt.host.disk.*` |
+| **Network** | per-NIC table: rx/tx throughput, packets, errors, drops | NETWORK_INTERFACE `belongs_to` HOST + `dt.host.net.nic.*` |
+| **Containers** | containers on the host: name, image, pod, CPU, memory | CONTAINER `runs_on` HOST |
+
+### K8s pod detail (`:po` → enter)
+
+K8S_POD nodes carry `k8s.pod.phase`, workload/replicaset/node/namespace names,
+and full labels/annotations (`tags:k8s.labels`) — plus `dt.kubernetes.container.*`
+metrics for the limits/usage story.
+
+| Tab | Content | Source |
+|---|---|---|
+| **Overview** | phase, node (→), workload (→), namespace, age, cost center; labels/annotations (collapsed, `L` expands); charts: CPU usage vs requests/limits, memory working-set vs limit, CPU throttling, pod network rx/tx | node fields + `dt.kubernetes.container.cpu_usage/.cpu_throttled/.limits_*/.requests_*/.memory_working_set`, `dt.kubernetes.pod.network_*` |
+| **Containers** | per-container: name, image, ready, restarts, CPU/mem vs limits (gradient bars) | CONTAINER `is_part_of` K8S_POD |
+| **Events** | K8s events for the pod (created, scheduled, OOMKilled, backoff…) | `fetch events` scoped to pod |
+| **Config** | mounted ConfigMaps, Secrets (names only), PVCs with capacity/used | `uses` edges → K8S_CONFIGMAP / K8S_SECRET / K8S_PERSISTENTVOLUMECLAIM + `dt.kubernetes.persistentvolumeclaim.*` |
+
+`l` opens the pod's log stream (follow-capable) — the single most common K8s
+action. Workload and node details follow the same pattern: **workload** =
+overview (desired vs ready from `dt.kubernetes.workload.pods_desired`,
+conditions, HPA via `K8S_HORIZONTALPODAUTOSCALER uses` edge) + pods tab +
+events tab; **node** = overview (conditions, allocatable vs usage from
+`dt.kubernetes.node.*`, the HOST behind it via `runs_on`) + pods tab.
+
+### Frontend detail (`:frontends` → enter)
+
+Backed by FRONTEND nodes (`frontend.type` web/mobile) and the `dt.frontend.*`
+metric namespace, which the tenant confirms includes full Web Vitals.
+
+| Tab | Content | Source |
+|---|---|---|
+| **Overview** | type, instrumentation id; charts: active sessions & users (estimated), user-action rate & duration, error count | `dt.frontend.session.active.estimated_count`, `.user.active.estimated_count`, `.user_action.count/.duration`, `.error.count` |
+| **Web Vitals** | LCP / CLS / INP (+ FID, TTFB, DOM-interactive, load-event) charts, each colored against Good / Needs-improvement / Poor thresholds | `dt.frontend.web.page.largest_contentful_paint`, `.cumulative_layout_shift`, `.interaction_to_next_paint`, `.first_input_delay`, `dt.frontend.web.navigation.*` |
+| **Errors** | error-rate trend + top error groups | `dt.frontend.error.count` + `user.events` where ingested |
+| **Sessions** | recent sessions: user, duration, actions, errors; `enter` → session action timeline | `user.sessions` / `user.events` |
+
+### Database detail (`:db` → enter)
+
+The tenant monitors Postgres deeply: DB_INSTANCE/DB_DATABASE/DB_TABLE/DB_INDEX
+entities and a wide `postgres.*` metric namespace — enough for a real DBA page.
+
+| Tab | Content | Source |
+|---|---|---|
+| **Overview** | instance/database identity, connection & conflict trends, I/O and SLRU cache charts | `postgres.activity.*`, `postgres.io.*`, `postgres.slru.*`, `postgres.database_conflicts.*` |
+| **Statements** | top statements by calls / total time / failures; `enter` → traces containing that statement | `fetch spans \| filter isNotNull(db.query.text) \| summarize by:{db.operation.name, db.query.text}` |
+| **Tables** | per-table rows/size/scans/bloat indicators | DB_TABLE entities + `postgres.tables.*` (28 metric keys confirmed) |
+| **Callers** | services calling this database | `calls` edges, backward |
+
+### Cloud resource detail (generic, all `AWS_* / AZURE_* / GCP_*` types)
+
+One generic page covers the ~40 AWS types found in the tenant (EC2, ELB/target
+groups, EKS/ECS, RDS/DynamoDB, VPC/subnets/SGs, IAM, …):
+
+| Tab | Content | Source |
+|---|---|---|
+| **Properties** | all node fields, namespaced groups (`aws.*`), tags table | Smartscape node (heavy `aws.object` JSON only fetched on demand via `d`) |
+| **Relations** | attached / part-of / uses / used-by, as a two-direction list | `references` (static forward) + `smartscapeEdges` (backward/dynamic) |
+| **Metrics** | provider metrics for the resource | `cloud.aws.*` keys filtered by resource dimension |
+
+Type-specific ViewSpecs can add a tab (e.g. target-group → healthy-targets)
+without a new page implementation.
+
+### Trace waterfall (traces view → enter)
+
+Confirmed span fields: `span.name`, `span.kind`, `span.parent_id`, `duration`,
+`start_time`, `request.is_failed`, `endpoint.name`, `http.route`,
+`db.system.name` / `db.query.text`, `code.function`, `trace.id`.
+
+```
+┌ trace: b617ac8d… ──────────────────── 12 spans · 341ms · 1 failed ──────────┐
+│ ▼ POST /checkout                 server   checkout-svc   ████████████  341ms │
+│   ▼ authorize                    internal checkout-svc    ██▁            41ms │
+│   ▼ POST /payments/charge        client   checkout-svc      ████████    212ms │
+│     ▼ POST /payments/charge      server   payments-gw        ███████    198ms │
+│       ✗ SELECT pool.acquire      client   payments-gw          █████    170ms │
+│   ▼ INSERT orders                client   checkout-svc              ██   38ms │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+Tree from `span.parent_id`; bars proportional on the trace's time axis; kind
+and service columns; failed spans (`request.is_failed`) marked `✗` red.
+`enter` on a span → attribute inspector; `l` → logs with the same `trace.id`
+(both directions of the logs↔traces link); `x` → the span's service entity.
+
+### Log record inspector (logs view → enter)
+
+Full record in a pager, but **grouped by namespace** rather than flat YAML —
+the tenant shows log records routinely carry 50+ fields:
+
+```
+│ 14:02:41.113  ERROR                                                          │
+│ content   connection pool exhausted: timeout acquiring connection after 30s  │
+│ ── kubernetes ──────────────  ── entity ─────────────────  ── http ───────── │
+│ cluster    prod-cluster        dt.smartscape.service …      method  POST     │
+│ namespace  shop                dt.entity.service     …      status  502      │
+│ pod        payments-gw-7d4f…                                route   /charge  │
+```
+
+`content` always on top and wrapped; namespace groups (`k8s.*`, `http.*`,
+entity IDs, `dt.openpipeline.*`) collapsible; field descriptions from the
+semantic dictionary shown on focus (see Runtime discovery). `s` jumps to the
+trace when a trace ID is present; `x` to the source entity.
+
+### Findings that shape all pages
+
+Three lessons from the live exploration, baked into the design:
+
+1. **Dual entity-ID eras.** Records carry both deprecated `dt.entity.*` and
+   modern `dt.smartscape.*` fields (logs in the tenant have
+   `dt.entity.service` *and* `dt.smartscape.service`). Scope filters generated
+   by drill-downs must match on either until migration completes.
+2. **Entity nodes vary wildly in richness.** HOST and K8S_POD are field-rich;
+   SERVICE and FRONTEND are nearly bare and get their substance from metrics
+   and spans. `DetailSpec` must let a page be chart-first, not assume
+   properties exist.
+3. **Silent emptiness.** Wrong node/edge/metric names return empty results,
+   not errors. Detail tabs therefore render explicit "no data in timeframe /
+   not monitored" states, and the relations panel is driven by *discovered*
+   edges (see below), never a hardcoded edge list.
+
+---
+
 ## Architecture
 
 ### Library choice
@@ -363,7 +597,8 @@ type ViewSpec struct {
     Columns   []ColumnSpec      // field, header, width, align, colorRule
     Drill     map[Verb]Target   // 'l' → logs view + scope mapping, 's' → traces, …
     Relations RelationSpec      // how to resolve Smartscape neighbors for 'x'
-    Detail    DetailSpec        // layout of the enter-view (panels)
+    Detail    DetailSpec        // identity header + []TabSpec (see Detail Pages);
+                                //   each TabSpec = query/queries + layout, loaded lazily
 }
 ```
 
@@ -378,11 +613,30 @@ type ViewSpec struct {
 Management assets use the same table shell configured from the existing
 `pkg/resources/<name>` display fields instead of a DQL template.
 
+### Runtime discovery — the environment describes itself
+
+The live-tenant exploration confirmed that Grail is fully introspectable, so
+the TUI hardcodes shapes only as *defaults* and discovers the rest per
+environment, cached per session:
+
+| Mechanism | DQL | Powers |
+|---|---|---|
+| Node-type census | `smartscapeNodes "*" \| summarize count(), by:{type}` | which entity views appear in the command bar at all (no `:aws` in an Azure-only tenant), with counts shown in the alias popup |
+| Edge catalog | `smartscapeEdges "*" \| summarize count(), by:{source_type, type, target_type}` | the relations panel (`x`) and which drill-downs each detail page offers — never a hardcoded edge list (wrong edges fail *silently* as empty results) |
+| Field census | `fieldsSnapshot logs` / `fieldsSnapshot spans` | record-inspector field ordering (by prevalence) and an optional column picker for signal views |
+| Metric catalog | `metrics` command (keys + dimensions) | the `:metrics` browser for a scoped entity, and graceful degradation of chart panels when a metric namespace is absent |
+| Semantic dictionary | `fetch dt.semantic_dictionary.fields / .models` | on-focus field descriptions, units, and enum values in inspectors; model→table mapping for the generic entity browser |
+
+All five are cheap metadata queries, fetched lazily on first use and cached
+for the session (refreshed on context switch). This keeps the ViewSpec catalog
+small and honest: curated defaults where curation adds value, introspection
+everywhere else.
+
 ### Package layout
 
 ```text
 cmd/
-  ui.go                  # cobra command: guards, flag wiring, launches tui.App
+  tui.go                 # cobra command: guards, flag wiring, launches tui.App
 pkg/tui/
   app.go                 # root tea.Model: view stack, command bar, routing, global keys
   theme/                 # lipgloss styles; adapter over output.ColorEnabled()
@@ -405,7 +659,7 @@ pkg/tui/
 
 Rules, mirroring existing layering: `pkg/tui` imports `pkg/resources`,
 `pkg/exec`, `pkg/output` (renderers), `pkg/safety`, `pkg/config`; nothing
-imports `pkg/tui` except `cmd/ui.go`; no HTTP in `pkg/tui`; every API call is a
+imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 `tea.Cmd` goroutine with `context.Context` cancellation tied to view lifetime.
 
 ### Refresh & data handling
@@ -440,7 +694,7 @@ imports `pkg/tui` except `cmd/ui.go`; no HTTP in `pkg/tui`; every API call is a
 
 ### Phase 1 — Shell + the core map (services, hosts, problems, logs)
 
-- `cmd/ui.go` guards; app shell: command bar, breadcrumbs, footer, help,
+- `cmd/tui.go` guards; app shell: command bar, breadcrumbs, footer, help,
   theme adapter, timeframe picker.
 - ViewSpec engine (table shell + detail shell) with the first catalog slice:
   **problems, services, hosts, logs** — enough for the core triage loop.
@@ -476,8 +730,8 @@ triage".
 
 ## Open Questions
 
-1. **Command name**: `dtctl ui` vs `dtctl tui` vs bare `dtctl` launching the
-   TUI when interactive. Proposal: `dtctl ui` with `tui` alias; bare `dtctl`
+1. **Bare `dtctl` launch**: the command is `dtctl tui`; should a bare `dtctl`
+   in an interactive terminal also launch it? Proposal: no — bare `dtctl`
    keeps printing help (agents probe with bare invocations).
 2. **Entity list sourcing**: Smartscape (`smartscapeNodes`) vs classic
    `dt.entity.*` fetches — Smartscape is the strategic choice per
