@@ -78,6 +78,9 @@ func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 
 func (v *tableView) InputActive() bool { return v.filtering }
 
+// Busy reports whether the list query is in flight (animates the spinner).
+func (v *tableView) Busy() bool { return v.loading }
+
 func (v *tableView) Crumb() string {
 	label := v.spec.Name
 	if v.scope.Arg != "" {
@@ -112,6 +115,9 @@ func (v *tableView) Echo() string {
 func (v *tableView) DQL() string { return v.dql }
 
 func (v *tableView) Hints() []keyHint {
+	if v.filtering {
+		return []keyHint{{"type", "filter rows"}, {"enter", "apply"}, {"esc", "clear"}}
+	}
 	var hints []keyHint
 	switch {
 	case v.spec.EnterTarget != "":
@@ -607,25 +613,34 @@ func (v *tableView) View(width, height int) string {
 	var b strings.Builder
 
 	// Status/filter line.
-	head := fmt.Sprintf("%d/%d rows", len(v.rows), len(v.all))
+	head := " " + theme.Count.Render(fmt.Sprintf("%d", len(v.rows)))
+	if len(v.rows) != len(v.all) {
+		head += theme.Dim.Render(fmt.Sprintf("/%d", len(v.all)))
+	}
+	head += theme.Dim.Render(" rows")
 	if v.elapsed != "" {
-		head += theme.Dim.Render(fmt.Sprintf("  (%s)", v.elapsed))
+		head += theme.Dim.Render(" · " + v.elapsed)
+	}
+	if v.sortCol >= 0 && v.sortCol < len(v.spec.Columns) {
+		head += theme.Dim.Render(" · ") +
+			theme.SortMark.Render(sortArrow(v.sortDesc)+" "+v.spec.Columns[v.sortCol].Title)
 	}
 	if v.filtering || v.filter != "" {
 		head += "  " + v.filterInput.View()
 	}
 	if v.loading {
-		head = theme.Spinner.Render("⟳ loading…") + "  " + head
+		head = " " + theme.Spinner.Render(theme.Spin()) + head
 	}
 	b.WriteString(ansi.Truncate(head, width, "…"))
 	b.WriteString("\n")
 
 	if v.err != nil {
-		b.WriteString("\n" + theme.Error.Render(wrap(v.err.Error(), width)))
+		b.WriteString("\n" + theme.Error.Render("✗ "+wrap(v.err.Error(), width-2)))
 		return b.String()
 	}
 
-	widths := v.columnWidths(width)
+	// One gutter cell marks the cursor row; columns share the rest.
+	widths := v.columnWidths(width - 1)
 
 	// Header row.
 	var hdr []string
@@ -636,7 +651,7 @@ func (v *tableView) View(width, height int) string {
 		}
 		hdr = append(hdr, cell(title, widths[i], c.Right))
 	}
-	b.WriteString(theme.TableHeader.Render(ansi.Truncate(strings.Join(hdr, " "), width, "")))
+	b.WriteString(" " + theme.TableHeader.Render(ansi.Truncate(strings.Join(hdr, "  "), width-1, "")))
 	b.WriteString("\n")
 
 	visible := height - 2
@@ -657,7 +672,8 @@ func (v *tableView) View(width, height int) string {
 		if v.filter != "" && len(v.all) > 0 {
 			b.WriteString(theme.Dim.Render(fmt.Sprintf("  no rows match %q (%d fetched — esc clears the filter)", v.filter, len(v.all))))
 		} else {
-			b.WriteString(theme.Dim.Render("  no data in timeframe"))
+			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center,
+				theme.Dim.Render("∅ no data in timeframe (last "+v.scope.Timeframe.Label+")")))
 		}
 	}
 	return b.String()
@@ -677,12 +693,13 @@ func (v *tableView) renderRow(i int, widths []int, width int) string {
 		}
 		cells = append(cells, text)
 	}
-	row := ansi.Truncate(strings.Join(cells, " "), width, "…")
+	row := ansi.Truncate(strings.Join(cells, "  "), width-1, "…")
 	if selected {
-		// Selected rows drop per-cell colors so the highlight reads as one bar.
-		row = theme.Selected.Render(pad(row, width))
+		// Selected rows drop per-cell colors so the highlight reads as one
+		// bar: an accent gutter mark plus a background wash.
+		return theme.Gutter.Render("▌") + theme.Selected.Render(pad(row, width-1))
 	}
-	return row
+	return " " + row
 }
 
 // columnWidths assigns fixed widths and shares the remainder among flex columns.
@@ -697,7 +714,7 @@ func (v *tableView) columnWidths(total int) []int {
 			flexCount++
 		}
 	}
-	gaps := len(v.spec.Columns) - 1
+	gaps := 2 * (len(v.spec.Columns) - 1)
 	remaining := total - fixed - gaps
 	if flexCount > 0 {
 		per := remaining / flexCount

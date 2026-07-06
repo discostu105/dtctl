@@ -69,9 +69,15 @@ func (v *queryView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 	return nil // the query text owns its own from: — no silent re-run
 }
 
-func (v *queryView) InputActive() bool { return v.editing }
+// InputActive is true while the editor is focused OR the results table's
+// filter is — either way a text input owns the keyboard and global keys must
+// not fire (typing 'q' should not quit).
+func (v *queryView) InputActive() bool { return v.editing || v.results.InputActive() }
 func (v *queryView) Crumb() string     { return "query" }
 func (v *queryView) DQL() string       { return v.current }
+
+// Busy delegates to the results table (animates the spinner while a query runs).
+func (v *queryView) Busy() bool { return v.results.Busy() }
 
 func (v *queryView) Echo() string {
 	if v.current == "" {
@@ -83,6 +89,9 @@ func (v *queryView) Echo() string {
 func (v *queryView) Hints() []keyHint {
 	if v.editing {
 		return []keyHint{{"enter", "run"}, {"ctrl+j", "newline"}, {"tab", "results"}}
+	}
+	if v.results.InputActive() { // results-table filter focused
+		return v.results.Hints()
 	}
 	hints := []keyHint{{"tab/i", "edit"}, {"enter", "inspect"}, {"s", "trace"}}
 	return append(hints, keyHint{"/", "filter"}, keyHint{"J/K", "sort"})

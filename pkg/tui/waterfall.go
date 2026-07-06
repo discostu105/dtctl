@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
@@ -35,7 +36,7 @@ type waterfallView struct {
 
 type wfRow struct {
 	rec    map[string]any
-	depth  int
+	guide  string // tree guides (│ ├─ └─) preceding the label
 	label  string
 	kind   string
 	svc    string
@@ -65,6 +66,9 @@ func (v *waterfallView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 }
 
 func (v *waterfallView) InputActive() bool { return false }
+
+// Busy reports whether the trace query is in flight (animates the spinner).
+func (v *waterfallView) Busy() bool { return v.loading }
 
 func (v *waterfallView) Crumb() string {
 	return "trace " + shortID(v.traceID)
@@ -206,16 +210,26 @@ func buildWaterfall(records []map[string]any) []wfRow {
 	}
 
 	var rows []wfRow
-	var walk func(rec map[string]any, depth int)
-	walk = func(rec map[string]any, depth int) {
+	var walk func(rec map[string]any, prefix string, last, root bool)
+	walk = func(rec map[string]any, prefix string, last, root bool) {
 		label := catalog.Str(rec, "span.name")
 		if label == "" {
 			label = catalog.Str(rec, "endpoint.name")
 		}
+		guide, childPrefix := prefix, prefix
+		if !root {
+			if last {
+				guide += "└─ "
+				childPrefix += "   "
+			} else {
+				guide += "├─ "
+				childPrefix += "│  "
+			}
+		}
 		failed, _ := rec["request.is_failed"].(bool)
 		rows = append(rows, wfRow{
 			rec:    rec,
-			depth:  depth,
+			guide:  guide,
 			label:  label,
 			kind:   catalog.Str(rec, "span.kind"),
 			svc:    catalog.Str(rec, "service.name"),
@@ -223,12 +237,13 @@ func buildWaterfall(records []map[string]any) []wfRow {
 			end:    parseTimeNs(catalog.Str(rec, "end_time")),
 			failed: failed,
 		})
-		for _, child := range children[catalog.Str(rec, "span.id")] {
-			walk(child, depth+1)
+		kids := children[catalog.Str(rec, "span.id")]
+		for i, child := range kids {
+			walk(child, childPrefix, i == len(kids)-1, false)
 		}
 	}
 	for _, root := range roots {
-		walk(root, 0)
+		walk(root, "", false, true)
 	}
 	return rows
 }
@@ -247,11 +262,12 @@ func (v *waterfallView) View(width, height int) string {
 
 	switch {
 	case v.loading:
-		return theme.Spinner.Render("⟳ loading trace…")
+		return " " + theme.Spinner.Render(theme.Spin()+" loading trace…")
 	case v.err != nil:
-		return theme.Error.Render(wrap(v.err.Error(), width))
+		return theme.Error.Render("✗ " + wrap(v.err.Error(), width-2))
 	case len(v.rows) == 0:
-		return theme.Dim.Render("trace not found in the last " + v.tf.Label)
+		return "\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center,
+			theme.Dim.Render("∅ trace not found in the last "+v.tf.Label))
 	}
 
 	// Trace-wide time axis.
@@ -270,11 +286,12 @@ func (v *waterfallView) View(width, height int) string {
 	}
 	total := max64(t1-t0, 1)
 
-	head := fmt.Sprintf("%d spans · %s", len(v.rows), catalog.FormatNs(float64(total)))
+	head := " " + theme.Count.Render(catalog.FormatNs(float64(total))) +
+		theme.Dim.Render(fmt.Sprintf(" · %d spans", len(v.rows)))
 	if failed > 0 {
-		head += " · " + theme.Error.Render(fmt.Sprintf("%d failed", failed))
+		head += theme.Dim.Render(" · ") + theme.Error.Render(fmt.Sprintf("✗ %d failed", failed))
 	}
-	b.WriteString(theme.GroupTitle.Render(head) + "\n")
+	b.WriteString(head + "\n")
 
 	// Column layout: tree | kind | service | bar+duration.
 	barW := width * 30 / 100
@@ -283,7 +300,8 @@ func (v *waterfallView) View(width, height int) string {
 	}
 	durW := 9
 	kindW, svcW := 8, 22
-	treeW := width - barW - durW - kindW - svcW - 4
+	// Five separator spaces plus the one-cell cursor gutter.
+	treeW := width - barW - durW - kindW - svcW - 6
 	if treeW < 16 {
 		treeW = 16
 	}
@@ -302,11 +320,11 @@ func (v *waterfallView) View(width, height int) string {
 }
 
 func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW, kindW, svcW, barW, durW int) string {
-	marker := "▸"
+	label := r.label
 	if r.failed {
-		marker = "✗"
+		label = "✗ " + label
 	}
-	tree := pad(strings.Repeat("  ", min(r.depth, 8))+marker+" "+r.label, treeW)
+	tree := pad(r.guide+label, treeW)
 	kind := pad(r.kind, kindW)
 	svc := pad(r.svc, svcW)
 
@@ -327,20 +345,31 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 	if startCell+lenCells > barW {
 		lenCells = barW - startCell
 	}
-	bar := strings.Repeat(" ", startCell) + strings.Repeat("█", lenCells) +
-		strings.Repeat(" ", barW-startCell-lenCells)
 	durTxt := cell(catalog.FormatNs(float64(dur)), durW, true)
 
 	if selected {
-		return theme.Selected.Render(pad(tree+" "+kind+" "+svc+" "+bar+" "+durTxt, v.width))
+		bar := strings.Repeat("┄", startCell) + strings.Repeat("█", lenCells) +
+			strings.Repeat("┄", barW-startCell-lenCells)
+		return theme.Gutter.Render("▌") +
+			theme.Selected.Render(pad(tree+" "+kind+" "+svc+" "+bar+" "+durTxt, v.width-1))
 	}
+
+	// Bars are colored by service, so one service's spans group visually;
+	// the dim track keeps offsets readable across rows.
+	barStyle := theme.ForKey(r.svc)
 	if r.failed {
+		barStyle = theme.Error
 		tree = theme.Error.Render(tree)
-		bar = theme.Error.Render(bar)
 	} else {
-		bar = theme.Chart.Render(bar)
+		tree = theme.Rule.Render(r.guide) + pad(label, max(treeW-lipgloss.Width(r.guide), 0))
 	}
-	return ansi.Truncate(tree+" "+theme.Dim.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
+	bar := theme.Track.Render(strings.Repeat("┄", startCell)) +
+		barStyle.Render(strings.Repeat("█", lenCells)) +
+		theme.Track.Render(strings.Repeat("┄", barW-startCell-lenCells))
+	if r.svc != "" {
+		svc = barStyle.Render("●") + " " + pad(r.svc, max(svcW-2, 0))
+	}
+	return ansi.Truncate(" "+tree+" "+theme.Dim.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
 }
 
 func shortID(id string) string {

@@ -88,13 +88,20 @@ type app struct {
 
 	refreshIdx int
 	refreshGen int
+
+	spinning bool // spinner ticker scheduled
 }
 
 type refreshTickMsg struct{ gen int }
 
+// spinnerTickMsg advances the loading-spinner animation while the visible
+// view is busy.
+type spinnerTickMsg struct{}
+
 func newApp(opts Options) (*app, error) {
 	ci := textinput.New()
 	ci.Prompt = ":"
+	ci.PromptStyle = theme.Crumb
 	ci.CharLimit = 64
 	a := &app{
 		opts: opts,
@@ -130,10 +137,23 @@ func (a *app) viewFor(name string) (viewModel, error) {
 		return nil, fmt.Errorf("unknown view %q (available: home, query, %s)", name, strings.Join(catalog.Names(), ", "))
 	}
 	scope := catalog.Scope{Timeframe: a.tf}
-	if a.pin != nil && spec.UsesScope() {
+	// Only hand the pin to a view whose query actually composes it, so the
+	// breadcrumb never claims a scope that was never applied.
+	if a.pin != nil && spec.UsesScope() && spec.CanScope(a.tf, *a.pin) {
 		scope.Entity = a.pin
 	}
 	return newTableView(a.ds, spec, scope), nil
+}
+
+// pinRejected reports whether a pin exists but the named view cannot scope to
+// it (so jumpTo can tell the user the pin was ignored rather than leave them
+// reading an unfiltered list under a pinned header).
+func (a *app) pinRejected(name string) bool {
+	if a.pin == nil {
+		return false
+	}
+	spec := catalog.Lookup(name)
+	return spec != nil && spec.UsesScope() && !spec.CanScope(a.tf, *a.pin)
 }
 
 func (a *app) top() viewModel { return a.stack[len(a.stack)-1] }
@@ -143,15 +163,25 @@ func (a *app) Init() tea.Cmd { return a.top().Init() }
 func (a *app) bodyHeight() int { return max(a.height-4, 1) }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	cmd := a.dispatch(msg)
+	// Keep the loading spinner animated whenever the visible view is busy.
+	if spin := a.ensureSpin(); spin != nil {
+		cmd = tea.Batch(cmd, spin)
+	}
+	return a, cmd
+}
+
+// dispatch routes one message through the app.
+func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		a.width, a.height = msg.Width, msg.Height
-		return a, a.broadcast(bodySizeMsg{width: a.width, height: a.bodyHeight()})
+		return a.broadcast(bodySizeMsg{width: a.width, height: a.bodyHeight()})
 
 	case tea.KeyMsg:
 		// Any key clears the transient status line.
 		a.status = ""
-		return a, a.handleKey(msg)
+		return a.handleKey(msg)
 
 	case dataMsg:
 		// Deliver to every view on either stack (deduped — the stacks share
@@ -169,45 +199,74 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
-		return a, tea.Batch(cmds...)
+		return tea.Batch(cmds...)
 
 	case pushViewMsg:
 		view := newTableView(a.ds, msg.spec, msg.scope)
 		if msg.filter != "" {
 			view.setFilter(msg.filter)
 		}
-		return a, a.navigate(view, msg.replace)
+		return a.navigate(view, msg.replace)
 
 	case inspectMsg:
-		return a, a.navigate(newInspectorView(msg.title, msg.rec), false)
+		return a.navigate(newInspectorView(msg.title, msg.rec), false)
 
 	case detailMsg:
-		return a, a.navigate(newDetailView(a.ds, msg.entity, msg.rec, a.tf), false)
+		return a.navigate(newDetailView(a.ds, msg.entity, msg.rec, a.tf), false)
 
 	case metricsMsg:
-		return a, a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
+		return a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
 
 	case waterfallMsg:
-		return a, a.navigate(newWaterfallView(a.ds, msg.traceID, a.tf), false)
+		return a.navigate(newWaterfallView(a.ds, msg.traceID, a.tf), false)
 
 	case relationsMsg:
-		return a, a.navigate(newRelationsView(a.ds, msg.entity, a.tf), false)
+		return a.navigate(newRelationsView(a.ds, msg.entity, a.tf), false)
 
 	case queryMsg:
-		return a, a.navigate(newQueryView(a.ds, msg.dql, a.tf), false)
+		return a.navigate(newQueryView(a.ds, msg.dql, a.tf), false)
 
 	case statusMsg:
 		a.status, a.statusErr = msg.text, msg.isErr
-		return a, nil
+		return nil
 
 	case refreshTickMsg:
 		if msg.gen != a.refreshGen || refreshIntervals[a.refreshIdx] == 0 {
-			return a, nil
+			return nil
 		}
-		return a, tea.Batch(a.top().Refresh(), a.scheduleRefresh())
+		return tea.Batch(a.top().Refresh(), a.scheduleRefresh())
+
+	case spinnerTickMsg:
+		if a.busy() {
+			theme.Tick()
+			return spinTick()
+		}
+		a.spinning = false
+		return nil
 	}
 
-	return a, a.top().Update(msg)
+	return a.top().Update(msg)
+}
+
+// busy reports whether the visible view is waiting on data.
+func (a *app) busy() bool {
+	if br, ok := a.top().(busyReporter); ok {
+		return br.Busy()
+	}
+	return false
+}
+
+// ensureSpin starts the spinner ticker when the visible view turns busy.
+func (a *app) ensureSpin() tea.Cmd {
+	if a.spinning || !a.busy() {
+		return nil
+	}
+	a.spinning = true
+	return spinTick()
+}
+
+func spinTick() tea.Cmd {
+	return tea.Tick(90*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 // navigate pushes a view (or replaces the stack for command-bar jumps),
@@ -245,11 +304,19 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	top := a.top()
 	if !top.InputActive() {
-		// Digit hotkeys jump to bookmarked views — except on detail pages,
-		// where digits switch tabs.
-		if _, isDetail := top.(*detailView); !isDetail && len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
-			if name, ok := hotkeys[key]; ok {
-				return a.jumpTo(name, "")
+		// Digit hotkeys jump to bookmarked views. On a detail page the digits
+		// that name a tab (1..N) switch tabs instead; the rest (0, and any
+		// past the last tab) still hit their hotkey, so '0' → home works
+		// everywhere the help overlay promises it does.
+		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+			claimedByTab := false
+			if dv, isDetail := top.(*detailView); isDetail {
+				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(dv.tabs))
+			}
+			if !claimedByTab {
+				if name, ok := hotkeys[key]; ok {
+					return a.jumpTo(name, "")
+				}
 			}
 		}
 		switch key {
@@ -341,7 +408,13 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	if tv, ok := view.(*tableView); ok && filter != "" {
 		tv.setFilter(filter)
 	}
-	return a.navigate(view, true)
+	nav := a.navigate(view, true)
+	// The view was built unscoped when the pin didn't apply — say so, so the
+	// user isn't left reading an unfiltered list wondering why.
+	if a.pinRejected(name) {
+		return tea.Batch(nav, statusErr(fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)))
+	}
+	return nav
 }
 
 // selection asks the current view for its highlighted row and entity.
@@ -450,6 +523,11 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 		a.cmdInput.Blur()
 		input := strings.Fields(strings.TrimSpace(a.cmdInput.Value()))
 		if len(input) == 0 {
+			// Empty input still has a highlighted suggestion (tab/down cycles
+			// it) — enter opens it rather than silently dropping the choice.
+			if a.cmdSel < len(a.cmdMatches) {
+				return a.jumpTo(a.cmdMatches[a.cmdSel].Name, "")
+			}
 			return nil
 		}
 		arg := strings.Join(input[1:], " ")
@@ -507,16 +585,33 @@ func (a *app) updateTfPicker(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "enter":
 		a.tfActive = false
-		a.tf = catalog.Timeframes[a.tfSel]
-		return a.top().SetTimeframe(a.tf)
+		return a.setTimeframe(catalog.Timeframes[a.tfSel])
 	}
 	if idx := strings.IndexByte("1234", msg.String()[0]); idx >= 0 && idx < len(catalog.Timeframes) && len(msg.String()) == 1 {
 		a.tfActive = false
 		a.tfSel = idx
-		a.tf = catalog.Timeframes[idx]
-		return a.top().SetTimeframe(a.tf)
+		return a.setTimeframe(catalog.Timeframes[idx])
 	}
 	return nil
+}
+
+// setTimeframe applies the global window to every live view — not just the
+// top one — so a covered view exposed by esc or '-' (and its 'r'/auto-refresh
+// refetch) uses the window the header advertises.
+func (a *app) setTimeframe(tf catalog.Timeframe) tea.Cmd {
+	a.tf = tf
+	seen := map[viewModel]bool{}
+	var cmds []tea.Cmd
+	for _, v := range append(append([]viewModel{}, a.stack...), a.prev...) {
+		if seen[v] {
+			continue
+		}
+		seen[v] = true
+		if cmd := v.SetTimeframe(tf); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // --- rendering ------------------------------------------------------------------
@@ -540,24 +635,33 @@ func (a *app) View() string {
 }
 
 func (a *app) renderHeader() string {
-	sep := theme.HeaderKey.Render(" ─ ")
-	parts := []string{
-		theme.AppName.Render(" dtctl"),
+	sep := theme.HeaderSep.Render("  ·  ")
+	left := []string{
+		" " + theme.Logo.Render("dtctl"),
 		theme.HeaderKey.Render("ctx:") + theme.HeaderVal.Render(a.opts.ContextName),
-		theme.HeaderKey.Render("safety:") + theme.Safety(a.opts.SafetyLevel).Render(a.opts.SafetyLevel),
-		theme.HeaderKey.Render("last ") + theme.HeaderVal.Render(a.tf.Label),
+		theme.Safety(a.opts.SafetyLevel).Render("● " + a.opts.SafetyLevel),
 	}
 	if a.pin != nil {
-		parts = append(parts, theme.Pin.Render("⌖ "+strings.ToLower(a.pin.Type)+": "+entityName(*a.pin)))
+		left = append(left, theme.Pin.Render("⌖ "+strings.ToLower(a.pin.Type)+":"+entityName(*a.pin)))
 	}
+	var right []string
 	if iv := refreshIntervals[a.refreshIdx]; iv > 0 {
-		parts = append(parts, theme.HeaderKey.Render("⟳ ")+theme.HeaderVal.Render(iv.String()))
+		right = append(right, theme.StatusOK.Render("⟳ "+iv.String()))
 	}
-	line1 := ansi.Truncate(strings.Join(parts, sep), a.width, "…")
+	right = append(right, theme.HeaderKey.Render("last ")+theme.HeaderVal.Render(a.tf.Label))
+
+	l := strings.Join(left, sep)
+	r := strings.Join(right, sep) + " "
+	var line1 string
+	if gap := a.width - lipgloss.Width(l) - lipgloss.Width(r); gap >= 1 {
+		line1 = l + strings.Repeat(" ", gap) + r
+	} else {
+		line1 = ansi.Truncate(l+" "+r, a.width, "…")
+	}
 
 	var line2 string
 	if a.cmdActive {
-		line2 = " " + a.cmdInput.View() + "  " + a.renderCmdMatches()
+		line2 = " " + a.cmdInput.View()
 	} else {
 		crumbs := make([]string, len(a.stack))
 		for i, v := range a.stack {
@@ -568,22 +672,45 @@ func (a *app) renderHeader() string {
 				crumbs[i] = theme.CrumbDim.Render(label)
 			}
 		}
-		line2 = " ▸ " + strings.Join(crumbs, theme.CrumbDim.Render(" ▸ "))
+		line2 = " " + strings.Join(crumbs, theme.CrumbDim.Render(" › "))
+		if fill := a.width - lipgloss.Width(line2) - 2; fill > 0 {
+			line2 += " " + theme.Rule.Render(strings.Repeat("─", fill))
+		}
 	}
 	return line1 + "\n" + ansi.Truncate(line2, a.width, "…")
 }
 
-func (a *app) renderCmdMatches() string {
-	var parts []string
-	for i, s := range a.cmdMatches {
-		label := s.Name
-		if i == a.cmdSel {
-			parts = append(parts, theme.Selected.Render(label))
-		} else {
-			parts = append(parts, theme.Dim.Render(label))
-		}
+// renderCmdPalette renders the command-bar matches as a picker overlay: view
+// name, aliases, and description, with the current suggestion highlighted.
+func (a *app) renderCmdPalette() string {
+	var b strings.Builder
+	b.WriteString(theme.OverlayTitle.Render("views") + "\n\n")
+	nameW, aliasW, descW := 14, 12, 36
+	rowW := nameW + aliasW + descW + 3
+	limit := len(a.cmdMatches)
+	if m := max(a.bodyHeight()-8, 4); limit > m {
+		limit = m
 	}
-	return strings.Join(parts, " ")
+	for i := 0; i < limit; i++ {
+		s := a.cmdMatches[i]
+		row := pad(s.Name, nameW) + " " + pad(strings.Join(s.Aliases, " "), aliasW) + " " + pad(s.Desc, descW)
+		if i == a.cmdSel {
+			b.WriteString(theme.Selected.Render(pad(" "+row, rowW)))
+		} else {
+			b.WriteString(" " + theme.HeaderVal.Render(pad(s.Name, nameW)) + " " +
+				theme.Dim.Render(pad(strings.Join(s.Aliases, " "), aliasW)) + " " +
+				theme.CrumbDim.Render(pad(s.Desc, descW)))
+		}
+		b.WriteString("\n")
+	}
+	if len(a.cmdMatches) == 0 {
+		b.WriteString(theme.Dim.Render(" no matching view") + "\n")
+	}
+	if rest := len(a.cmdMatches) - limit; rest > 0 {
+		b.WriteString(theme.Dim.Render(fmt.Sprintf(" … %d more", rest)) + "\n")
+	}
+	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :home :query :trace <id>"))
+	return b.String()
 }
 
 func (a *app) renderBody() string {
@@ -594,27 +721,42 @@ func (a *app) renderBody() string {
 	if a.tfActive {
 		return overlay(a.width, bodyH, a.renderTfPicker())
 	}
+	if a.cmdActive {
+		return lipgloss.Place(a.width, bodyH, lipgloss.Center, lipgloss.Position(0.2),
+			theme.OverlayBox.Render(a.renderCmdPalette()))
+	}
 	return a.top().View(a.width, bodyH)
 }
 
 func (a *app) renderFooter() string {
-	hints := a.top().Hints()
-	hints = append(hints,
-		keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"r", "refresh"},
-		keyHint{"esc", "back"}, keyHint{"?", "help"}, keyHint{"q", "quit"},
-	)
+	var hints []keyHint
+	switch {
+	case a.cmdActive:
+		// Command bar owns the keyboard: only its keys work.
+		hints = []keyHint{{"enter", "open"}, {"tab", "next match"}, {"esc", "cancel"}}
+	case a.top().InputActive():
+		// A view's text input (filter, search, query editor) is focused — the
+		// global keys would just type characters, so show only the view's own
+		// input-mode hints (the complete set for that mode).
+		hints = a.top().Hints()
+	default:
+		hints = append(a.top().Hints(),
+			keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"r", "refresh"},
+			keyHint{"esc", "back"}, keyHint{"?", "help"}, keyHint{"q", "quit"},
+		)
+	}
 	var parts []string
 	for _, h := range hints {
-		parts = append(parts, theme.KeyHint.Render("<"+h.Key+">")+theme.KeyDesc.Render(h.Desc))
+		parts = append(parts, theme.KeyHint.Render(h.Key)+" "+theme.KeyDesc.Render(h.Desc))
 	}
-	line1 := ansi.Truncate(" "+strings.Join(parts, " "), a.width, "…")
+	line1 := ansi.Truncate(" "+strings.Join(parts, "  "), a.width, "…")
 
 	var line2 string
 	switch {
 	case a.status != "" && a.statusErr:
-		line2 = " " + theme.Error.Render(a.status)
+		line2 = " " + theme.Error.Render("✗ "+a.status)
 	case a.status != "":
-		line2 = " " + theme.StatusOK.Render(a.status)
+		line2 = " " + theme.StatusOK.Render("✓ "+a.status)
 	default:
 		if echo := a.top().Echo(); echo != "" {
 			line2 = " " + theme.Echo.Render("≡ "+echo)
@@ -661,7 +803,7 @@ func (a *app) renderHelp() string {
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("dtctl tui — keys") + "\n")
 	for _, s := range sections {
-		b.WriteString("\n" + theme.GroupTitle.Render(s.title) + "\n")
+		b.WriteString("\n" + theme.Section(s.title) + "\n")
 		for _, h := range s.keys {
 			b.WriteString(fmt.Sprintf("  %s %s\n",
 				theme.KeyHint.Render(fmt.Sprintf("%-12s", h.Key)), h.Desc))
@@ -674,13 +816,16 @@ func (a *app) renderHelp() string {
 func (a *app) renderTfPicker() string {
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("timeframe") + "\n\n")
+	pills := make([]string, len(catalog.Timeframes))
 	for i, tf := range catalog.Timeframes {
-		label := fmt.Sprintf(" %d  last %-4s ", i+1, tf.Label)
+		label := fmt.Sprintf("%d · %s", i+1, tf.Label)
 		if i == a.tfSel {
-			label = theme.Selected.Render(label)
+			pills[i] = theme.TabActive.Render(label)
+		} else {
+			pills[i] = theme.TabInactive.Render(label)
 		}
-		b.WriteString(label + "\n")
 	}
+	b.WriteString(strings.Join(pills, " ") + "\n")
 	b.WriteString("\n" + theme.Dim.Render("enter/1-4 apply · esc cancel"))
 	return b.String()
 }

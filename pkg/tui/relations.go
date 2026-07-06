@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
@@ -77,8 +78,11 @@ func (v *relationsView) Refresh() tea.Cmd {
 
 func (v *relationsView) SetTimeframe(catalog.Timeframe) tea.Cmd { return nil }
 func (v *relationsView) InputActive() bool                      { return false }
-func (v *relationsView) Crumb() string                          { return "relations (" + entityName(v.entity) + ")" }
-func (v *relationsView) DQL() string                            { return v.dql }
+
+// Busy reports whether the edge query is in flight (animates the spinner).
+func (v *relationsView) Busy() bool    { return v.loading }
+func (v *relationsView) Crumb() string { return "relations (" + entityName(v.entity) + ")" }
+func (v *relationsView) DQL() string   { return v.dql }
 
 func (v *relationsView) Echo() string {
 	if v.dql == "" {
@@ -232,23 +236,27 @@ func (v *relationsView) View(width, height int) string {
 	v.width, v.height = width, height
 	var b strings.Builder
 
-	title := fmt.Sprintf("%s · %s", entityName(v.entity), v.entity.Type)
-	b.WriteString(theme.GroupTitle.Render(title) + "\n")
+	title := " " + theme.OverlayTitle.Render(entityName(v.entity)) + "  " + theme.Badge.Render(v.entity.Type)
+	if !v.loading && v.err == nil {
+		title += theme.Dim.Render(fmt.Sprintf("  %d relations", len(v.rows)))
+	}
+	b.WriteString(ansi.Truncate(title, width, "…") + "\n")
 
 	switch {
 	case v.loading:
-		b.WriteString(theme.Spinner.Render("⟳ walking topology…"))
+		b.WriteString(" " + theme.Spinner.Render(theme.Spin()+" walking topology…"))
 		return b.String()
 	case v.err != nil:
-		b.WriteString(theme.Error.Render(wrap(v.err.Error(), width)))
+		b.WriteString(theme.Error.Render("✗ " + wrap(v.err.Error(), width-2)))
 		return b.String()
 	case len(v.rows) == 0:
-		b.WriteString(theme.Dim.Render("no Smartscape edges for this entity"))
+		b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center,
+			theme.Dim.Render("∅ no Smartscape edges for this entity")))
 		return b.String()
 	}
 
 	verbW, typeW := 18, 26
-	nameW := width - verbW - typeW - 2
+	nameW := width - verbW - typeW - 5
 	if nameW < 16 {
 		nameW = 16
 	}
@@ -260,18 +268,20 @@ func (v *relationsView) View(width, height int) string {
 	for i := v.offset; i < end; i++ {
 		row := v.rows[i]
 		name := v.names[row.otherID]
-		nameStyled := name
 		if name == "" {
 			name = row.otherID
-			nameStyled = name
 		}
-		line := pad(relationVerb(row), verbW) + " " + pad(nameStyled, nameW) + " " + pad(row.otherType, typeW)
 		if i == v.cursor {
-			line = theme.Selected.Render(pad(line, width))
+			line := pad(relationVerb(row), verbW) + " " + pad(name, nameW) + " " + pad(row.otherType, typeW)
+			b.WriteString(theme.Gutter.Render("▌") + theme.Selected.Render(pad(line, width-1)))
 		} else {
-			line = pad(relationVerb(row), verbW) + " " + pad(name, nameW) + " " + theme.Dim.Render(pad(row.otherType, typeW))
+			arrow := theme.ArrowOut
+			if !row.outgoing {
+				arrow = theme.ArrowIn
+			}
+			line := " " + arrow.Render(pad(relationVerb(row), verbW)) + " " + pad(name, nameW) + " " + theme.Dim.Render(pad(row.otherType, typeW))
+			b.WriteString(ansi.Truncate(line, width, "…"))
 		}
-		b.WriteString(ansi.Truncate(line, width, "…"))
 		if i < end-1 {
 			b.WriteString("\n")
 		}

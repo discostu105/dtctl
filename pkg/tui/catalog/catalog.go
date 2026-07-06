@@ -119,10 +119,32 @@ type Spec struct {
 	// Enrich adds async per-row metric columns (sparklines) fetched in one
 	// batched timeseries query after the list loads (nil = none).
 	Enrich *EnrichSpec
+	// Scopable refines CanScope for views whose query composes a filter that
+	// is present but useless for some entity types — traces filter by a
+	// dt.smartscape.* field spans only carry for some types. nil = rely on
+	// the query-diff check alone.
+	Scopable func(e Entity) bool
 }
 
 // UsesScope reports whether a view's query can compose an entity scope.
 func (s *Spec) UsesScope() bool { return s.Kind == KindSignal || s.EntityScoped }
+
+// CanScope reports whether pinning entity e meaningfully narrows this view.
+// It is honest by construction: if composing the entity does not change the
+// generated query (an incompatible type — a SERVICE pin on :pods, or any pin
+// on a view whose query ignores scope), the pin must be neither applied nor
+// claimed in the breadcrumb. Scopable catches the subtler case where the
+// filter differs but would match nothing (traces on a non-span-scopable
+// type).
+func (s *Spec) CanScope(tf Timeframe, e Entity) bool {
+	if s.Query(Scope{Timeframe: tf, Entity: &e}) == s.Query(Scope{Timeframe: tf}) {
+		return false
+	}
+	if s.Scopable != nil {
+		return s.Scopable(e)
+	}
+	return true
+}
 
 // EnrichSpec describes the batched metric enrichment of an entity table.
 // One query per refresh fetches a small timeseries per visible row; results

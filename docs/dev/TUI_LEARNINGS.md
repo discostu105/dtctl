@@ -239,6 +239,39 @@ Optional capability interfaces let the app treat them uniformly:
   (deduped)** so a parent still loading below a drill-down completes, and detail
   pages forward results to their lazily-started tabs. Views drop results they
   don't own.
+- **Every view that fires its own queries needs a `seq` generation guard** —
+  `tableView`, `waterfall`, `relations`, `inspector`, `metrics`, *and* `home`
+  (its per-panel results). A slow result from a superseded refresh (e.g. after
+  a timeframe change) must be dropped, or it overwrites fresher data. This is
+  the one an early `home` implementation missed.
+
+### A view must never claim a scope it didn't apply
+
+The subtlest class of bug the review found. A global pin (`.`) is handed to the
+next command-bar/hotkey jump — but only if that view's query can actually
+compose the pinned entity. Two ways the naïve `if UsesScope() { scope.Entity =
+pin }` lies:
+
+1. The query **ignores** the entity for that type (a `SERVICE` pin on `:pods` —
+   `k8sScopeFilter` returns `""`; any pin on `:vulnerabilities` — the query
+   never references `s.Entity`). The list is unfiltered but the breadcrumb reads
+   `pods (checkout)`: data presented as scoped that never was.
+2. The query **composes a filter that matches nothing** (a `HOST` pin on
+   `:traces` — spans carry no `dt.smartscape.host` field). Silently empty,
+   labelled `traces (my-host)`: the user concludes the host has no traces.
+
+The fix is `Spec.CanScope(tf, e)`, honest **by construction**: if
+`Query(scoped) == Query(unscoped)` the entity had no effect → don't apply or
+claim it (catches case 1 and any future scope-ignoring view for free); an
+optional `Scopable(e)` predicate refines case 2 (traces → `SpanScopable`). When
+a pin doesn't apply, navigate **unscoped** and say so in the status line rather
+than refuse — `:pods` should always give you pods. Drill-down navigation is
+type-correct by construction (workload→pods, etc.); only the pin injects
+arbitrary types, so it is the only path that needs the guard.
+
+**General principle:** a breadcrumb/header that shows scope is a *promise the
+query kept*. Derive the label from what the query actually did, never from what
+the user intended.
 - **`claimKey`** (a no-op `tea.Cmd` returning `nil`) lets a child consume a key
   the app would otherwise act on — e.g. `esc` that clears a filter instead of
   popping the stack. bubbletea discards `nil` messages, so returning a real
@@ -247,6 +280,40 @@ Optional capability interfaces let the app treat them uniformly:
   editor) owns the keyboard, global single-letter keys (`q`, `x`, `.`, hotkeys)
   must not fire. Every view reports this; the app checks it before its own
   key switch.
+
+---
+
+## 3b. Visual design (theme package)
+
+- **The palette is adaptive with explicit fallbacks.** Every color in
+  `pkg/tui/theme` is a `lipgloss.CompleteAdaptiveColor`: truecolor hex
+  (Catppuccin Mocha/Latte) plus hand-picked ANSI-256 and ANSI-16 fallbacks per
+  background flavor. lipgloss picks the variant for the terminal's capability
+  and background — never rely on automatic downsampling for the 16-color tier,
+  it picks ugly approximations.
+- **Selection is a gutter bar + background wash, not `Reverse(true)`.**
+  Reverse video inverts whatever colors a cell already has (unreadable over
+  class-colored cells); a fixed `SelBg` + dropping per-cell colors on the
+  selected row reads as one calm bar. All list views share the pattern:
+  `theme.Gutter.Render("▌") + theme.Selected.Render(pad(row, width-1))` — and
+  every row budget must account for that 1-cell gutter (the waterfall's column
+  math missed it first: rows overflowed and truncated their last column).
+- **One global spinner, app-driven.** Views expose `Busy() bool` (optional
+  `busyReporter` interface); the app runs a single 90ms `tea.Tick` loop while
+  the *visible* view is busy and advances a frame counter in `theme`. Views
+  just render `theme.Spin()` — no per-view spinner models. The test helper
+  `deliver` must drop `spinnerTickMsg` (like `dataMsg`) or a busy view re-arms
+  the tick forever and the test hangs.
+- **lipgloss has no border titles** — the home panels hand-roll their boxes
+  (`╭─ ● title ─…─╮` + `│` sides) precisely so the title can live in the top
+  border. `lipgloss.Width` (ANSI-aware) does the fill math on styled titles.
+- **Overlays replace the body, they don't composite.** lipgloss v1 can't
+  layer; the command palette / help / timeframe picker render *instead of* the
+  body via `lipgloss.Place`. Design overlays to be self-sufficient, not
+  peek-through.
+- Styled-string layout: `pad`/`cell` (lipgloss.Width) and `ansi.Truncate` are
+  safe on already-styled strings; plain `fmt.Sprintf("%-20s", styled)` is not
+  (counts escape bytes).
 
 ---
 

@@ -105,6 +105,9 @@ func (v *inspectorView) SetTimeframe(tf catalog.Timeframe) tea.Cmd { return nil 
 func (v *inspectorView) InputActive() bool                         { return v.searching }
 func (v *inspectorView) Crumb() string                             { return v.title }
 
+// Busy reports whether the detail fetch is in flight.
+func (v *inspectorView) Busy() bool { return v.loading }
+
 func (v *inspectorView) Echo() string {
 	if v.dql == "" {
 		return ""
@@ -114,6 +117,9 @@ func (v *inspectorView) Echo() string {
 }
 
 func (v *inspectorView) Hints() []keyHint {
+	if v.searching {
+		return []keyHint{{"type", "search fields"}, {"enter", "apply"}, {"esc", "clear"}}
+	}
 	return []keyHint{{"/", "search"}, {"j/k", "scroll"}, {"g/G", "top/bottom"}}
 }
 
@@ -238,9 +244,9 @@ func (v *inspectorView) View(width, height int) string {
 	if v.rec == nil {
 		switch {
 		case v.loading:
-			return theme.Spinner.Render("⟳ loading…")
+			return " " + theme.Spinner.Render(theme.Spin()+" loading…")
 		case v.err != nil:
-			return theme.Error.Render(wrap(v.err.Error(), width))
+			return theme.Error.Render("✗ " + wrap(v.err.Error(), width-2))
 		default:
 			return theme.Dim.Render("no record")
 		}
@@ -264,7 +270,7 @@ func (v *inspectorView) content(width int) string {
 				writeField(&b, f.Label, text, width, theme.FactLabel, 14)
 			}
 		}
-		b.WriteString("\n" + theme.GroupTitle.Render("── properties ") + "\n")
+		b.WriteString("\n" + theme.Section("properties") + "\n")
 	}
 
 	needle := strings.ToLower(strings.TrimSpace(v.search))
@@ -284,7 +290,7 @@ func (v *inspectorView) content(width int) string {
 	}
 	if len(prio) > 0 {
 		if len(v.facts) == 0 {
-			b.WriteString(theme.GroupTitle.Render("── highlights ") + "\n")
+			b.WriteString(theme.Section("highlights") + "\n")
 		}
 		for _, key := range prio {
 			writeField(&b, key, catalog.FormatValue(v.rec[key]), width, v.labelStyle(needle, key, theme.FactLabel), 32)
@@ -316,7 +322,7 @@ func (v *inspectorView) content(width int) string {
 		keys := groups[g]
 		sort.Strings(keys)
 		if g != "" {
-			b.WriteString("\n" + theme.GroupTitle.Render("── "+g+" ") + "\n")
+			b.WriteString("\n" + theme.Section(g) + "\n")
 		} else if b.Len() > 0 {
 			b.WriteString("\n")
 		}

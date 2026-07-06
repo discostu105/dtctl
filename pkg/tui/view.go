@@ -32,6 +32,10 @@ type keyHint struct {
 	Desc string
 }
 
+// busyReporter is implemented by views that know when they are waiting on
+// data; the app animates the loading spinner while the visible view is busy.
+type busyReporter interface{ Busy() bool }
+
 // --- navigation messages ------------------------------------------------------
 
 // pushViewMsg opens a catalog view. replace resets the stack (command-bar

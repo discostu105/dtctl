@@ -40,6 +40,10 @@ var tracesSpec = &Spec{
 	EnterTarget: "waterfall", // bespoke: enter opens the trace waterfall
 	Trace:       func(rec map[string]any) string { return Str(rec, "trace.id") },
 	Drills:      map[string]string{"l": "trace-logs"},
+	// Spans carry dt.smartscape.* scope fields only for some entity types
+	// (not HOST/AWS/FRONTEND) — a pin of another type would compose a filter
+	// that matches nothing. Gate the pin the same way the 's' drill does.
+	Scopable: func(e Entity) bool { return SpanScopable(e.Type) },
 }
 
 // traceLabel prefers the root span's endpoint; traces whose root fell outside

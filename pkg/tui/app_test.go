@@ -65,6 +65,11 @@ func deliver(a *app, cmd tea.Cmd) {
 	if _, isData := msg.(dataMsg); isData {
 		return
 	}
+	// Spinner ticks would re-arm themselves forever while a view waits on
+	// data that never arrives in tests.
+	if _, isTick := msg.(spinnerTickMsg); isTick {
+		return
+	}
 	_, next := a.Update(msg)
 	deliver(a, next)
 }
@@ -128,7 +133,7 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	// The details tab renders instantly from the list row: tab bar, curated
 	// key facts, and full properties without waiting for a fetch.
 	body := a.top().View(120, 30)
-	for _, want := range []string{"1 details", "2 metrics", "3 logs", "4 events", "5 problems",
+	for _, want := range []string{"1 · details", "2 · metrics", "3 · logs", "4 · events", "5 · problems",
 		"7.6 GiB", "2 logical / 1 physical", "aws us-east-1b", "HOST-AAAABBBBCCCCDDDD"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("details tab missing %q:\n%s", want, body)
@@ -387,8 +392,8 @@ func TestViewRendersChrome(t *testing.T) {
 
 func TestQuitAndHelpKeys(t *testing.T) {
 	a := testApp(t, "hosts")
-	_, cmd := a.Update(key("?"))
-	if cmd != nil || !a.helpActive {
+	press(a, key("?")) // may batch a spinner tick alongside — helpActive is what matters
+	if !a.helpActive {
 		t.Fatal("'?' should open help")
 	}
 	if !strings.Contains(a.View(), "dtctl tui — keys") {

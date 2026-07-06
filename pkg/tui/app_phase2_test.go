@@ -216,11 +216,11 @@ func TestBuildWaterfallTreeAndOrphans(t *testing.T) {
 	if len(rows) != 3 {
 		t.Fatalf("rows = %d", len(rows))
 	}
-	if rows[0].depth != 0 || rows[1].depth != 1 || rows[1].label != "SELECT" || !rows[1].failed {
+	if rows[0].guide != "" || rows[1].guide != "└─ " || rows[1].label != "SELECT" || !rows[1].failed {
 		t.Errorf("tree wrong: %+v", rows[:2])
 	}
-	if rows[2].depth != 0 {
-		t.Errorf("orphan (parent outside window) must render as root, depth = %d", rows[2].depth)
+	if rows[2].guide != "" {
+		t.Errorf("orphan (parent outside window) must render as root, guide = %q", rows[2].guide)
 	}
 }
 

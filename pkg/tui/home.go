@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
@@ -23,12 +24,14 @@ type homeView struct {
 	panels []*homePanel
 	focus  int // panel index owning the cursor
 	cursor int // line index within the focused panel
+	seq    int // refresh generation — drops stale in-flight results
 
 	width, height int
 }
 
 type homePanel struct {
 	title   string
+	dot     string // pre-styled severity dot shown in the panel title
 	query   func(tf catalog.Timeframe) string
 	line    func(rec map[string]any) (text, class string)
 	action  func(rec map[string]any, tf catalog.Timeframe) tea.Msg
@@ -49,6 +52,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 	v.panels = []*homePanel{
 		{
 			title: "active problems (24h)",
+			dot:   theme.Class("error", "●"),
 			query: func(catalog.Timeframe) string {
 				return `fetch dt.davis.problems, from:now() - 24h
 | filter not(dt.davis.is_duplicate)
@@ -71,12 +75,20 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 					catalog.Str(rec, "name"), affected), "error"
 			},
 			action: func(rec map[string]any, tf catalog.Timeframe) tea.Msg {
+				// The panel looks back 24h — the jump must too, or an ACTIVE
+				// problem last touched over the shorter window ago filters to
+				// an empty "no rows match" state.
+				day := catalog.Timeframe{Label: "24h", Dur: 24 * time.Hour}
+				if tf.Dur > day.Dur {
+					day = tf
+				}
 				return pushViewMsg{spec: catalog.Lookup("problems"),
-					scope: catalog.Scope{Timeframe: tf}, filter: catalog.Str(rec, "display_id")}
+					scope: catalog.Scope{Timeframe: day}, filter: catalog.Str(rec, "display_id")}
 			},
 		},
 		{
 			title: "failing services",
+			dot:   theme.SeriesAt(3).Render("●"),
 			query: func(tf catalog.Timeframe) string {
 				return fmt.Sprintf(`fetch spans, from:%s
 | filter request.is_failed == true and isNotNull(dt.smartscape.service)
@@ -102,6 +114,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 		},
 		{
 			title: "kubernetes warnings (24h)",
+			dot:   theme.Class("warn", "●"),
 			query: func(catalog.Timeframe) string {
 				return `timeseries events = sum(dt.kubernetes.events, default: 0), by:{k8s.pod.name, k8s.event.reason}, from:now() - 24h, interval: 1h, filter: { k8s.event.type == "Warning" }
 | limit 100`
@@ -129,6 +142,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 		},
 		{
 			title: "open vulnerabilities (24h)",
+			dot:   theme.SeriesAt(2).Render("●"),
 			query: func(catalog.Timeframe) string {
 				return `fetch security.events, from:now() - 24h
 | filter event.type == "VULNERABILITY_STATE_REPORT_EVENT"
@@ -166,12 +180,15 @@ func classRisk(level string) string {
 func (v *homeView) Init() tea.Cmd { return v.Refresh() }
 
 func (v *homeView) Refresh() tea.Cmd {
+	v.seq++
 	var cmds []tea.Cmd
 	for i, p := range v.panels {
 		p.loading = true
 		p.err = nil
 		p.dql = p.query(v.tf)
-		cmds = append(cmds, v.ds.query(panelOwner{v: v, idx: i}, i, p.dql))
+		// panelOwner.idx routes to the panel; the query seq is the refresh
+		// generation, so a slow result from a superseded refresh is dropped.
+		cmds = append(cmds, v.ds.query(panelOwner{v: v, idx: i}, v.seq, p.dql))
 	}
 	return tea.Batch(cmds...)
 }
@@ -183,6 +200,16 @@ func (v *homeView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 
 func (v *homeView) InputActive() bool { return false }
 func (v *homeView) Crumb() string     { return "home" }
+
+// Busy reports whether any panel is still loading (animates the spinner).
+func (v *homeView) Busy() bool {
+	for _, p := range v.panels {
+		if p.loading {
+			return true
+		}
+	}
+	return false
+}
 
 func (v *homeView) DQL() string {
 	if v.focus < len(v.panels) {
@@ -210,7 +237,7 @@ func (v *homeView) Update(msg tea.Msg) tea.Cmd {
 
 	case dataMsg:
 		po, ok := msg.owner.(panelOwner)
-		if !ok || po.v != v || po.idx >= len(v.panels) {
+		if !ok || po.v != v || po.idx >= len(v.panels) || msg.seq != v.seq {
 			return nil
 		}
 		p := v.panels[po.idx]
@@ -290,7 +317,7 @@ func (v *homeView) View(width, height int) string {
 	}
 	rows := (len(v.panels) + cols - 1) / cols
 	panelW := width/cols - 1
-	panelH := height/rows - 1
+	panelH := height / rows
 	if panelH < 4 {
 		panelH = 4
 	}
@@ -314,42 +341,61 @@ func (v *homeView) View(width, height int) string {
 	return strings.Join(out, "\n")
 }
 
-// renderPanel draws one panel at a fixed size.
+// renderPanel draws one panel as a rounded box with the title embedded in the
+// top border; the focused panel's border lights up in the accent color.
 func (v *homeView) renderPanel(idx int, p *homePanel, width, height int) string {
-	title := p.title
+	border := theme.PanelBlur
+	title := theme.PanelTitle2.Render(p.title)
 	if idx == v.focus {
-		title = theme.OverlayTitle.Render("▸ " + title)
-	} else {
-		title = theme.GroupTitle.Render("  " + title)
+		border = theme.PanelFocus
+		title = theme.PanelTitle.Render(p.title)
 	}
-	lines := []string{ansi.Truncate(title, width, "…")}
+	head := p.dot + " " + title
+	if !p.loading && p.err == nil && len(p.records) > 0 {
+		head += theme.Dim.Render(fmt.Sprintf(" · %d", len(p.records)))
+	}
+	head = ansi.Truncate(head, max(width-7, 1), "…")
+	fill := width - lipgloss.Width(head) - 5
+	if fill < 0 {
+		fill = 0
+	}
+	top := border.Render("╭─") + " " + head + " " + border.Render(strings.Repeat("─", fill)+"╮")
 
+	innerW := width - 4
+	var body []string
 	switch {
 	case p.loading:
-		lines = append(lines, theme.Spinner.Render("  ⟳ loading…"))
+		body = append(body, theme.Spinner.Render(theme.Spin()+" loading…"))
 	case p.err != nil:
-		lines = append(lines, theme.Error.Render(ansi.Truncate("  "+p.err.Error(), width, "…")))
+		body = append(body, theme.Error.Render(ansi.Truncate("✗ "+p.err.Error(), innerW, "…")))
 	case len(p.records) == 0:
-		lines = append(lines, theme.StatusOK.Render("  ✓ nothing to report"))
+		body = append(body, theme.StatusOK.Render("✓ nothing to report"))
 	default:
 		for li, rec := range p.records {
-			if len(lines) >= height {
+			if len(body) >= height-2 {
 				break
 			}
 			text, class := p.line(rec)
-			text = ansi.Truncate("  "+text, width, "…")
+			text = ansi.Truncate(text, innerW, "…")
 			if idx == v.focus && li == v.cursor {
-				text = theme.Selected.Render(pad(text, width))
+				text = theme.Selected.Render(pad(text, innerW))
 			} else if class != "" {
 				text = theme.Class(class, text)
 			}
-			lines = append(lines, text)
+			body = append(body, text)
 		}
 	}
-	for len(lines) < height {
-		lines = append(lines, "")
+	for len(body) < height-2 {
+		body = append(body, "")
 	}
-	return strings.Join(lines[:height], "\n")
+
+	side := border.Render("│")
+	lines := []string{top}
+	for _, l := range body[:height-2] {
+		lines = append(lines, side+" "+pad(l, innerW)+" "+side)
+	}
+	lines = append(lines, border.Render("╰"+strings.Repeat("─", max(width-2, 0))+"╯"))
+	return strings.Join(lines, "\n")
 }
 
 // joinHorizontal places panel blocks side by side.

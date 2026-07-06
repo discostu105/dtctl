@@ -1,55 +1,139 @@
-// Package theme centralizes lipgloss styles for the dtctl TUI. It sticks to
-// the 16-color ANSI palette so it degrades gracefully on limited terminals,
-// consistent with pkg/output's raw-ANSI styling of CLI output.
+// Package theme centralizes the dtctl TUI's visual language: an adaptive
+// palette (Catppuccin-derived) declared as truecolor with explicit 256- and
+// 16-color fallbacks per background flavor, so modern terminals get the
+// designed look and limited ones degrade to the same sane ANSI colors the
+// CLI output uses.
 package theme
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"hash/fnv"
+
+	"github.com/charmbracelet/lipgloss"
+)
+
+// dual builds an adaptive color: truecolor plus explicit ANSI-256 and ANSI-16
+// fallbacks, one triple per terminal background (dark first — the TUI's home
+// turf; light values come from the palette's light flavor).
+func dual(dTC, d256, d16, lTC, l256, l16 string) lipgloss.CompleteAdaptiveColor {
+	return lipgloss.CompleteAdaptiveColor{
+		Dark:  lipgloss.CompleteColor{TrueColor: dTC, ANSI256: d256, ANSI: d16},
+		Light: lipgloss.CompleteColor{TrueColor: lTC, ANSI256: l256, ANSI: l16},
+	}
+}
+
+// The palette. Accents are shared hues (Catppuccin Mocha / Latte); the grays
+// run from Text (loudest) through Muted to Faint (quietest), plus surface
+// tones for selection, chips, and rules.
+var (
+	Accent = dual("#89b4fa", "111", "12", "#1e66f5", "33", "4") // primary: blue
+	Sky    = dual("#89dceb", "117", "14", "#04a5e5", "39", "6")
+	Teal   = dual("#94e2d5", "116", "14", "#179299", "30", "6")
+	Green  = dual("#a6e3a1", "151", "10", "#40a02b", "70", "2")
+	Yellow = dual("#f9e2af", "223", "11", "#df8e1d", "172", "3")
+	Peach  = dual("#fab387", "216", "11", "#fe640b", "202", "3")
+	Red    = dual("#f38ba8", "211", "9", "#d20f39", "160", "1")
+	Mauve  = dual("#cba6f7", "183", "13", "#8839ef", "93", "5")
+
+	Text  = dual("#cdd6f4", "253", "15", "#4c4f69", "239", "0")
+	Muted = dual("#a6adc8", "146", "7", "#6c6f85", "245", "8")
+	Faint = dual("#6c7086", "243", "8", "#9ca0b0", "247", "8")
+
+	Border = dual("#494d64", "239", "8", "#acb0be", "249", "7")
+	SelBg  = dual("#3b4261", "237", "4", "#ccd0da", "252", "7")
+	ChipBg = dual("#313244", "236", "8", "#dce0e8", "253", "7")
+	Ink    = dual("#1e1e2e", "234", "0", "#eff1f5", "255", "15") // on-accent text
+)
 
 var (
 	// Chrome
-	AppName   = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
-	HeaderKey = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	HeaderVal = lipgloss.NewStyle().Foreground(lipgloss.Color("7"))
-	Crumb     = lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true)
-	CrumbDim  = lipgloss.NewStyle().Foreground(lipgloss.Color("4"))
+	Logo      = lipgloss.NewStyle().Bold(true).Background(Accent).Foreground(Ink).Padding(0, 1)
+	HeaderKey = lipgloss.NewStyle().Foreground(Faint)
+	HeaderVal = lipgloss.NewStyle().Bold(true).Foreground(Text)
+	HeaderSep = lipgloss.NewStyle().Foreground(Border)
+	Crumb     = lipgloss.NewStyle().Bold(true).Foreground(Accent)
+	CrumbDim  = lipgloss.NewStyle().Foreground(Faint)
+	Rule      = lipgloss.NewStyle().Foreground(Border)
 
 	// Table
-	TableHeader = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("6"))
-	Selected    = lipgloss.NewStyle().Reverse(true).Bold(true)
+	TableHeader = lipgloss.NewStyle().Bold(true).Foreground(Accent)
+	SortMark    = lipgloss.NewStyle().Bold(true).Foreground(Peach)
+	Selected    = lipgloss.NewStyle().Bold(true).Background(SelBg).Foreground(Text)
+	Gutter      = lipgloss.NewStyle().Bold(true).Foreground(Accent)
+	Count       = lipgloss.NewStyle().Bold(true).Foreground(Text)
 
 	// Footer
-	KeyHint  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	KeyDesc  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	Echo     = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	StatusOK = lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
-	Error    = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true)
+	KeyHint  = lipgloss.NewStyle().Bold(true).Foreground(Sky)
+	KeyDesc  = lipgloss.NewStyle().Foreground(Faint)
+	Echo     = lipgloss.NewStyle().Foreground(Faint)
+	StatusOK = lipgloss.NewStyle().Foreground(Green)
+	Error    = lipgloss.NewStyle().Bold(true).Foreground(Red)
 
 	// Overlays
 	OverlayBox = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("12")).
+			BorderForeground(Accent).
 			Padding(0, 2)
-	OverlayTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
+	OverlayTitle = lipgloss.NewStyle().Bold(true).Foreground(Text)
+
+	// Tabs (detail pages)
+	TabActive   = lipgloss.NewStyle().Bold(true).Background(Accent).Foreground(Ink).Padding(0, 1)
+	TabInactive = lipgloss.NewStyle().Foreground(Faint).Padding(0, 1)
+
+	// Panels (home)
+	PanelFocus  = lipgloss.NewStyle().Foreground(Accent)
+	PanelBlur   = lipgloss.NewStyle().Foreground(Border)
+	PanelTitle  = lipgloss.NewStyle().Bold(true).Foreground(Text)
+	PanelTitle2 = lipgloss.NewStyle().Foreground(Muted)
 
 	// Content
-	Dim        = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
-	Label      = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	FactLabel  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("14"))
-	Hit        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("11"))
-	GroupTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
-	Chart      = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
-	Spinner    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
-	Pin        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
-	Badge      = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	Dim        = lipgloss.NewStyle().Foreground(Faint)
+	Label      = lipgloss.NewStyle().Foreground(Sky)
+	FactLabel  = lipgloss.NewStyle().Bold(true).Foreground(Sky)
+	Hit        = lipgloss.NewStyle().Bold(true).Foreground(Yellow)
+	GroupTitle = lipgloss.NewStyle().Bold(true).Foreground(Accent)
+	Chart      = lipgloss.NewStyle().Foreground(Sky)
+	Track      = lipgloss.NewStyle().Foreground(Border)
+	Spinner    = lipgloss.NewStyle().Foreground(Peach)
+	Pin        = lipgloss.NewStyle().Bold(true).Foreground(Peach)
+	Badge      = lipgloss.NewStyle().Foreground(Mauve).Background(ChipBg).Padding(0, 1)
+	ArrowOut   = lipgloss.NewStyle().Foreground(Green)
+	ArrowIn    = lipgloss.NewStyle().Foreground(Peach)
 )
+
+// Series is the color cycle for multi-series charts and per-key coloring
+// (waterfall bars by service, metric charts by series index).
+var Series = []lipgloss.Style{
+	lipgloss.NewStyle().Foreground(Accent),
+	lipgloss.NewStyle().Foreground(Teal),
+	lipgloss.NewStyle().Foreground(Mauve),
+	lipgloss.NewStyle().Foreground(Peach),
+	lipgloss.NewStyle().Foreground(Sky),
+	lipgloss.NewStyle().Foreground(Green),
+}
+
+// ForKey returns a stable style from the Series cycle for a key, so the same
+// service always renders in the same color within a session.
+func ForKey(key string) lipgloss.Style {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(key))
+	return Series[h.Sum32()%uint32(len(Series))]
+}
+
+// SeriesAt returns the i-th series style, wrapping around the cycle.
+func SeriesAt(i int) lipgloss.Style { return Series[i%len(Series)] }
+
+// Section renders a group heading with a leading accent bar: "▍ title".
+func Section(title string) string {
+	return GroupTitle.Render("▍ " + title)
+}
 
 // classStyles maps the catalog's semantic cell classes to styles.
 var classStyles = map[string]lipgloss.Style{
-	"error": lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true),
-	"warn":  lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
-	"ok":    lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
-	"dim":   lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
-	"spark": lipgloss.NewStyle().Foreground(lipgloss.Color("14")),
+	"error": lipgloss.NewStyle().Bold(true).Foreground(Red),
+	"warn":  lipgloss.NewStyle().Foreground(Yellow),
+	"ok":    lipgloss.NewStyle().Foreground(Green),
+	"dim":   lipgloss.NewStyle().Foreground(Faint),
+	"spark": lipgloss.NewStyle().Foreground(Sky),
 }
 
 // Class styles text according to a semantic class name; unknown classes and
@@ -66,10 +150,22 @@ func Class(class, text string) string {
 func Safety(level string) lipgloss.Style {
 	switch level {
 	case "readonly":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("10"))
+		return lipgloss.NewStyle().Foreground(Green)
 	case "readwrite-mine":
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+		return lipgloss.NewStyle().Foreground(Yellow)
 	default:
-		return lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
+		return lipgloss.NewStyle().Foreground(Red)
 	}
 }
+
+// --- animated spinner --------------------------------------------------------
+
+var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var spinnerFrame int
+
+// Tick advances the global spinner animation (driven by the app's ticker
+// while any visible view reports itself busy).
+func Tick() { spinnerFrame = (spinnerFrame + 1) % len(spinnerFrames) }
+
+// Spin returns the current spinner frame glyph (style with Spinner).
+func Spin() string { return spinnerFrames[spinnerFrame] }

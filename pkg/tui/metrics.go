@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
@@ -52,6 +53,9 @@ func (v *metricsView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 
 func (v *metricsView) InputActive() bool { return false }
 
+// Busy reports whether the timeseries query is in flight.
+func (v *metricsView) Busy() bool { return v.loading }
+
 func (v *metricsView) Crumb() string {
 	return fmt.Sprintf("metrics (%s)", entityName(v.entity))
 }
@@ -91,18 +95,20 @@ func (v *metricsView) Update(msg tea.Msg) tea.Cmd {
 
 func (v *metricsView) View(width, height int) string {
 	var b strings.Builder
-	title := fmt.Sprintf("%s · %s · last %s", v.entity.Name, v.entity.Type, v.tf.Label)
-	b.WriteString(theme.GroupTitle.Render(title) + "\n")
+	title := " " + theme.OverlayTitle.Render(v.entity.Name) + "  " + theme.Badge.Render(v.entity.Type) +
+		theme.Dim.Render("  last "+v.tf.Label)
+	b.WriteString(title + "\n")
 
 	switch {
 	case v.loading:
-		b.WriteString(theme.Spinner.Render("⟳ loading…"))
+		b.WriteString(" " + theme.Spinner.Render(theme.Spin()+" loading…"))
 		return b.String()
 	case v.err != nil:
-		b.WriteString(theme.Error.Render(wrap(v.err.Error(), width)))
+		b.WriteString(theme.Error.Render("✗ " + wrap(v.err.Error(), width-2)))
 		return b.String()
 	case v.rec == nil:
-		b.WriteString(theme.Dim.Render("no data in timeframe / not monitored"))
+		b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center,
+			theme.Dim.Render("∅ no data in timeframe / not monitored")))
 		return b.String()
 	}
 
@@ -110,21 +116,25 @@ func (v *metricsView) View(width, height int) string {
 	if chartWidth < 10 {
 		chartWidth = 10
 	}
-	for _, series := range v.mspec.Series {
+	for i, series := range v.mspec.Series {
+		style := theme.SeriesAt(i)
 		values := floatSeries(v.rec[series.Alias])
-		b.WriteString("\n" + theme.Label.Render(series.Title))
+		b.WriteString("\n " + style.Bold(true).Render(series.Title))
 		if len(values) == 0 {
 			b.WriteString("  " + theme.Dim.Render("no data") + "\n")
 			continue
 		}
 		minV, maxV, avg, last := seriesStats(values)
-		b.WriteString(theme.Dim.Render(fmt.Sprintf("  min %s  avg %s  max %s  last %s%s",
-			formatMetric(minV), formatMetric(avg), formatMetric(maxV), formatMetric(last), series.Unit)))
-		b.WriteString("\n")
+		stats := fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s%s",
+			theme.Dim.Render("min"), formatMetric(minV),
+			theme.Dim.Render("avg"), formatMetric(avg),
+			theme.Dim.Render("max"), formatMetric(maxV),
+			theme.Dim.Render("last"), formatMetric(last), theme.Dim.Render(series.Unit))
+		b.WriteString(stats + "\n")
 
 		graph := output.NewBrailleGraph(chartWidth, 3)
 		graph.PlotLine(values, minV, maxV)
-		b.WriteString(theme.Chart.Render(indent(graph.Render(), 1)) + "\n")
+		b.WriteString(style.Render(indent(graph.Render(), 1)) + "\n")
 	}
 	return b.String()
 }

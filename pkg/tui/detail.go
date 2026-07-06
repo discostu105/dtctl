@@ -84,8 +84,16 @@ func (v *detailView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
 }
 
 func (v *detailView) InputActive() bool { return v.tabs[v.active].view.InputActive() }
-func (v *detailView) Crumb() string     { return entityName(v.entity) }
-func (v *detailView) Echo() string      { return v.tabs[v.active].view.Echo() }
+
+// Busy delegates to the active tab (animates the spinner while it loads).
+func (v *detailView) Busy() bool {
+	if br, ok := v.tabs[v.active].view.(busyReporter); ok {
+		return br.Busy()
+	}
+	return false
+}
+func (v *detailView) Crumb() string { return entityName(v.entity) }
+func (v *detailView) Echo() string  { return v.tabs[v.active].view.Echo() }
 
 func (v *detailView) Hints() []keyHint {
 	hints := []keyHint{{fmt.Sprintf("tab/1-%d", len(v.tabs)), "tabs"}}
@@ -155,25 +163,27 @@ func (v *detailView) setActive(i int) tea.Cmd {
 }
 
 func (v *detailView) childSize() bodySizeMsg {
-	// Two chrome lines: identity header + tab bar.
-	return bodySizeMsg{width: v.width, height: max(v.height-2, 1)}
+	// Three chrome lines: identity header, tab bar, separator rule.
+	return bodySizeMsg{width: v.width, height: max(v.height-3, 1)}
 }
 
 func (v *detailView) View(width, height int) string {
 	v.width, v.height = width, height
-	identity := theme.FactLabel.Render(" "+entityName(v.entity)) +
-		theme.Badge.Render(" · "+v.entity.Type) +
-		theme.Dim.Render(" · "+v.entity.ID)
+	identity := " " + theme.OverlayTitle.Render(entityName(v.entity)) +
+		"  " + theme.Badge.Render(v.entity.Type) +
+		theme.Dim.Render("  "+v.entity.ID)
 	labels := make([]string, len(v.tabs))
 	for i, t := range v.tabs {
-		label := fmt.Sprintf(" %d %s ", i+1, t.name)
+		label := fmt.Sprintf("%d · %s", i+1, t.name)
 		if i == v.active {
-			labels[i] = theme.Selected.Render(label)
+			labels[i] = theme.TabActive.Render(label)
 		} else {
-			labels[i] = theme.Dim.Render(label)
+			labels[i] = theme.TabInactive.Render(label)
 		}
 	}
-	bar := ansi.Truncate(strings.Join(labels, " "), width, "…")
-	return ansi.Truncate(identity, width, "…") + "\n" + bar + "\n" +
-		v.tabs[v.active].view.View(width, max(height-2, 1))
+	bar := " " + strings.Join(labels, " ")
+	rule := theme.Rule.Render(strings.Repeat("─", max(width, 0)))
+	return ansi.Truncate(identity, width, "…") + "\n" +
+		ansi.Truncate(bar, width, "…") + "\n" + rule + "\n" +
+		v.tabs[v.active].view.View(width, max(height-3, 1))
 }
