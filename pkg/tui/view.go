@@ -80,6 +80,13 @@ type metricsMsg struct {
 	entity catalog.Entity
 }
 
+// metricChartMsg opens the explorer chart for one metric key (enter on a
+// metric-explorer row); entity is the explorer's scope (nil = unscoped).
+type metricChartMsg struct {
+	key    string
+	entity *catalog.Entity
+}
+
 // applyFacetMsg asks the app to facet the nearest list view beneath the
 // current page by field=value (the inspector's 'f'). A value wrapped in '*'
 // applies as a contains pattern (array fields match through toString).

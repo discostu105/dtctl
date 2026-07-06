@@ -38,8 +38,13 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 	// scoping matches by plain k8s.* names, so the name is load-bearing.
 	scope := catalog.Scope{Entity: &v.entity, Timeframe: tf}
 	v.tabs = []detailTab{{name: "details", view: newEntityInfoView(ds, entity, rec)}}
+	// Every entity gets a metrics tab: the canned charts where a type has
+	// them (enter opens the explorer from there), the scoped metric explorer
+	// where it doesn't.
 	if catalog.MetricsFor(entity.Type) != nil {
 		v.tabs = append(v.tabs, detailTab{name: "metrics", view: newMetricsView(ds, entity, tf)})
+	} else if spec := catalog.Lookup("metrics"); spec != nil {
+		v.tabs = append(v.tabs, detailTab{name: "metrics", view: newTableView(ds, spec, scope)})
 	}
 	signalTabs := []string{"logs", "events", "problems"}
 	if catalog.SpanScopable(entity.Type) {

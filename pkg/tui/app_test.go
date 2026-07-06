@@ -154,13 +154,14 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 		}
 	}
 
-	// tab switches to metrics and lazily starts its query.
+	// tab switches to metrics and lazily starts its availability probe (the
+	// chart query follows once the probe returns).
 	press(a, key("tab"))
 	if dv.active != 1 {
 		t.Fatalf("tab should move to metrics, active = %d", dv.active)
 	}
 	mv, ok := dv.tabs[1].view.(*metricsView)
-	if !ok || !strings.Contains(mv.dql, "dt.host.cpu.usage") ||
+	if !ok || !strings.Contains(mv.dql, "metrics from:") ||
 		!strings.Contains(mv.dql, `toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Fatalf("metrics tab dql = %q", mv.dql)
 	}
@@ -315,21 +316,25 @@ func TestMetricsDrillForCuratedAndUncuratedTypes(t *testing.T) {
 	if !ok {
 		t.Fatalf("m should open metrics view for SERVICE, top = %T", a.top())
 	}
-	if !strings.Contains(mv.dql, "dt.service.request.count") {
+	// The canned view opens on its availability probe, scoped to the service.
+	if !strings.Contains(mv.dql, "metrics from:") || !strings.Contains(mv.dql, `toSmartscapeId("SERVICE-1")`) {
 		t.Errorf("service metrics dql = %s", mv.dql)
 	}
 	press(a, key("esc"))
 
-	// An uncurated entity type shows a status message instead of navigating.
+	// An uncurated entity type opens the metric explorer scoped to it.
 	row["smartscape.affected_entities"] = []any{
 		map[string]any{"id": "AWS_X-1", "name": "x", "type": "AWS_X"},
 	}
 	press(a, key("m"))
-	if _, ok := a.top().(*metricsView); ok {
-		t.Fatal("m must not navigate for uncurated entity types")
+	tv, ok := a.top().(*tableView)
+	if !ok || tv.spec.Name != "metrics" {
+		t.Fatalf("m should open the metric explorer for uncurated types, top = %T (%s)", a.top(), a.top().Crumb())
 	}
-	if a.status == "" || !a.statusErr {
-		t.Errorf("expected error status, got %q", a.status)
+	for _, want := range []string{"metrics from:", `dt.smartscape_source.id == toSmartscapeId("AWS_X-1")`, "by:{metric.key}"} {
+		if !strings.Contains(tv.dql, want) {
+			t.Errorf("explorer dql missing %q:\n%s", want, tv.dql)
+		}
 	}
 }
 

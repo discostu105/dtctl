@@ -202,7 +202,7 @@ var specs = []*Spec{
 	problemsSpec, servicesSpec, hostsSpec, logsSpec, tracesSpec, eventsSpec,
 	podsSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec,
 	awsSpec, entitiesSpec, resourcesSpec,
-	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec,
+	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, metricsSpec,
 }
 
 // All returns every registered view spec.

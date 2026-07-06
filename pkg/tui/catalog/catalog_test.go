@@ -121,10 +121,10 @@ func TestMetricsFor(t *testing.T) {
 	if host == nil || len(host.Series) != 3 {
 		t.Fatalf("MetricsFor(HOST) = %+v", host)
 	}
-	q := host.Query(Entity{ID: "HOST-9", Type: "HOST"}, Timeframe{Label: "30m"})
+	q := host.Query(Entity{ID: "HOST-9", Type: "HOST"}, Timeframe{Label: "30m"}, nil)
 	for _, want := range []string{
 		"timeseries {",
-		"avg(dt.host.cpu.usage)",
+		"cpu = avg(dt.host.cpu.usage)",
 		"from:now() - 30m",
 		`dt.smartscape.host == toSmartscapeId("HOST-9")`,
 	} {
@@ -133,7 +133,48 @@ func TestMetricsFor(t *testing.T) {
 		}
 	}
 	if MetricsFor("AWS_LAMBDA_FUNCTION") != nil {
-		t.Error("uncurated types should return nil (view shows a status message)")
+		t.Error("uncurated types should return nil (view falls back to the explorer)")
+	}
+}
+
+func TestMetricsSpecAvailabilitySubset(t *testing.T) {
+	pod := MetricsFor("K8S_POD")
+	e := Entity{ID: "K8S_POD-9", Type: "K8S_POD"}
+	tf := Timeframe{Label: "2h"}
+
+	probe := pod.AvailabilityQuery(e, tf)
+	for _, want := range []string{
+		"metrics from:now() - 2h",
+		`| filter dt.smartscape.k8s_pod == toSmartscapeId("K8S_POD-9")`,
+		"| summarize count(), by:{metric.key}",
+	} {
+		if !strings.Contains(probe, want) {
+			t.Errorf("availability probe missing %q:\n%s", want, probe)
+		}
+	}
+
+	// A limit-less pod reports only the universal keys: the query must chart
+	// exactly those — one absent metric in a timeseries query zeroes the
+	// whole result (validated live).
+	available := map[string]bool{
+		"dt.kubernetes.container.cpu_usage":          true,
+		"dt.kubernetes.container.memory_working_set": true,
+		"dt.kubernetes.pod.network_received_data":    true,
+		"dt.kubernetes.pod.network_transmitted_data": true,
+	}
+	q := pod.Query(e, tf, available)
+	for _, want := range []string{"cpu = avg(", "mem = avg(", "net_rx = avg(", "net_tx = avg("} {
+		if !strings.Contains(q, want) {
+			t.Errorf("subset query missing %q:\n%s", want, q)
+		}
+	}
+	for _, reject := range []string{"cpu_limit", "mem_limit", "throttled"} {
+		if strings.Contains(q, reject) {
+			t.Errorf("subset query must drop unavailable %q:\n%s", reject, q)
+		}
+	}
+	if pod.Query(e, tf, map[string]bool{}) != "" {
+		t.Error("nothing available should render an empty query")
 	}
 }
 

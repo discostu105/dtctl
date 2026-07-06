@@ -471,9 +471,22 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		// Containment navigation (k9s-style) when the spec declares it:
-		// workload → its pods, census row → typed list, trace → waterfall.
+		// workload → its pods, census row → typed list, trace → waterfall,
+		// metric-explorer row → chart (carrying the explorer's own scope).
 		if v.spec.EnterTarget == "waterfall" {
 			return v.openTrace(rec)
+		}
+		if v.spec.EnterTarget == "chart" {
+			key := catalog.Str(rec, "metric.key")
+			if key == "" {
+				return statusErr("row carries no metric key")
+			}
+			var entity *catalog.Entity
+			if v.scope.Entity != nil {
+				e := *v.scope.Entity
+				entity = &e
+			}
+			return func() tea.Msg { return metricChartMsg{key: key, entity: entity} }
 		}
 		if v.spec.EnterTarget != "" {
 			if target := catalog.Lookup(v.spec.EnterTarget); target != nil {
@@ -961,8 +974,12 @@ func (v *tableView) drill(target string) tea.Cmd {
 		return statusErr("selection carries no entity to scope by")
 	}
 	if target == "metrics" {
+		// Types without canned charts get the metric explorer scoped to the
+		// entity — every type has discoverable metrics, curated or not.
 		if catalog.MetricsFor(entity.Type) == nil {
-			return statusErr(fmt.Sprintf("no curated metrics for %s yet", entity.Type))
+			spec := catalog.Lookup("metrics")
+			scope := catalog.Scope{Entity: entity, Timeframe: v.scope.Timeframe}
+			return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 		}
 		return func() tea.Msg { return metricsMsg{entity: *entity} }
 	}

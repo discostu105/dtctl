@@ -133,6 +133,43 @@ can actually be filtered by.
   also emits a record with a **null by-key** — skip it when building the id→series
   map.
 
+### 1.6b The `metrics` command — the explorer substrate
+
+- The **`metrics` DQL command** enumerates metric *series* — one record per
+  metric key + full dimension set, `from:` bounded (`metrics from:now()-2h`).
+  It takes no positional args and no `filter:` parameter; narrow with `| filter`
+  and aggregate with `| summarize count(), by:{metric.key}` (~0.7s for a busy
+  tenant). `| search` and `fieldsSummary` both work after it, so the standard
+  table machinery (server search, facets) applies unchanged.
+- Per-entity metric discovery is `metrics | filter <scope> | summarize
+  by:{metric.key}` — a single pod on a busy tenant showed **~120 keys**
+  (dt.kubernetes/containers/process/runtime plus custom OTel app metrics),
+  which is why the explorer view exists at all.
+- **OTel-exported service metrics carry `service.name` and legacy
+  `dt.entity.service` but NOT `dt.smartscape.service`** — and the legacy
+  service id is a *different value* than the Smartscape one. Scoping service
+  metrics needs the or-chain in `MetricScopeFilter` (both id eras + the name);
+  on the test tenant the name clause grew one service's discovered keys from
+  3 to ~35 (http.server.*, db.client.*, gen_ai.*, custom app metrics).
+- Metric **metadata is absent**: `metric.unit` / `metric.description` are null
+  on every series record and `dt.semantic_dictionary.metrics` doesn't exist.
+  Explorer charts render unitless; only canned series carry curated units.
+- `dt.service.request.response_time` is **microseconds** (µs), not ms —
+  cross-validated against `avg(http.server.request.duration)` (seconds, OTel
+  convention) tracking within rounding on the same service.
+- **A multi-series `timeseries` query returns ZERO records if ANY requested
+  metric has no series at all** for the filter — and `default:` does *not*
+  rescue an entirely-absent key (it only fills gaps in existing series). This
+  silently blanked the whole pod metrics page for pods without limits set.
+  The fix is the two-phase flow in `metricsView`: probe availability with
+  `metrics … | summarize by:{metric.key}` first, then compose the timeseries
+  from the available subset (`MetricsSpec.AvailabilityQuery` / `.Query`).
+- Splitting a metric per dimension is `timeseries value = agg(key), by:{dim}`
+  — one record per dimension value. Discover the dims by sampling
+  `metrics | filter metric.key == "…" | limit 500` and counting distinct
+  values client-side (`discoverDims`); series records carry only dims plus
+  `metric.key`, so every other field is a candidate.
+
 ### 1.7 dt.davis.problems is a transition log, not a problem list
 
 Rows are **status-transition events** (many rows per problem). To get currently

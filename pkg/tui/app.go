@@ -230,6 +230,13 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	case metricsMsg:
 		return a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
 
+	case metricChartMsg:
+		var entity catalog.Entity
+		if msg.entity != nil {
+			entity = *msg.entity
+		}
+		return a.navigate(newMetricChartView(a.ds, msg.key, entity, a.tf), false)
+
 	case waterfallMsg:
 		return a.navigate(newWaterfallView(a.ds, msg.traceID, a.tf), false)
 
@@ -865,7 +872,7 @@ func (a *app) renderHelp() string {
 		{"Drill-down (pre-scoped to selection)", []keyHint{
 			{"l", "logs"},
 			{"s", "traces (spans) / jump to a log's trace"},
-			{"m", "metrics"},
+			{"m", "metrics — canned charts, or the metric explorer for other types"},
 			{"p", "problems"},
 			{"v", "events"},
 			{"x", "relations — walk the Smartscape topology"},
