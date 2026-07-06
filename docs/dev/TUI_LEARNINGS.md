@@ -170,6 +170,43 @@ Affected-entity id arrays differ by era: `smartscape.affected_entity.ids` uses
   (`cloud.aws.rds.CPUUtilization.By.DBInstanceIdentifier`); scope by
   `dt.smartscape_source.id == toSmartscapeId(...)`.
 
+### 1.10 search & fieldsSummary — the facet substrate
+
+All validated live; implementation in `pkg/tui/catalog/facets.go`.
+
+- **`| search "text"` placement is constrained.** It works after the source
+  command (`fetch`, `smartscapeNodes`) and after `filter`/`fieldsRemove`, but
+  is **rejected after transforming commands** — `parse`, `expand`,
+  `summarize` — with `SEARCH_COMMAND_NOT_ALLOWED_AFTER`. Inject it directly
+  after the source line (`InjectSearches`), never before the sort/limit tail
+  (found the hard way on the pods pipeline). **Chained search stages compose
+  as AND** (`| search "*a*"\n| search "*b*"`), so stacked terms need no
+  expression syntax.
+- **`search` matches whole tokens, not substrings.** `search "fss"` does
+  *not* match pod `…-fssb5`; `"fss*"` and `"*fss*"` do. Wrap bare terms in
+  `*…*` to get the contains semantics a filter box promises. Matching is
+  case-insensitive across all fields.
+- **`fieldsSummary <field>, topValues: N`** returns one record per field:
+  `{field, count, rawCount, values: [{value, occurrence-count}]}` — counts
+  are stringified longs, and **values are stringified even for numeric
+  fields** (`"2"` for `logical_cores`).
+- **Facet comparisons must go through `toString()`.** `logical_cores == "2"`
+  is *silently empty* on a numeric field; `toString(logical_cores) == "2"`
+  matches — and composes fine with string fields too, so it is the universal
+  exact encoding for a stringified value. Patterns use
+  `matchesValue(toString(field), "pay*")`: case-insensitive, `*` wildcards
+  allowed at either end, and `toString()` is accepted as its first argument.
+- **Array fields facet through the same pattern encoding.**
+  `toString(arrayField)` renders the elements into one string
+  (`["KUBERNETES_CLUSTER-…"]`), so
+  `matchesValue(toString(arrayField), "*ELEMENT*")` matches rows whose array
+  contains the element — the inspector's facet-by-array-element rides on
+  this. Note `matchesValue` patterns must be **constants**
+  (`MANDATORY_PARAMETER_HAS_TO_BE_CONSTANT` with `concat(...)`).
+- Facet `filter` stages stay before the sort/limit tail — after a
+  `summarize`, that's what makes them filter the exact fields the columns
+  (and the facet attribute picker, built from fetched record keys) present.
+
 ---
 
 ## 2. TUI extension model — how to add a view

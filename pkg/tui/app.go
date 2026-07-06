@@ -243,6 +243,13 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		a.status, a.statusErr = msg.text, msg.isErr
 		return nil
 
+	case historyMarkMsg:
+		a.recordHistory()
+		return nil
+
+	case applyFacetMsg:
+		return a.applyFacetBelow(msg.field, msg.value)
+
 	case refreshTickMsg:
 		if msg.gen != a.refreshGen || refreshIntervals[a.refreshIdx] == 0 {
 			return nil
@@ -435,6 +442,33 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 		return tea.Batch(nav, statusErr(fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)))
 	}
 	return nav
+}
+
+// applyFacetBelow routes an inspector's facet request to the nearest list
+// beneath the current page — a table on the stack, or a detail page whose
+// active tab is one — popping down to it. The target must actually carry the
+// field: a facet on a missing field would silently empty the list, the exact
+// trap the picker avoids by deriving attributes from fetched records.
+func (a *app) applyFacetBelow(field, value string) tea.Cmd {
+	for i := len(a.stack) - 2; i >= 0; i-- {
+		var tv *tableView
+		switch v := a.stack[i].(type) {
+		case *tableView:
+			tv = v
+		case *detailView:
+			tv, _ = v.tabs[v.active].view.(*tableView)
+		}
+		if tv == nil {
+			continue
+		}
+		if !tv.hasField(field) {
+			return statusErr(fmt.Sprintf("%s rows carry no %s field", tv.spec.Name, field))
+		}
+		a.prev = a.stack
+		a.stack = a.stack[:i+1]
+		return tv.addFacet(catalog.Facet{Field: field, Value: value})
+	}
+	return statusErr("no list view beneath to facet")
 }
 
 // selection asks the current view for its highlighted row and entity.
@@ -817,7 +851,9 @@ func (a *app) renderHelp() string {
 			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
 			{"H", "history — restore a previous page (survives restarts)"},
-			{"/", "filter table · J/K sort column/direction"},
+			{"/", "filter table (live) — enter adds it as a server-side search, alt+enter replaces"},
+			{"f / F", "facet manager: add attribute=value filters (fieldsSummary top values, * patterns), edit/remove each / clear all"},
+			{"J/K", "sort column/direction"},
 			{"j/k ↑/↓ g/G", "move"},
 		}},
 		{"Drill-down (pre-scoped to selection)", []keyHint{

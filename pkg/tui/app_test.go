@@ -182,17 +182,17 @@ func TestDetailTabEscClearsChildFilterBeforePopping(t *testing.T) {
 
 	press(a, key("/"))
 	press(a, key("x"))
-	press(a, key("enter")) // blur the filter input, filter stays set
-	if logs.filter != "x" {
-		t.Fatalf("filter = %q, want x", logs.filter)
+	press(a, key("enter")) // promote to a server-side search
+	if len(logs.searches) != 1 || logs.searches[0] != "x" || logs.filter != "" {
+		t.Fatalf("enter should promote the filter to a server search: searches=%v filter=%q", logs.searches, logs.filter)
 	}
 
 	press(a, key("esc"))
 	if len(a.stack) != 2 {
-		t.Fatalf("esc should clear the tab's filter, not pop the detail page (depth %d)", len(a.stack))
+		t.Fatalf("esc should clear the tab's search, not pop the detail page (depth %d)", len(a.stack))
 	}
-	if logs.filter != "" {
-		t.Errorf("filter not cleared: %q", logs.filter)
+	if len(logs.searches) != 0 {
+		t.Errorf("search not cleared: %v", logs.searches)
 	}
 
 	press(a, key("esc"))

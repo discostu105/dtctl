@@ -26,16 +26,20 @@ const maxHistoryEntries = 50
 // pageRef describes one view on the stack with just enough identity to
 // rebuild it fresh.
 type pageRef struct {
-	Kind    string          `json:"kind"`
-	Crumb   string          `json:"crumb,omitempty"`   // display label at snapshot time
-	View    string          `json:"view,omitempty"`    // catalog spec name (table)
-	Filter  string          `json:"filter,omitempty"`  // table's incremental filter
-	Arg     string          `json:"arg,omitempty"`     // scope arg (census → typed list)
-	TraceID string          `json:"traceId,omitempty"` // waterfall / trace-scoped tables
-	DQL     string          `json:"dql,omitempty"`     // query editor content
-	Entity  *catalog.Entity `json:"entity,omitempty"`  // detail/metrics/relations/table scope
-	Title   string          `json:"title,omitempty"`   // inspector title
-	Rec     map[string]any  `json:"rec,omitempty"`     // inspector record, kept verbatim
+	Kind   string `json:"kind"`
+	Crumb  string `json:"crumb,omitempty"`  // display label at snapshot time
+	View   string `json:"view,omitempty"`   // catalog spec name (table)
+	Filter string `json:"filter,omitempty"` // table's incremental filter
+	// Search is the pre-multi-search field, still read for old history files.
+	Search   string          `json:"search,omitempty"`
+	Searches []string        `json:"searches,omitempty"` // table's server-side searches
+	Facets   []catalog.Facet `json:"facets,omitempty"`   // table's server-side facets
+	Arg      string          `json:"arg,omitempty"`      // scope arg (census → typed list)
+	TraceID  string          `json:"traceId,omitempty"`  // waterfall / trace-scoped tables
+	DQL      string          `json:"dql,omitempty"`      // query editor content
+	Entity   *catalog.Entity `json:"entity,omitempty"`   // detail/metrics/relations/table scope
+	Title    string          `json:"title,omitempty"`    // inspector title
+	Rec      map[string]any  `json:"rec,omitempty"`      // inspector record, kept verbatim
 }
 
 // historyEntry is one visited breadcrumb trail.
@@ -69,7 +73,13 @@ func (e historyEntry) signature() string {
 		if ref.Entity != nil {
 			id = ref.Entity.ID
 		}
-		fmt.Fprintf(&b, "|%s/%s/%s/%s/%s/%s/%s", ref.Kind, ref.View, ref.Filter, ref.Arg, ref.TraceID, ref.DQL, id)
+		fmt.Fprintf(&b, "|%s/%s/%s/%s/%s/%s/%s/%s", ref.Kind, ref.View, ref.Filter, ref.Arg, ref.TraceID, ref.DQL, id, ref.Search)
+		for _, s := range ref.Searches {
+			fmt.Fprintf(&b, "/⌕%s", s)
+		}
+		for _, f := range ref.Facets {
+			fmt.Fprintf(&b, "/%s", f.Label())
+		}
 		if ref.Kind == "inspector" {
 			fmt.Fprintf(&b, "/%s/%s/%s", ref.Title, catalog.Str(ref.Rec, "timestamp"), catalog.Str(ref.Rec, "display_id"))
 		}
@@ -208,7 +218,8 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 		return pageRef{Kind: "home", Crumb: v.Crumb()}, true
 	case *tableView:
 		ref := pageRef{Kind: "table", Crumb: v.Crumb(), View: v.spec.Name,
-			Filter: v.filter, Arg: v.scope.Arg, TraceID: v.scope.TraceID}
+			Filter: v.filter, Searches: v.searches, Facets: v.facets,
+			Arg: v.scope.Arg, TraceID: v.scope.TraceID}
 		if v.scope.Entity != nil {
 			e := *v.scope.Entity
 			ref.Entity = &e
@@ -252,6 +263,11 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 		if ref.Filter != "" {
 			v.setFilter(ref.Filter)
 		}
+		v.searches = ref.Searches
+		if ref.Search != "" { // an entry saved before searches stacked
+			v.searches = append(v.searches, ref.Search)
+		}
+		v.facets = ref.Facets
 		return v, nil
 	case "query":
 		v := newQueryView(a.ds, ref.DQL, tf)

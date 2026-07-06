@@ -80,6 +80,21 @@ type metricsMsg struct {
 	entity catalog.Entity
 }
 
+// applyFacetMsg asks the app to facet the nearest list view beneath the
+// current page by field=value (the inspector's 'f'). A value wrapped in '*'
+// applies as a contains pattern (array fields match through toString).
+type applyFacetMsg struct {
+	field string
+	value string
+}
+
+// historyMarkMsg asks the app to snapshot the current stack into the
+// persistent history — a view's server-side narrowing (search, facets)
+// changed its identity without a navigation.
+type historyMarkMsg struct{}
+
+func markHistory() tea.Msg { return historyMarkMsg{} }
+
 // statusMsg shows a transient message in the footer.
 type statusMsg struct {
 	text  string

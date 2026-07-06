@@ -179,7 +179,7 @@ func (v *inspectorView) Hints() []keyHint {
 			hints = append(hints, keyHint{"enter", "collapse"})
 		}
 	}
-	return append(hints, keyHint{"y", "yank value"}, keyHint{"/", "search"})
+	return append(hints, keyHint{"f", "facet list by field"}, keyHint{"y", "yank value"}, keyHint{"/", "search"})
 }
 
 func (v *inspectorView) Update(msg tea.Msg) tea.Cmd {
@@ -272,10 +272,46 @@ func (v *inspectorView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "enter":
 		return v.enterRow()
+	case "f":
+		return v.facetRow()
 	}
 	var cmd tea.Cmd
 	v.vp, cmd = v.vp.Update(msg)
 	return cmd
+}
+
+// facetRow asks the app to facet the nearest list beneath this page by the
+// selected field's value: scalars apply exactly, and an exploded array
+// element applies as a contains pattern — the underlying field is an array,
+// which toString renders as one matchable string (validated live).
+func (v *inspectorView) facetRow() tea.Cmd {
+	row := v.selectedRow()
+	if row == nil {
+		return nil
+	}
+	field := row.key
+	if strings.HasPrefix(field, "__enrich.") {
+		return statusErr("enrichment columns are synthetic — no such field server-side")
+	}
+	switch val := v.rec[field].(type) {
+	case map[string]any:
+		return statusErr("can't facet on a structured value — pick one of its fields")
+	case []any:
+		if row.label == row.key || row.val.raw == "" {
+			return statusErr("can't facet on a whole array — select one element")
+		}
+		value := "*" + row.val.raw + "*"
+		return func() tea.Msg { return applyFacetMsg{field: field, value: value} }
+	default:
+		value := catalog.FormatValue(val)
+		if value == "" {
+			return statusErr("empty value — nothing to facet by")
+		}
+		if len(value) > 200 {
+			return statusErr("value too long to facet by")
+		}
+		return func() tea.Msg { return applyFacetMsg{field: field, value: value} }
+	}
 }
 
 // enterRow acts on the selected field: follow an entity/trace link, or

@@ -190,7 +190,7 @@ func TestFooterHintsAdaptToInputFocus(t *testing.T) {
 	if strings.Contains(footer, "quit") || strings.Contains(footer, "timeframe") {
 		t.Errorf("footer must not advertise global keys while typing:\n%s", footer)
 	}
-	if !strings.Contains(footer, "apply") {
+	if !strings.Contains(footer, "server search") {
 		t.Errorf("footer should show input-mode hints:\n%s", footer)
 	}
 }

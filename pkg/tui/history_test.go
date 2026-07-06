@@ -86,9 +86,9 @@ func TestHistorySurvivesSessions(t *testing.T) {
 	for _, r := range "co" { // each simulated keystroke costs a blink tick — keep it short
 		press(a, key(string(r)))
 	}
-	press(a, key("enter")) // blur the filter, keep it applied
+	press(a, key("enter")) // promote to a server-side search
 
-	// 'q' snapshots the final stack — including the filter typed after the
+	// 'q' snapshots the final stack — including the search typed after the
 	// push — and saves.
 	if _, cmd := a.Update(key("q")); cmd == nil {
 		t.Fatal("'q' should quit")
@@ -97,20 +97,23 @@ func TestHistorySurvivesSessions(t *testing.T) {
 		t.Fatalf("history file not written: %v", err)
 	}
 
-	// Next session: the trail (with the filter) is offered and restorable.
+	// Next session: the trail (with the search) is offered and restorable.
 	b := testAppHist(t, "home", path)
 	press(b, key("H"))
 	if !b.histActive || len(b.histList) == 0 {
 		t.Fatalf("previous session's history missing, list = %+v", b.histList)
 	}
 	top := b.histList[0].Stack[len(b.histList[0].Stack)-1]
-	if top.View != "logs" || top.Filter != "co" {
-		t.Fatalf("persisted top page = %+v, want logs with filter co", top)
+	if top.View != "logs" || len(top.Searches) != 1 || top.Searches[0] != "co" {
+		t.Fatalf("persisted top page = %+v, want logs with search co", top)
 	}
 	press(b, key("enter"))
 	logs, ok := b.top().(*tableView)
-	if !ok || logs.spec.Name != "logs" || logs.filter != "co" {
-		t.Fatalf("restored page = %v filter=%q", b.top().Crumb(), logs.filter)
+	if !ok || logs.spec.Name != "logs" || len(logs.searches) != 1 || logs.searches[0] != "co" {
+		t.Fatalf("restored page = %v searches=%v", b.top().Crumb(), logs.searches)
+	}
+	if !strings.Contains(logs.dql, `| search "*co*"`) {
+		t.Errorf("restored view did not refetch with the search stage:\n%s", logs.dql)
 	}
 }
 
