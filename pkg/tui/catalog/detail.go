@@ -15,9 +15,11 @@ type Fact struct {
 
 // DetailQuery fetches the full Smartscape node behind an entity. Validated
 // live: id must be compared via toSmartscapeId() — a plain string comparison
-// silently matches nothing.
+// silently matches nothing. k8s.object (the raw manifest, multiple KB of
+// JSON) is dropped alongside references; the curated facts cover its
+// interesting parts.
 func DetailQuery(e Entity) string {
-	return fmt.Sprintf("smartscapeNodes %q\n| filter id == toSmartscapeId(%q)\n| fieldsRemove references\n| limit 1",
+	return fmt.Sprintf("smartscapeNodes %q\n| filter id == toSmartscapeId(%q)\n| fieldsRemove references, k8s.object\n| limit 1",
 		e.Type, e.ID)
 }
 
@@ -45,12 +47,90 @@ func KeyFacts(entityType string) []Fact {
 			Fact{Label: "first seen", Value: lifetimeBound("start")},
 			Fact{Label: "last seen", Value: lifetimeBound("end")},
 		)
+	case "K8S_POD":
+		return append(common,
+			Fact{Label: "phase", Value: factField("k8s.pod.phase")},
+			Fact{Label: "namespace", Value: factField("k8s.namespace.name")},
+			Fact{Label: "node", Value: factField("k8s.node.name")},
+			Fact{Label: "workload", Value: podWorkload},
+			Fact{Label: "cluster", Value: factField("k8s.cluster.name")},
+			Fact{Label: "cost center", Value: factField("dt.cost.costcenter")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	case "K8S_DEPLOYMENT", "K8S_STATEFULSET", "K8S_DAEMONSET":
+		return append(common,
+			Fact{Label: "kind", Value: factField("k8s.workload.kind")},
+			Fact{Label: "namespace", Value: factField("k8s.namespace.name")},
+			Fact{Label: "cluster", Value: factField("k8s.cluster.name")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	case "K8S_NODE":
+		return append(common,
+			Fact{Label: "cluster", Value: factField("k8s.cluster.name")},
+			Fact{Label: "instance", Value: labelTag("node.kubernetes.io/instance-type")},
+			Fact{Label: "zone", Value: labelTag("topology.kubernetes.io/zone")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	case "K8S_CLUSTER":
+		return append(common,
+			Fact{Label: "distribution", Value: factField("k8s.cluster.distribution")},
+			Fact{Label: "version", Value: factField("k8s.cluster.version")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	case "FRONTEND":
+		return append(common,
+			Fact{Label: "type", Value: factField("frontend.type")},
+			Fact{Label: "instrumentation", Value: factField("dt.rum.instrumentation.id")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	case "DB_INSTANCE_POSTGRES", "DB_DATABASE_POSTGRES":
+		return append(common,
+			Fact{Label: "system", Value: factField("db.system")},
+			Fact{Label: "database", Value: factField("db.database.name")},
+			Fact{Label: "version", Value: factField("db.instance.version")},
+			Fact{Label: "host", Value: factField("db.connection_details.hostname")},
+			Fact{Label: "port", Value: factField("db.connection_details.port")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	}
+	if strings.HasPrefix(entityType, "AWS_") {
+		return append(common,
+			Fact{Label: "type", Value: factField("type")},
+			Fact{Label: "arn", Value: factField("aws.arn")},
+			Fact{Label: "region", Value: factField("aws.region")},
+			Fact{Label: "account", Value: factField("aws.account.id")},
+			Fact{Label: "resource", Value: factField("aws.resource.type")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
 	}
 	return append(common,
 		Fact{Label: "type", Value: factField("type")},
 		Fact{Label: "first seen", Value: lifetimeBound("start")},
 		Fact{Label: "last seen", Value: lifetimeBound("end")},
 	)
+}
+
+// podWorkload joins the workload kind and name ("deployment checkout").
+func podWorkload(rec map[string]any) string {
+	return joinNonEmpty(" ", Str(rec, "k8s.workload.kind"), Str(rec, "k8s.workload.name"))
+}
+
+// labelTag reads a key from the tags:k8s.labels map field.
+func labelTag(key string) func(map[string]any) string {
+	return func(rec map[string]any) string {
+		labels, _ := rec["tags:k8s.labels"].(map[string]any)
+		if labels == nil {
+			return ""
+		}
+		return Str(labels, key)
+	}
 }
 
 func factField(key string) func(map[string]any) string {

@@ -32,7 +32,7 @@ var problemsSpec = &Spec{
 		{Title: "AGE", Width: 5, Value: func(rec map[string]any) string { return Age(Str(rec, "event.start")) }},
 	},
 	Entity: problemEntity,
-	Drills: map[string]string{"l": "logs", "v": "events", "m": "metrics"},
+	Drills: map[string]string{"l": "logs", "s": "traces", "v": "events", "m": "metrics"},
 }
 
 func classProblemStatus(val string) string {
@@ -86,14 +86,23 @@ var servicesSpec = &Spec{
 	},
 	Columns: []Column{
 		{Title: "NAME", Field: "name"},
+		SparkColumn("REQUESTS", "req", 10),
+		SparkColumn("FAILED", "fail", 10),
 		{Title: "ID", Field: "id", Width: 25},
-		{Title: "DETECTION", Width: 9, Value: func(rec map[string]any) string {
-			return Str(rec, "dt.service_detection.version")
-		}},
-		{Title: "SEEN", Width: 5, Value: lifetimeAge},
+		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
 	},
 	Entity: nodeEntity("SERVICE"),
-	Drills: map[string]string{"l": "logs", "p": "problems", "v": "events", "m": "metrics"},
+	Drills: map[string]string{"l": "logs", "s": "traces", "p": "problems", "v": "events", "m": "metrics"},
+	Enrich: &EnrichSpec{
+		Key:    func(rec map[string]any) string { return Str(rec, "id") },
+		By:     "dt.smartscape.service",
+		Series: []string{"req", "fail"},
+		Query: func(tf Timeframe, keys []string) string {
+			return fmt.Sprintf(
+				"timeseries { req = sum(dt.service.request.count), fail = sum(dt.service.request.failure_count) }, by:{dt.smartscape.service}, from:%s, interval: %s, filter: { in(dt.smartscape.service, {%s}) }",
+				tf.DQL(), sparkInterval(tf), idList(keys))
+		},
+	},
 }
 
 var hostsSpec = &Spec{
@@ -109,17 +118,28 @@ var hostsSpec = &Spec{
 		{Title: "OS", Width: 7, Value: func(rec map[string]any) string {
 			return strings.TrimPrefix(Str(rec, "os.type"), "OS_TYPE_")
 		}},
-		{Title: "CPUS", Width: 4, Field: "logical_cores"},
-		{Title: "MEMORY", Width: 9, Value: func(rec map[string]any) string {
+		{Title: "CPUS", Width: 4, Right: true, Field: "logical_cores"},
+		SparkColumn("CPU", "cpu", 8),
+		SparkColumn("MEM", "mem", 8),
+		{Title: "MEMORY", Width: 9, Right: true, Value: func(rec map[string]any) string {
 			return FormatBytesStr(Str(rec, "memory"))
-		}},
+		}, Sort: func(rec map[string]any) any { return Str(rec, "memory") }},
 		{Title: "IP", Width: 15, Value: func(rec map[string]any) string { return StrFirst(rec, "ip") }},
-		{Title: "CLOUD", Width: 5, Field: "cloud.provider"},
 		{Title: "SKU", Width: 12, Field: "sku"},
-		{Title: "SEEN", Width: 5, Value: lifetimeAge},
+		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
 	},
 	Entity: nodeEntity("HOST"),
 	Drills: map[string]string{"l": "logs", "p": "problems", "v": "events", "m": "metrics"},
+	Enrich: &EnrichSpec{
+		Key:    func(rec map[string]any) string { return Str(rec, "id") },
+		By:     "dt.smartscape.host",
+		Series: []string{"cpu", "mem"},
+		Query: func(tf Timeframe, keys []string) string {
+			return fmt.Sprintf(
+				"timeseries { cpu = avg(dt.host.cpu.usage), mem = avg(dt.host.memory.usage) }, by:{dt.smartscape.host}, from:%s, interval: %s, filter: { in(dt.smartscape.host, {%s}) }",
+				tf.DQL(), sparkInterval(tf), idList(keys))
+		},
+	},
 }
 
 // nodeEntity extracts the entity from a smartscapeNodes record.
@@ -157,17 +177,24 @@ var logsSpec = &Spec{
 		if s.Entity != nil {
 			fmt.Fprintf(&b, "\n| filter %s", SignalFilter(*s.Entity))
 		}
+		if s.TraceID != "" {
+			// Log trace_id is a plain string field (validated live) — no
+			// toUid() needed, unlike span trace.id.
+			fmt.Fprintf(&b, "\n| filter trace_id == %q", s.TraceID)
+		}
 		b.WriteString("\n| sort timestamp desc\n| limit 300")
 		return b.String()
 	},
 	Columns: []Column{
-		{Title: "TIME", Width: 12, Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) }},
+		{Title: "TIME", Width: 12, Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) },
+			Sort: func(rec map[string]any) any { return Str(rec, "timestamp") }},
 		{Title: "LEVEL", Width: 5, Value: logLevel, Class: classLogLevel},
 		{Title: "SOURCE", Width: 24, Value: logSource},
 		{Title: "CONTENT", Field: "content"},
 	},
 	Entity: signalSourceEntity,
-	Drills: map[string]string{"p": "problems"},
+	Trace:  func(rec map[string]any) string { return Str(rec, "trace_id") },
+	Drills: map[string]string{"p": "problems", "s": "trace"},
 }
 
 // logLevel prefers loglevel over the coarser status field.
@@ -278,6 +305,86 @@ func MetricsFor(entityType string) *MetricsSpec {
 			Query: func(e Entity, tf Timeframe) string {
 				return fmt.Sprintf(
 					"timeseries { req = sum(dt.service.request.count), fail = sum(dt.service.request.failure_count), rt = avg(dt.service.request.response_time) }, from:%s, filter: { dt.smartscape.service == toSmartscapeId(%q) }",
+					tf.DQL(), e.ID)
+			},
+		}
+	case "K8S_POD":
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "cpu", Title: "CPU usage (vs limit)", Unit: "mCores"},
+				{Alias: "cpu_limit", Title: "CPU limit", Unit: "mCores"},
+				{Alias: "mem", Title: "Memory working set", Unit: "B"},
+				{Alias: "mem_limit", Title: "Memory limit", Unit: "B"},
+				{Alias: "throttled", Title: "CPU throttled", Unit: "mCores"},
+			},
+			Query: func(e Entity, tf Timeframe) string {
+				return fmt.Sprintf(
+					"timeseries { cpu = avg(dt.kubernetes.container.cpu_usage), cpu_limit = avg(dt.kubernetes.container.limits_cpu), mem = avg(dt.kubernetes.container.memory_working_set), mem_limit = avg(dt.kubernetes.container.limits_memory), throttled = avg(dt.kubernetes.container.cpu_throttled) }, from:%s, filter: { dt.smartscape.k8s_pod == toSmartscapeId(%q) }",
+					tf.DQL(), e.ID)
+			},
+		}
+	case "K8S_DEPLOYMENT", "K8S_STATEFULSET", "K8S_DAEMONSET":
+		field := "dt.smartscape." + strings.ToLower(entityType)
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "desired", Title: "Desired pods", Unit: ""},
+			},
+			Query: func(e Entity, tf Timeframe) string {
+				return fmt.Sprintf(
+					"timeseries desired = max(dt.kubernetes.workload.pods_desired), from:%s, filter: { %s == toSmartscapeId(%q) }",
+					tf.DQL(), field, e.ID)
+			},
+		}
+	case "K8S_NODE":
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "cpu_alloc", Title: "CPU allocatable", Unit: "mCores"},
+				{Alias: "mem_alloc", Title: "Memory allocatable", Unit: "B"},
+				{Alias: "pods_alloc", Title: "Pods allocatable", Unit: ""},
+			},
+			Query: func(e Entity, tf Timeframe) string {
+				return fmt.Sprintf(
+					"timeseries { cpu_alloc = max(dt.kubernetes.node.cpu_allocatable), mem_alloc = max(dt.kubernetes.node.memory_allocatable), pods_alloc = max(dt.kubernetes.node.pods_allocatable) }, from:%s, filter: { dt.smartscape.k8s_node == toSmartscapeId(%q) }",
+					tf.DQL(), e.ID)
+			},
+		}
+	case "FRONTEND":
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "req", Title: "Requests", Unit: ""},
+				{Alias: "err", Title: "Errors", Unit: ""},
+				{Alias: "lcp", Title: "Largest contentful paint", Unit: "ms"},
+				{Alias: "inp", Title: "Interaction to next paint", Unit: "ms"},
+			},
+			Query: func(e Entity, tf Timeframe) string {
+				return fmt.Sprintf(
+					"timeseries { req = sum(dt.frontend.request.count), err = sum(dt.frontend.error.count), lcp = avg(dt.frontend.web.page.largest_contentful_paint), inp = avg(dt.frontend.web.page.interaction_to_next_paint) }, from:%s, filter: { dt.smartscape.frontend == toSmartscapeId(%q) }",
+					tf.DQL(), e.ID)
+			},
+		}
+	case "DB_INSTANCE_POSTGRES":
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "active", Title: "Active connections", Unit: ""},
+				{Alias: "idle", Title: "Idle connections", Unit: ""},
+				{Alias: "deadlocks", Title: "Deadlocks", Unit: ""},
+			},
+			Query: func(e Entity, tf Timeframe) string {
+				return fmt.Sprintf(
+					"timeseries { active = avg(postgres.activity.active), idle = avg(postgres.activity.idle), deadlocks = sum(postgres.deadlocks.count, default: 0) }, from:%s, filter: { dt.smartscape.db_instance_postgres == toSmartscapeId(%q) }",
+					tf.DQL(), e.ID)
+			},
+		}
+	case "AWS_RDS_DBINSTANCE":
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "cpu", Title: "CPU utilization", Unit: "%"},
+				{Alias: "conn", Title: "Database connections", Unit: ""},
+				{Alias: "mem", Title: "Freeable memory", Unit: "B"},
+			},
+			Query: func(e Entity, tf Timeframe) string {
+				return fmt.Sprintf(
+					"timeseries { cpu = avg(cloud.aws.rds.CPUUtilization.By.DBInstanceIdentifier), conn = avg(cloud.aws.rds.DatabaseConnections.By.DBInstanceIdentifier), mem = avg(cloud.aws.rds.FreeableMemory.By.DBInstanceIdentifier) }, from:%s, filter: { dt.smartscape_source.id == toSmartscapeId(%q) }",
 					tf.DQL(), e.ID)
 			},
 		}

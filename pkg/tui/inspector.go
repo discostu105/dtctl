@@ -29,9 +29,10 @@ type inspectorView struct {
 	rec   map[string]any
 
 	// Entity mode (details tab).
-	facts []catalog.Fact
-	ds    *dataSource
-	dql   string
+	facts  []catalog.Fact
+	ds     *dataSource
+	dql    string
+	entity *catalog.Entity
 
 	seq     int
 	loading bool
@@ -66,11 +67,25 @@ func newEntityInfoView(ds *dataSource, entity catalog.Entity, rec map[string]any
 	v.facts = catalog.KeyFacts(entity.Type)
 	v.ds = ds
 	v.dql = catalog.DetailQuery(entity)
+	v.entity = &entity
 	return v
 }
 
+// DQL reveals the detail query in entity mode (ctrl+q).
+func (v *inspectorView) DQL() string { return v.dql }
+
+// Selection exposes the inspected record (and entity, in entity mode) for
+// app-level actions: a problem record opens its problem, a log's source
+// entity pins.
+func (v *inspectorView) Selection() (map[string]any, *catalog.Entity) {
+	return v.rec, v.entity
+}
+
 func (v *inspectorView) Init() tea.Cmd {
-	if v.rec == nil {
+	// Entity mode always fetches the full Smartscape node: the list row
+	// renders instantly, but summarized rows (pods, workloads) carry only
+	// their table fields — the fetch upgrades them in place.
+	if v.rec == nil || v.ds != nil {
 		return v.Refresh()
 	}
 	return nil

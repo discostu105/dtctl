@@ -35,11 +35,28 @@ type keyHint struct {
 // --- navigation messages ------------------------------------------------------
 
 // pushViewMsg opens a catalog view. replace resets the stack (command-bar
-// jumps); otherwise the view is pushed as a drill-down.
+// jumps); otherwise the view is pushed as a drill-down. filter pre-fills the
+// incremental table filter (command-bar arguments, home-panel jumps).
 type pushViewMsg struct {
 	spec    *catalog.Spec
 	scope   catalog.Scope
 	replace bool
+	filter  string
+}
+
+// waterfallMsg opens the span waterfall for one trace.
+type waterfallMsg struct {
+	traceID string
+}
+
+// relationsMsg opens the Smartscape relations panel for an entity.
+type relationsMsg struct {
+	entity catalog.Entity
+}
+
+// queryMsg opens the DQL escape hatch, optionally pre-filled (reveal query).
+type queryMsg struct {
+	dql string
 }
 
 // inspectMsg opens the record inspector for a selected row.

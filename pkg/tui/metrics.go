@@ -65,6 +65,15 @@ func (v *metricsView) Echo() string {
 
 func (v *metricsView) Hints() []keyHint { return nil }
 
+// DQL reveals the charts' timeseries query (ctrl+q).
+func (v *metricsView) DQL() string { return v.dql }
+
+// Selection exposes the charted entity (pin, relations, open in browser).
+func (v *metricsView) Selection() (map[string]any, *catalog.Entity) {
+	entity := v.entity
+	return nil, &entity
+}
+
 func (v *metricsView) Update(msg tea.Msg) tea.Cmd {
 	if msg, ok := msg.(dataMsg); ok {
 		if msg.owner != any(v) || msg.seq != v.seq {

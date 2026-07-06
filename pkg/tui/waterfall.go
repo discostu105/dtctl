@@ -1,0 +1,365 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
+
+	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
+	"github.com/dynatrace-oss/dtctl/pkg/tui/theme"
+)
+
+// waterfallView renders one distributed trace as a span tree with
+// proportional timing bars — the classic trace waterfall. Spans arrive
+// start-ordered; the tree is rebuilt from span.parent_id (roots are spans
+// whose parent is null or outside the fetched window).
+type waterfallView struct {
+	ds      *dataSource
+	traceID string
+	tf      catalog.Timeframe
+
+	rows    []wfRow
+	cursor  int
+	offset  int
+	loading bool
+	widened bool // auto-retried with a 24h window after an empty result
+	err     error
+	seq     int
+	dql     string
+
+	width, height int
+}
+
+type wfRow struct {
+	rec    map[string]any
+	depth  int
+	label  string
+	kind   string
+	svc    string
+	start  int64 // ns since epoch
+	end    int64
+	failed bool
+}
+
+func newWaterfallView(ds *dataSource, traceID string, tf catalog.Timeframe) *waterfallView {
+	return &waterfallView{ds: ds, traceID: traceID, tf: tf}
+}
+
+func (v *waterfallView) Init() tea.Cmd { return v.Refresh() }
+
+func (v *waterfallView) Refresh() tea.Cmd {
+	v.seq++
+	v.loading = true
+	v.err = nil
+	v.dql = catalog.WaterfallQuery(v.traceID, v.tf)
+	return v.ds.query(v, v.seq, v.dql)
+}
+
+func (v *waterfallView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
+	v.tf = tf
+	v.widened = false
+	return v.Refresh()
+}
+
+func (v *waterfallView) InputActive() bool { return false }
+
+func (v *waterfallView) Crumb() string {
+	return "trace " + shortID(v.traceID)
+}
+
+func (v *waterfallView) Echo() string {
+	if v.dql == "" {
+		return ""
+	}
+	return fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " "))
+}
+
+func (v *waterfallView) DQL() string { return v.dql }
+
+func (v *waterfallView) Hints() []keyHint {
+	return []keyHint{
+		{"enter", "span attributes"}, {"l", "trace logs"}, {"x", "relations"},
+		{"y", "yank trace id"}, {"o", "open"},
+	}
+}
+
+// Selection exposes the highlighted span and its service entity (for pin,
+// relations, open-in-browser).
+func (v *waterfallView) Selection() (map[string]any, *catalog.Entity) {
+	if v.cursor < 0 || v.cursor >= len(v.rows) {
+		return nil, nil
+	}
+	row := v.rows[v.cursor]
+	var entity *catalog.Entity
+	if id := catalog.Str(row.rec, "dt.smartscape.service"); id != "" {
+		entity = &catalog.Entity{ID: id, Name: row.svc, Type: "SERVICE"}
+	}
+	return row.rec, entity
+}
+
+// TraceID lets app-level actions (o, y) target the trace itself.
+func (v *waterfallView) TraceID() string { return v.traceID }
+
+func (v *waterfallView) Update(msg tea.Msg) tea.Cmd {
+	switch msg := msg.(type) {
+	case bodySizeMsg:
+		v.width, v.height = msg.width, msg.height
+		return nil
+
+	case dataMsg:
+		if msg.owner != any(v) || msg.seq != v.seq {
+			return nil
+		}
+		v.loading = false
+		v.err = msg.err
+		if msg.err != nil {
+			return nil
+		}
+		if len(msg.records) == 0 && !v.widened && v.tf.Dur < 24*time.Hour {
+			// The trace may predate the active window — retry once at 24h.
+			v.widened = true
+			v.tf = catalog.Timeframe{Label: "24h", Dur: 24 * time.Hour}
+			return v.Refresh()
+		}
+		v.rows = buildWaterfall(msg.records)
+		if v.cursor >= len(v.rows) {
+			v.cursor = 0
+			v.offset = 0
+		}
+		return nil
+
+	case tea.KeyMsg:
+		return v.handleKey(msg)
+	}
+	return nil
+}
+
+func (v *waterfallView) handleKey(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "up", "k":
+		v.move(-1)
+	case "down", "j":
+		v.move(1)
+	case "pgup", "ctrl+b":
+		v.move(-v.visible())
+	case "pgdown", "ctrl+f", " ":
+		v.move(v.visible())
+	case "home", "g":
+		v.cursor, v.offset = 0, 0
+	case "end", "G":
+		v.move(len(v.rows))
+	case "enter", "d":
+		if rec, _ := v.Selection(); rec != nil {
+			label := v.rows[v.cursor].label
+			return func() tea.Msg { return inspectMsg{title: label, rec: rec} }
+		}
+	case "l":
+		spec := catalog.Lookup("logs")
+		if spec == nil {
+			return nil
+		}
+		scope := catalog.Scope{Timeframe: v.tf, TraceID: v.traceID}
+		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
+	}
+	return nil
+}
+
+func (v *waterfallView) move(delta int) {
+	v.cursor += delta
+	if v.cursor >= len(v.rows) {
+		v.cursor = len(v.rows) - 1
+	}
+	if v.cursor < 0 {
+		v.cursor = 0
+	}
+	if v.cursor < v.offset {
+		v.offset = v.cursor
+	}
+	if vis := v.visible(); v.cursor >= v.offset+vis {
+		v.offset = v.cursor - vis + 1
+	}
+	if v.offset < 0 {
+		v.offset = 0
+	}
+}
+
+func (v *waterfallView) visible() int { return max(v.height-1, 1) }
+
+// buildWaterfall assembles the depth-ordered rows from start-sorted spans.
+func buildWaterfall(records []map[string]any) []wfRow {
+	ids := map[string]bool{}
+	for _, rec := range records {
+		ids[catalog.Str(rec, "span.id")] = true
+	}
+	children := map[string][]map[string]any{}
+	var roots []map[string]any
+	for _, rec := range records {
+		parent := catalog.Str(rec, "span.parent_id")
+		if parent == "" || !ids[parent] {
+			roots = append(roots, rec) // true root or parent outside window
+			continue
+		}
+		children[parent] = append(children[parent], rec)
+	}
+
+	var rows []wfRow
+	var walk func(rec map[string]any, depth int)
+	walk = func(rec map[string]any, depth int) {
+		label := catalog.Str(rec, "span.name")
+		if label == "" {
+			label = catalog.Str(rec, "endpoint.name")
+		}
+		failed, _ := rec["request.is_failed"].(bool)
+		rows = append(rows, wfRow{
+			rec:    rec,
+			depth:  depth,
+			label:  label,
+			kind:   catalog.Str(rec, "span.kind"),
+			svc:    catalog.Str(rec, "service.name"),
+			start:  parseTimeNs(catalog.Str(rec, "start_time")),
+			end:    parseTimeNs(catalog.Str(rec, "end_time")),
+			failed: failed,
+		})
+		for _, child := range children[catalog.Str(rec, "span.id")] {
+			walk(child, depth+1)
+		}
+	}
+	for _, root := range roots {
+		walk(root, 0)
+	}
+	return rows
+}
+
+func parseTimeNs(iso string) int64 {
+	t, err := time.Parse(time.RFC3339Nano, iso)
+	if err != nil {
+		return 0
+	}
+	return t.UnixNano()
+}
+
+func (v *waterfallView) View(width, height int) string {
+	v.width, v.height = width, height
+	var b strings.Builder
+
+	switch {
+	case v.loading:
+		return theme.Spinner.Render("⟳ loading trace…")
+	case v.err != nil:
+		return theme.Error.Render(wrap(v.err.Error(), width))
+	case len(v.rows) == 0:
+		return theme.Dim.Render("trace not found in the last " + v.tf.Label)
+	}
+
+	// Trace-wide time axis.
+	t0, t1 := v.rows[0].start, v.rows[0].end
+	failed := 0
+	for _, r := range v.rows {
+		if r.start != 0 && r.start < t0 {
+			t0 = r.start
+		}
+		if r.end > t1 {
+			t1 = r.end
+		}
+		if r.failed {
+			failed++
+		}
+	}
+	total := max64(t1-t0, 1)
+
+	head := fmt.Sprintf("%d spans · %s", len(v.rows), catalog.FormatNs(float64(total)))
+	if failed > 0 {
+		head += " · " + theme.Error.Render(fmt.Sprintf("%d failed", failed))
+	}
+	b.WriteString(theme.GroupTitle.Render(head) + "\n")
+
+	// Column layout: tree | kind | service | bar+duration.
+	barW := width * 30 / 100
+	if barW < 16 {
+		barW = 16
+	}
+	durW := 9
+	kindW, svcW := 8, 22
+	treeW := width - barW - durW - kindW - svcW - 4
+	if treeW < 16 {
+		treeW = 16
+	}
+
+	end := v.offset + v.visible()
+	if end > len(v.rows) {
+		end = len(v.rows)
+	}
+	for i := v.offset; i < end; i++ {
+		b.WriteString(v.renderRow(v.rows[i], i == v.cursor, t0, total, treeW, kindW, svcW, barW, durW))
+		if i < end-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
+}
+
+func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW, kindW, svcW, barW, durW int) string {
+	marker := "▸"
+	if r.failed {
+		marker = "✗"
+	}
+	tree := pad(strings.Repeat("  ", min(r.depth, 8))+marker+" "+r.label, treeW)
+	kind := pad(r.kind, kindW)
+	svc := pad(r.svc, svcW)
+
+	// Proportional bar on the trace's time axis. Clamp both ends — a span
+	// with an unparseable timestamp lands at 0 and must not underflow.
+	dur := r.end - r.start
+	startCell := int((r.start - t0) * int64(barW) / total)
+	lenCells := int(dur * int64(barW) / total)
+	if startCell < 0 {
+		startCell = 0
+	}
+	if startCell >= barW {
+		startCell = barW - 1
+	}
+	if lenCells < 1 {
+		lenCells = 1
+	}
+	if startCell+lenCells > barW {
+		lenCells = barW - startCell
+	}
+	bar := strings.Repeat(" ", startCell) + strings.Repeat("█", lenCells) +
+		strings.Repeat(" ", barW-startCell-lenCells)
+	durTxt := cell(catalog.FormatNs(float64(dur)), durW, true)
+
+	if selected {
+		return theme.Selected.Render(pad(tree+" "+kind+" "+svc+" "+bar+" "+durTxt, v.width))
+	}
+	if r.failed {
+		tree = theme.Error.Render(tree)
+		bar = theme.Error.Render(bar)
+	} else {
+		bar = theme.Chart.Render(bar)
+	}
+	return ansi.Truncate(tree+" "+theme.Dim.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
+}
+
+func shortID(id string) string {
+	if len(id) > 8 {
+		return id[:8] + "…"
+	}
+	return id
+}
+
+func max64(a, b int64) int64 {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

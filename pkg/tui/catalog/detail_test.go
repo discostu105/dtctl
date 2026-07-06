@@ -7,7 +7,7 @@ import (
 
 func TestDetailQuery(t *testing.T) {
 	got := DetailQuery(Entity{ID: "HOST-AAAABBBBCCCCDDDD", Type: "HOST"})
-	want := "smartscapeNodes \"HOST\"\n| filter id == toSmartscapeId(\"HOST-AAAABBBBCCCCDDDD\")\n| fieldsRemove references\n| limit 1"
+	want := "smartscapeNodes \"HOST\"\n| filter id == toSmartscapeId(\"HOST-AAAABBBBCCCCDDDD\")\n| fieldsRemove references, k8s.object\n| limit 1"
 	if got != want {
 		t.Errorf("DetailQuery:\ngot  %q\nwant %q", got, want)
 	}
@@ -67,9 +67,21 @@ func TestKeyFactsSparseRecordSkipsEmpty(t *testing.T) {
 }
 
 func TestKeyFactsFallbackType(t *testing.T) {
-	facts := factValues(t, "K8S_POD", map[string]any{"id": "K8S_POD-1", "type": "K8S_POD"})
-	if facts["id"] != "K8S_POD-1" || facts["type"] != "K8S_POD" {
+	facts := factValues(t, "DISK", map[string]any{"id": "DISK-1", "type": "DISK"})
+	if facts["id"] != "DISK-1" || facts["type"] != "DISK" {
 		t.Errorf("fallback facts = %+v", facts)
+	}
+}
+
+func TestKeyFactsPod(t *testing.T) {
+	facts := factValues(t, "K8S_POD", map[string]any{
+		"id":                "K8S_POD-1",
+		"k8s.pod.phase":     "Running",
+		"k8s.workload.kind": "deployment",
+		"k8s.workload.name": "checkout",
+	})
+	if facts["phase"] != "Running" || facts["workload"] != "deployment checkout" {
+		t.Errorf("pod facts = %+v", facts)
 	}
 }
 

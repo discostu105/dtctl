@@ -3,9 +3,12 @@ package catalog
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dynatrace-oss/dtctl/pkg/output"
 )
 
 // FormatValue renders an arbitrary record value as table-cell text.
@@ -127,4 +130,79 @@ func FormatBytesStr(s string) string {
 		return s
 	}
 	return FormatBytes(n)
+}
+
+// FormatNs renders a nanosecond count (Grail serializes durations as strings
+// of nanoseconds) as a compact human duration ("4.8ms", "1.2s", "2m03s").
+func FormatNs(v any) string {
+	var ns int64
+	switch val := v.(type) {
+	case string:
+		n, err := strconv.ParseInt(val, 10, 64)
+		if err != nil {
+			return val
+		}
+		ns = n
+	case float64:
+		ns = int64(val)
+	default:
+		return ""
+	}
+	d := time.Duration(ns)
+	switch {
+	case d < time.Millisecond:
+		return fmt.Sprintf("%dµs", d.Microseconds())
+	case d < time.Second:
+		return fmt.Sprintf("%.1fms", float64(d.Microseconds())/1000)
+	case d < time.Minute:
+		return fmt.Sprintf("%.2fs", d.Seconds())
+	default:
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+}
+
+// FloatSeries extracts the numeric points of a timeseries array, skipping
+// nulls (gaps compress, which is fine for a sparkline).
+func FloatSeries(v any) []float64 {
+	arr, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]float64, 0, len(arr))
+	for _, e := range arr {
+		if f, ok := e.(float64); ok && !math.IsNaN(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// SeriesLast returns the most recent non-null point of a series field, or
+// NaN. Sort keys built on it order unenriched rows last.
+func SeriesLast(rec map[string]any, key string) float64 {
+	vals := FloatSeries(rec[key])
+	if len(vals) == 0 {
+		return math.NaN()
+	}
+	return vals[len(vals)-1]
+}
+
+// SparkColumn builds the standard enrichment sparkline column: a braille
+// mini-graph of the batched series, sortable by its latest value.
+func SparkColumn(title, alias string, width int) Column {
+	key := EnrichKey(alias)
+	return Column{
+		Title: title,
+		Width: width,
+		Class: func(string) string { return "spark" },
+		Value: func(rec map[string]any) string {
+			return output.MiniGraph(FloatSeries(rec[key]), width)
+		},
+		Sort: func(rec map[string]any) any {
+			if last := SeriesLast(rec, key); !math.IsNaN(last) {
+				return last
+			}
+			return nil
+		},
+	}
 }

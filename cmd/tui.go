@@ -16,20 +16,27 @@ var tuiCmd = &cobra.Command{
 	Use:   "tui [view]",
 	Short: "Launch the interactive terminal UI",
 	Long: `Launch the interactive terminal UI — a k9s-style navigator over
-observability primitives (problems, services, hosts, logs, events).
+observability primitives: problems, services, hosts, Kubernetes (pods,
+workloads, namespaces, nodes, clusters), traces with a span waterfall,
+logs, events, AWS inventory, frontends (RUM), databases, GenAI entities,
+and security vulnerabilities.
 
-Views are opened from the command bar (:) by name or alias, and every
-drill-down key (l logs, m metrics, p problems, v events) opens the target
-view pre-scoped to the selected entity and the active timeframe. Press ?
-inside the TUI for the full key reference.
+Views are opened from the command bar (:) by name or alias — arguments
+narrow the jump (:pods checkout, :trace <id>). Every drill-down key
+(l logs, s traces, m metrics, p problems, v events, x relations) opens
+the target pre-scoped to the selected entity and the active timeframe.
+'.' pins an entity as the global scope, ctrl+q reveals any view's DQL in
+an editable query, and o deep-links the selection into the Dynatrace UI.
+Press ? inside the TUI for the full key reference.
 
 The TUI is read-only and interactive-only: it refuses to start in agent
 mode, with --plain, or when stdout is not a terminal.`,
-	Example: `  # Launch on the problems view (default)
+	Example: `  # Launch on the home triage view (default)
   dtctl tui
 
   # Launch directly into a view (any alias works)
-  dtctl tui hosts
+  dtctl tui pods
+  dtctl tui traces
   dtctl tui svc
 
   # Launch against a specific context
@@ -47,12 +54,12 @@ mode, with --plain, or when stdout is not a terminal.`,
 			return fmt.Errorf("tui requires a terminal (stdout is not a TTY)")
 		}
 
-		view := "problems"
+		view := "home"
 		if len(args) == 1 {
 			view = args[0]
 		}
-		if catalog.Lookup(view) == nil {
-			return fmt.Errorf("unknown view %q (available: %s)", view, strings.Join(catalog.Names(), ", "))
+		if view != "home" && view != "query" && view != "dql" && catalog.Lookup(view) == nil {
+			return fmt.Errorf("unknown view %q (available: home, query, %s)", view, strings.Join(catalog.Names(), ", "))
 		}
 
 		cfg, c, err := SetupClient()
@@ -78,7 +85,7 @@ func tuiViewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return catalog.Names(), cobra.ShellCompDirectiveNoFileComp
+	return append([]string{"home", "query"}, catalog.Names()...), cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {

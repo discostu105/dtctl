@@ -39,6 +39,8 @@ var (
 	GroupTitle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
 	Chart      = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 	Spinner    = lipgloss.NewStyle().Foreground(lipgloss.Color("11"))
+	Pin        = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("13"))
+	Badge      = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
 )
 
 // classStyles maps the catalog's semantic cell classes to styles.
@@ -47,6 +49,7 @@ var classStyles = map[string]lipgloss.Style{
 	"warn":  lipgloss.NewStyle().Foreground(lipgloss.Color("11")),
 	"ok":    lipgloss.NewStyle().Foreground(lipgloss.Color("10")),
 	"dim":   lipgloss.NewStyle().Foreground(lipgloss.Color("8")),
+	"spark": lipgloss.NewStyle().Foreground(lipgloss.Color("14")),
 }
 
 // Class styles text according to a semantic class name; unknown classes and

@@ -45,6 +45,11 @@ var DefaultTimeframe = Timeframes[1]
 type Scope struct {
 	Entity    *Entity
 	Timeframe Timeframe
+	// Arg is a view-specific argument: the node type for the generic entity
+	// browser ("AWS_EC2_INSTANCE"), set by census drill-downs.
+	Arg string
+	// TraceID scopes logs/traces to one distributed trace (log↔trace jumps).
+	TraceID string
 }
 
 // ViewKind distinguishes entity views (the map) from signal views (the terrain).
@@ -60,12 +65,17 @@ type Column struct {
 	Title string
 	Field string // record key; ignored when Value is set
 	Width int    // display width; 0 = flex (shares remaining space)
+	Right bool   // right-align (numeric columns)
 	// Value computes the cell text from the whole record (optional).
 	Value func(rec map[string]any) string
 	// Class returns a semantic style class ("error", "warn", "ok", "dim", "")
 	// for the formatted cell value (optional). The view layer maps classes to
 	// concrete styles.
 	Class func(val string) string
+	// Sort extracts the sort key for a record (optional). Defaults to the raw
+	// field value (Field set) or the rendered cell text. Numeric strings —
+	// Grail serializes longs and durations as strings — compare numerically.
+	Sort func(rec map[string]any) any
 }
 
 // Text returns the formatted cell value for a record.
@@ -83,7 +93,7 @@ type Spec struct {
 	Kind    ViewKind
 	Desc    string
 	// Query renders the list query for a scope. Signal views compose
-	// s.Entity into a filter; entity views ignore it (Phase 1).
+	// s.Entity into a filter; entity views honor it when EntityScoped.
 	Query   func(s Scope) string
 	Columns []Column
 	// Entity extracts the Smartscape entity a selected row stands for
@@ -92,10 +102,54 @@ type Spec struct {
 	// Drills maps a key press to a target view name. The special target
 	// "metrics" opens the canned metrics charts for the selected entity.
 	Drills map[string]string
+	// EntityScoped marks entity views whose Query composes s.Entity (e.g.
+	// pods of a namespace). Signal views are always entity-scoped. The pin
+	// (⌖) is only handed to views that can use it.
+	EntityScoped bool
+	// EnterTarget makes enter follow containment k9s-style (workload → its
+	// pods) instead of opening the detail page; the detail page moves to
+	// 'd'. The target view is scoped to the row's entity — unless EnterArg
+	// is set, which scopes it by Arg instead (census row → typed list). The
+	// sentinel "waterfall" opens the trace waterfall for Trace(rec).
+	EnterTarget string
+	EnterArg    func(rec map[string]any) string
+	// Trace extracts a row's trace id ("" = none): the 's' jump on log
+	// records and enter on trace rows.
+	Trace func(rec map[string]any) string
+	// Enrich adds async per-row metric columns (sparklines) fetched in one
+	// batched timeseries query after the list loads (nil = none).
+	Enrich *EnrichSpec
 }
 
+// UsesScope reports whether a view's query can compose an entity scope.
+func (s *Spec) UsesScope() bool { return s.Kind == KindSignal || s.EntityScoped }
+
+// EnrichSpec describes the batched metric enrichment of an entity table.
+// One query per refresh fetches a small timeseries per visible row; results
+// land in the records under Into keys and render as sparkline columns.
+type EnrichSpec struct {
+	// Key returns the record's join value (e.g. its Smartscape id or pod
+	// name); rows with "" are skipped.
+	Key func(rec map[string]any) string
+	// By is the result field carrying the join value in the batched query.
+	By string
+	// Series lists the timeseries aliases to copy into the record, stored
+	// under "__enrich." + alias.
+	Series []string
+	// Query renders the batched timeseries for a set of join values.
+	Query func(tf Timeframe, keys []string) string
+}
+
+// EnrichKey is the record key enrichment series are stored under.
+func EnrichKey(alias string) string { return "__enrich." + alias }
+
 // specs is the ordered registry; order drives command-bar suggestions.
-var specs = []*Spec{problemsSpec, servicesSpec, hostsSpec, logsSpec, eventsSpec}
+var specs = []*Spec{
+	problemsSpec, servicesSpec, hostsSpec, logsSpec, tracesSpec, eventsSpec,
+	podsSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec,
+	awsSpec, entitiesSpec, resourcesSpec,
+	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec,
+}
 
 // All returns every registered view spec.
 func All() []*Spec { return specs }
@@ -168,20 +222,14 @@ func isSubsequence(needle, hay string) bool {
 // --- scope filter fragments -------------------------------------------------
 
 // smartscapeField returns the dt.smartscape.* field signal records carry for
-// an entity type, or "" when there is no per-type field.
+// an entity type. Validated live for HOST/SERVICE/PROCESS/K8S_*/CONTAINER/
+// FRONTEND/DB_*_POSTGRES/AWS_*: the field name is always the lowercased type.
+// A nonexistent field in an or-chain compares as null (false) — harmless.
 func smartscapeField(entityType string) string {
-	switch entityType {
-	case "HOST":
-		return "dt.smartscape.host"
-	case "SERVICE":
-		return "dt.smartscape.service"
-	case "PROCESS":
-		return "dt.smartscape.process"
+	if entityType == "" {
+		return ""
 	}
-	if strings.HasPrefix(entityType, "K8S_") {
-		return "dt.smartscape." + strings.ToLower(entityType)
-	}
-	return ""
+	return "dt.smartscape." + strings.ToLower(entityType)
 }
 
 // legacyField returns the deprecated dt.entity.* field for an entity type.
@@ -200,7 +248,10 @@ func legacyField(entityType string) string {
 }
 
 // SignalFilter renders the DQL condition that scopes a logs/events query to
-// an entity, matching both ID eras plus the record's source entity.
+// an entity, matching both ID eras plus the record's source entity. For K8s
+// entities it also matches the plain k8s.* name attributes — log records on
+// real tenants carry those but no dt.smartscape.k8s_* fields (validated
+// live), while Davis events carry both.
 func SignalFilter(e Entity) string {
 	var parts []string
 	if f := smartscapeField(e.Type); f != "" {
@@ -209,8 +260,33 @@ func SignalFilter(e Entity) string {
 	if f := legacyField(e.Type); f != "" {
 		parts = append(parts, fmt.Sprintf("%s == %q", f, e.ID))
 	}
+	if f := k8sNameFilter(e); f != "" {
+		parts = append(parts, f)
+	}
 	parts = append(parts, fmt.Sprintf("dt.smartscape_source.id == toSmartscapeId(%q)", e.ID))
 	return strings.Join(parts, " or ")
+}
+
+// k8sNameFilter matches a K8s entity by its k8s.* name attributes ("" for
+// non-K8s types). Signal records carry these as plain strings.
+func k8sNameFilter(e Entity) string {
+	if e.Name == "" {
+		return ""
+	}
+	switch e.Type {
+	case "K8S_POD":
+		return fmt.Sprintf("k8s.pod.name == %q", e.Name)
+	case "K8S_NAMESPACE":
+		return fmt.Sprintf("k8s.namespace.name == %q", e.Name)
+	case "K8S_NODE":
+		return fmt.Sprintf("k8s.node.name == %q", e.Name)
+	case "K8S_CLUSTER":
+		return fmt.Sprintf("k8s.cluster.name == %q", e.Name)
+	case "K8S_DEPLOYMENT", "K8S_STATEFULSET", "K8S_DAEMONSET":
+		kind := strings.ToLower(strings.TrimPrefix(e.Type, "K8S_"))
+		return fmt.Sprintf("(k8s.workload.kind == %q and k8s.workload.name == %q)", kind, e.Name)
+	}
+	return ""
 }
 
 // ProblemFilter renders the DQL condition that scopes dt.davis.problems to
@@ -219,4 +295,22 @@ func ProblemFilter(e Entity) string {
 	return fmt.Sprintf(
 		`matchesPhrase(arrayToString(smartscape.affected_entity.ids, delimiter:","), %q) or matchesPhrase(arrayToString(affected_entity_ids, delimiter:","), %q)`,
 		e.ID, e.ID)
+}
+
+// SpanFilter renders the DQL condition that scopes a spans query to an
+// entity. Spans carry dt.smartscape.* fields for services, K8s objects and
+// containers (validated live); there is no legacy fallback worth matching.
+func SpanFilter(e Entity) string {
+	return fmt.Sprintf("%s == toSmartscapeId(%q)", smartscapeField(e.Type), e.ID)
+}
+
+// SpanScopable reports whether spans can be filtered to this entity type —
+// the 's' drill is only offered where the scope field actually exists on
+// span records (validated live; HOST notably carries none).
+func SpanScopable(entityType string) bool {
+	switch entityType {
+	case "SERVICE", "CONTAINER":
+		return true
+	}
+	return strings.HasPrefix(entityType, "K8S_")
 }

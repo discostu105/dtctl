@@ -41,10 +41,33 @@ func Run(opts Options) error {
 // refreshIntervals are the R-key auto-refresh cycle (0 = off).
 var refreshIntervals = []time.Duration{0, 10 * time.Second, 30 * time.Second, 60 * time.Second}
 
+// hotkeys are the digit bookmarks (k9s-style); ? shows them.
+var hotkeys = map[string]string{
+	"0": "home", "1": "problems", "2": "services", "3": "hosts", "4": "pods",
+	"5": "logs", "6": "traces", "7": "workloads", "8": "events", "9": "aws",
+}
+
+// selectionProvider is implemented by views that expose a highlighted row
+// (and its entity) for app-level actions: pin, relations, yank, open.
+type selectionProvider interface {
+	Selection() (map[string]any, *catalog.Entity)
+}
+
+// dqlProvider is implemented by views backed by a revealable query (ctrl+q).
+type dqlProvider interface {
+	DQL() string
+}
+
+// traceProvider is implemented by views standing on one trace (waterfall).
+type traceProvider interface {
+	TraceID() string
+}
+
 type app struct {
 	opts Options
 	ds   *dataSource
 	tf   catalog.Timeframe
+	pin  *catalog.Entity // '.' — global scope for command-bar jumps
 
 	width, height int
 
@@ -70,10 +93,6 @@ type app struct {
 type refreshTickMsg struct{ gen int }
 
 func newApp(opts Options) (*app, error) {
-	spec := catalog.Lookup(opts.InitialView)
-	if spec == nil {
-		return nil, fmt.Errorf("unknown view %q (available: %s)", opts.InitialView, strings.Join(catalog.Names(), ", "))
-	}
 	ci := textinput.New()
 	ci.Prompt = ":"
 	ci.CharLimit = 64
@@ -88,8 +107,33 @@ func newApp(opts Options) (*app, error) {
 			a.tfSel = i
 		}
 	}
-	a.stack = []viewModel{newTableView(a.ds, spec, catalog.Scope{Timeframe: a.tf})}
+
+	initial, err := a.viewFor(opts.InitialView)
+	if err != nil {
+		return nil, err
+	}
+	a.stack = []viewModel{initial}
 	return a, nil
+}
+
+// viewFor resolves a view name to a fresh view: the bespoke screens (home,
+// query) or a catalog table.
+func (a *app) viewFor(name string) (viewModel, error) {
+	switch name {
+	case "", "home":
+		return newHomeView(a.ds, a.tf), nil
+	case "query", "dql":
+		return newQueryView(a.ds, "", a.tf), nil
+	}
+	spec := catalog.Lookup(name)
+	if spec == nil {
+		return nil, fmt.Errorf("unknown view %q (available: home, query, %s)", name, strings.Join(catalog.Names(), ", "))
+	}
+	scope := catalog.Scope{Timeframe: a.tf}
+	if a.pin != nil && spec.UsesScope() {
+		scope.Entity = a.pin
+	}
+	return newTableView(a.ds, spec, scope), nil
 }
 
 func (a *app) top() viewModel { return a.stack[len(a.stack)-1] }
@@ -129,6 +173,9 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case pushViewMsg:
 		view := newTableView(a.ds, msg.spec, msg.scope)
+		if msg.filter != "" {
+			view.setFilter(msg.filter)
+		}
 		return a, a.navigate(view, msg.replace)
 
 	case inspectMsg:
@@ -139,6 +186,15 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case metricsMsg:
 		return a, a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
+
+	case waterfallMsg:
+		return a, a.navigate(newWaterfallView(a.ds, msg.traceID, a.tf), false)
+
+	case relationsMsg:
+		return a, a.navigate(newRelationsView(a.ds, msg.entity, a.tf), false)
+
+	case queryMsg:
+		return a, a.navigate(newQueryView(a.ds, msg.dql, a.tf), false)
 
 	case statusMsg:
 		a.status, a.statusErr = msg.text, msg.isErr
@@ -189,6 +245,13 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	top := a.top()
 	if !top.InputActive() {
+		// Digit hotkeys jump to bookmarked views — except on detail pages,
+		// where digits switch tabs.
+		if _, isDetail := top.(*detailView); !isDetail && len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
+			if name, ok := hotkeys[key]; ok {
+				return a.jumpTo(name, "")
+			}
+		}
 		switch key {
 		case "q":
 			return tea.Quit
@@ -204,6 +267,36 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "t":
 			a.tfActive = true
 			return nil
+		case "x":
+			if _, entity := a.selection(); entity != nil {
+				e := *entity
+				return func() tea.Msg { return relationsMsg{entity: e} }
+			}
+			return statusErr("selection carries no entity for relations")
+		case ".":
+			return a.togglePin()
+		case "ctrl+x":
+			if a.pin == nil {
+				return nil
+			}
+			a.pin = nil
+			return status("scope unpinned")
+		case "ctrl+q":
+			dql := ""
+			if p, ok := top.(dqlProvider); ok {
+				dql = p.DQL()
+			}
+			return func() tea.Msg { return queryMsg{dql: dql} }
+		case "y":
+			return a.yankSelection()
+		case "c":
+			if echo := top.Echo(); echo != "" {
+				yank(echo)
+				return status("copied: " + echo)
+			}
+			return nil
+		case "o":
+			return a.openSelection()
 		case "r":
 			return top.Refresh()
 		case "R":
@@ -236,6 +329,85 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 	}
 	return top.Update(msg)
+}
+
+// jumpTo replaces the stack with a named view (hotkeys, command bar), an
+// optional argument pre-filling the table filter.
+func (a *app) jumpTo(name, filter string) tea.Cmd {
+	view, err := a.viewFor(name)
+	if err != nil {
+		return statusErr(err.Error())
+	}
+	if tv, ok := view.(*tableView); ok && filter != "" {
+		tv.setFilter(filter)
+	}
+	return a.navigate(view, true)
+}
+
+// selection asks the current view for its highlighted row and entity.
+func (a *app) selection() (map[string]any, *catalog.Entity) {
+	if sp, ok := a.top().(selectionProvider); ok {
+		return sp.Selection()
+	}
+	return nil, nil
+}
+
+// togglePin pins the selected entity as the global scope (⌖ in the header);
+// pinning the pinned entity — or pressing '.' with nothing to pin — unpins.
+func (a *app) togglePin() tea.Cmd {
+	_, entity := a.selection()
+	if entity == nil || (a.pin != nil && a.pin.ID == entity.ID) {
+		if a.pin == nil {
+			return statusErr("selection carries no entity to pin")
+		}
+		a.pin = nil
+		return status("scope unpinned")
+	}
+	a.pin = entity
+	return status(fmt.Sprintf("pinned %s — command-bar views now scope to it (ctrl+x unpins)", entityName(*entity)))
+}
+
+// yankSelection copies the most specific id under the cursor: trace id on a
+// waterfall, entity id elsewhere.
+func (a *app) yankSelection() tea.Cmd {
+	if tp, ok := a.top().(traceProvider); ok {
+		yank(tp.TraceID())
+		return status("copied trace id " + tp.TraceID())
+	}
+	rec, entity := a.selection()
+	switch {
+	case entity != nil && entity.ID != "":
+		yank(entity.ID)
+		return status("copied " + entity.ID)
+	case rec != nil && catalog.Str(rec, "id") != "":
+		yank(catalog.Str(rec, "id"))
+		return status("copied " + catalog.Str(rec, "id"))
+	}
+	return statusErr("nothing to copy here")
+}
+
+// openSelection deep-links the selection into the Dynatrace UI: problems and
+// traces open their native apps, entities their type's app, and plain query
+// views open as a notebook query.
+func (a *app) openSelection() tea.Cmd {
+	rec, entity := a.selection()
+	traceID := ""
+	if tp, ok := a.top().(traceProvider); ok {
+		traceID = tp.TraceID()
+	}
+	link := linkFor(a.opts.Environment, rec, entity, traceID)
+	if link == "" {
+		if p, ok := a.top().(dqlProvider); ok {
+			link = queryLink(a.opts.Environment, p.DQL())
+		}
+	}
+	if link == "" {
+		return statusErr("nothing to open here")
+	}
+	if err := openBrowser(link); err != nil {
+		return statusErr("browser: " + err.Error())
+	}
+	return status("opened in browser")
 }
 
 func (a *app) scheduleRefresh() tea.Cmd {
@@ -280,12 +452,20 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 		if len(input) == 0 {
 			return nil
 		}
+		arg := strings.Join(input[1:], " ")
 		switch input[0] {
 		case "q", "quit":
 			return tea.Quit
 		case "help":
 			a.helpActive = true
 			return nil
+		case "home", "query", "dql":
+			return a.jumpTo(input[0], "")
+		case "trace":
+			if arg == "" {
+				return statusErr("usage: trace <trace-id>")
+			}
+			return func() tea.Msg { return waterfallMsg{traceID: arg} }
 		}
 		spec := catalog.Lookup(input[0])
 		if spec == nil && a.cmdSel < len(a.cmdMatches) {
@@ -294,8 +474,8 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 		if spec == nil {
 			return statusErr(fmt.Sprintf("unknown view %q", input[0]))
 		}
-		scope := catalog.Scope{Timeframe: a.tf}
-		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope, replace: true} }
+		// Arguments narrow the jump (":pods checkout" pre-fills the filter).
+		return a.jumpTo(spec.Name, arg)
 	}
 	var cmd tea.Cmd
 	a.cmdInput, cmd = a.cmdInput.Update(msg)
@@ -366,6 +546,9 @@ func (a *app) renderHeader() string {
 		theme.HeaderKey.Render("ctx:") + theme.HeaderVal.Render(a.opts.ContextName),
 		theme.HeaderKey.Render("safety:") + theme.Safety(a.opts.SafetyLevel).Render(a.opts.SafetyLevel),
 		theme.HeaderKey.Render("last ") + theme.HeaderVal.Render(a.tf.Label),
+	}
+	if a.pin != nil {
+		parts = append(parts, theme.Pin.Render("⌖ "+strings.ToLower(a.pin.Type)+": "+entityName(*a.pin)))
 	}
 	if iv := refreshIntervals[a.refreshIdx]; iv > 0 {
 		parts = append(parts, theme.HeaderKey.Render("⟳ ")+theme.HeaderVal.Render(iv.String()))
@@ -446,23 +629,30 @@ func (a *app) renderHelp() string {
 		keys  []keyHint
 	}{
 		{"Navigation", []keyHint{
-			{":", "command bar (view aliases, fuzzy)"},
-			{"enter", "entity details / inspect record"},
-			{"tab / 1-5", "switch detail-page tabs"},
-			{"esc", "back (breadcrumb stack)"},
-			{"-", "toggle last two views"},
-			{"/", "filter table / search properties"},
+			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
+			{"enter", "detail / drill into children / waterfall"},
+			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
+			{"esc / -", "back / toggle last two views"},
+			{"/", "filter table · J/K sort column/direction"},
 			{"j/k ↑/↓ g/G", "move"},
 		}},
 		{"Drill-down (pre-scoped to selection)", []keyHint{
 			{"l", "logs"},
+			{"s", "traces (spans) / jump to a log's trace"},
 			{"m", "metrics"},
 			{"p", "problems"},
 			{"v", "events"},
-			{"d", "describe record"},
+			{"x", "relations — walk the Smartscape topology"},
+			{"d", "describe / details"},
+		}},
+		{"Scope & actions", []keyHint{
+			{".", "pin selection as global scope (ctrl+x unpins)"},
+			{"t", "timeframe picker"},
+			{"ctrl+q", "reveal query — this view's DQL in the editor"},
+			{"o", "open selection in the Dynatrace UI"},
+			{"y / c", "yank id / copy CLI command"},
 		}},
 		{"Global", []keyHint{
-			{"t", "timeframe picker"},
 			{"r / R", "refresh / cycle auto-refresh"},
 			{"?", "help"},
 			{"q", "quit"},
@@ -477,7 +667,7 @@ func (a *app) renderHelp() string {
 				theme.KeyHint.Render(fmt.Sprintf("%-12s", h.Key)), h.Desc))
 		}
 	}
-	b.WriteString("\n" + theme.Dim.Render("views: "+strings.Join(catalog.Names(), " · ")))
+	b.WriteString("\n" + theme.Dim.Render(wrap("views: home · query · "+strings.Join(catalog.Names(), " · "), 76)))
 	return b.String()
 }
 

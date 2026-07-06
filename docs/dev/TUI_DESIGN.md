@@ -1,6 +1,6 @@
 # TUI (Interactive Mode) Design Proposal
 
-**Status:** Phase 1 implemented (`cmd/tui.go`, `pkg/tui/`); Phases 2–4 proposed
+**Status:** Phases 1–3 implemented (`cmd/tui.go`, `pkg/tui/`); Phase 4 (assets & mutations) proposed
 **Created:** 2026-07-05
 **Author:** dtctl team
 
@@ -705,19 +705,48 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   with a highlights block and `/` property search.
 - Read-only. Success criterion: the incident-triage journey works end to end.
 
-### Phase 2 — Topology + traces + Kubernetes
+### Phase 2 — Topology + traces + Kubernetes ✅ implemented
 
-- Relations panel (`x`) over `smartscapeNodes`; scope pinning (`.`).
-- Traces view + waterfall; log ↔ trace jumps.
-- Kubernetes catalog: clusters, nodes, namespaces, workloads, pods, K8s events.
-- Metric-column enrichment (sparklines in entity tables), sorting, hotkeys.
+- Relations panel (`x`) over `smartscapeEdges` (both directions in one
+  query, batched name resolution, raw-id fallback for nodeless types);
+  scope pinning (`.` / `ctrl-x`).
+- Traces view (spans summarized by `trace.id`) + span waterfall
+  (`toUid()` cast, tree from `span.parent_id`, proportional bars, failed
+  markers, auto-widening window); log ↔ trace jumps in both directions
+  (`s` on a log record, `l` on a waterfall — log `trace_id` is a plain
+  string, span `trace.id` is a UID).
+- Kubernetes catalog: clusters, nodes, namespaces, workloads
+  (deployments + statefulsets + daemonsets in one multi-type query with
+  coalesced ready/desired), pods (READY/RST/PHASE from `parse
+  k8s.object, "JSON:obj"`); containment navigation (enter on a workload
+  → its pods; detail on `d`). Live-validated gotcha baked into
+  `SignalFilter`: log records carry `k8s.*` name attributes but **no**
+  `dt.smartscape.k8s_*` fields, so K8s log scoping matches by name.
+- Metric-column enrichment (batched `timeseries ... by:{...}, filter:
+  in(...)` per page, braille sparkline cells, blank-cell degradation),
+  column sorting (`J`/`K`, smart default direction, empties last),
+  digit hotkeys (0 home … 9 aws).
 
-### Phase 3 — Breadth: cloud, frontends, security, costs, escape hatch
+### Phase 3 — Breadth: cloud, frontends, security, escape hatch ✅ implemented
 
-- AWS/Azure/GCP inventories, databases, web/mobile apps + RUM views
-  (sessions, Web Vitals, errors), security findings, DPS costs.
-- DQL escape hatch with `ctrl-q` reveal-query, live progress, history.
-- Home/overview view.
+- AWS inventory (census by type → typed list with `tags:aws` Name-tag
+  display fallback) and the generic `:entities` browser over any
+  Smartscape type via one `resources` view; Postgres databases; web
+  frontends with request/error sparklines and Web-Vitals charts; GenAI
+  agents/services/models/providers; security vulnerabilities
+  (deduplicated `security.events` state reports, 24h lookback floor).
+  Azure/GCP inventories and DPS costs remain open (no data on the
+  exploration tenant).
+- DQL escape hatch (`:query`) with `ctrl-q` reveal-query from every
+  view, dynamic result columns, and `o` opening the query as a notebook.
+  Live progress/history remain open.
+- Home triage view: active problems, failing services (from failed
+  spans), Kubernetes warning events, open vulnerabilities — panels load
+  independently, enter jumps into the full view pre-filtered.
+- Browser deep links (`o`) via intent URLs: problems → Davis problems
+  app, traces → Distributed Tracing, K8s/services/databases → their
+  apps by `nodeId`, anything else → Smartscape topology; `y`/`c` yank
+  ids and CLI commands over OSC 52.
 
 ### Phase 4 — Assets & mutations
 
@@ -755,6 +784,7 @@ triage".
 
 ## References
 
+- `docs/dev/TUI_LEARNINGS.md` — field notes: live-validated DQL/Grail facts, the view extension model, bubbletea message-flow patterns, and how to verify the TUI
 - `docs/dev/ARCHITECTURE.md` — prior "Interactive Mode" future idea
 - `docs/dev/WATCH_MODE_DESIGN.md` — existing live/watch semantics
 - `pkg/output/progress.go`, `live.go`, `watch.go` — current live rendering

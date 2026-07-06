@@ -36,12 +36,31 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 	if catalog.MetricsFor(entity.Type) != nil {
 		tabs = append(tabs, detailTab{name: "metrics", view: newMetricsView(ds, entity, tf)})
 	}
-	for _, name := range []string{"logs", "events", "problems"} {
+	signalTabs := []string{"logs", "events", "problems"}
+	if catalog.SpanScopable(entity.Type) {
+		signalTabs = []string{"logs", "traces", "events", "problems"}
+	}
+	for _, name := range signalTabs {
 		if spec := catalog.Lookup(name); spec != nil {
 			tabs = append(tabs, detailTab{name: name, view: newTableView(ds, spec, scope)})
 		}
 	}
 	return &detailView{entity: entity, tabs: tabs}
+}
+
+// Selection exposes the page's entity for app-level actions (pin, relations,
+// open in browser) regardless of which tab is active.
+func (v *detailView) Selection() (map[string]any, *catalog.Entity) {
+	entity := v.entity
+	return nil, &entity
+}
+
+// DQL reveals the active tab's query (ctrl+q).
+func (v *detailView) DQL() string {
+	if p, ok := v.tabs[v.active].view.(dqlProvider); ok {
+		return p.DQL()
+	}
+	return ""
 }
 
 func (v *detailView) Init() tea.Cmd {
@@ -136,11 +155,15 @@ func (v *detailView) setActive(i int) tea.Cmd {
 }
 
 func (v *detailView) childSize() bodySizeMsg {
-	return bodySizeMsg{width: v.width, height: max(v.height-1, 1)}
+	// Two chrome lines: identity header + tab bar.
+	return bodySizeMsg{width: v.width, height: max(v.height-2, 1)}
 }
 
 func (v *detailView) View(width, height int) string {
 	v.width, v.height = width, height
+	identity := theme.FactLabel.Render(" "+entityName(v.entity)) +
+		theme.Badge.Render(" · "+v.entity.Type) +
+		theme.Dim.Render(" · "+v.entity.ID)
 	labels := make([]string, len(v.tabs))
 	for i, t := range v.tabs {
 		label := fmt.Sprintf(" %d %s ", i+1, t.name)
@@ -151,5 +174,6 @@ func (v *detailView) View(width, height int) string {
 		}
 	}
 	bar := ansi.Truncate(strings.Join(labels, " "), width, "…")
-	return bar + "\n" + v.tabs[v.active].view.View(width, max(height-1, 1))
+	return ansi.Truncate(identity, width, "…") + "\n" + bar + "\n" +
+		v.tabs[v.active].view.View(width, max(height-2, 1))
 }
