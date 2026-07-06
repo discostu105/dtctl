@@ -6,7 +6,9 @@
 package theme
 
 import (
+	"fmt"
 	"hash/fnv"
+	"strconv"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -98,6 +100,20 @@ var (
 	Badge      = lipgloss.NewStyle().Foreground(Mauve).Background(ChipBg).Padding(0, 1)
 	ArrowOut   = lipgloss.NewStyle().Foreground(Green)
 	ArrowIn    = lipgloss.NewStyle().Foreground(Peach)
+
+	// Typed values (inspector / detail pages). One color per value kind so a
+	// record reads like syntax-highlighted data: numbers peach, JSON string
+	// literals green, booleans/null mauve/faint, opaque uids mauve, entity-id
+	// links accent+underline (they are traversable), punctuation quiet.
+	Number    = lipgloss.NewStyle().Foreground(Peach)
+	Boolean   = lipgloss.NewStyle().Foreground(Mauve)
+	NullVal   = lipgloss.NewStyle().Foreground(Faint)
+	UID       = lipgloss.NewStyle().Foreground(Mauve)
+	Link      = lipgloss.NewStyle().Foreground(Accent).Underline(true)
+	URL       = lipgloss.NewStyle().Foreground(Sky).Underline(true)
+	JSONKey   = lipgloss.NewStyle().Foreground(Sky)
+	JSONStr   = lipgloss.NewStyle().Foreground(Green)
+	JSONPunct = lipgloss.NewStyle().Foreground(Faint)
 )
 
 // Series is the color cycle for multi-series charts and per-key coloring
@@ -109,6 +125,58 @@ var Series = []lipgloss.Style{
 	lipgloss.NewStyle().Foreground(Peach),
 	lipgloss.NewStyle().Foreground(Sky),
 	lipgloss.NewStyle().Foreground(Green),
+}
+
+// SeriesColors are the raw palette colors behind Series, for code that
+// derives shades (chart gradients) rather than rendering text directly.
+var SeriesColors = []lipgloss.CompleteAdaptiveColor{Accent, Teal, Mauve, Peach, Sky, Green}
+
+// SeriesColorAt returns the i-th series color, wrapping around the cycle.
+func SeriesColorAt(i int) lipgloss.CompleteAdaptiveColor {
+	return SeriesColors[i%len(SeriesColors)]
+}
+
+// Gradient returns one style per chart row for a filled braille chart, top
+// row first: the top row renders in the full series color and lower rows fade
+// toward the terminal background — the btop-like "glow under the line" look.
+// Only the truecolor tier fades; 256/16-color terminals keep the flat base
+// color on every row (automatic downsampling of blends picks ugly colors).
+func Gradient(c lipgloss.CompleteAdaptiveColor, rows int) []lipgloss.Style {
+	styles := make([]lipgloss.Style, rows)
+	for i := range styles {
+		f := 0.0
+		if rows > 1 {
+			f = 0.62 * float64(i) / float64(rows-1)
+		}
+		blended := lipgloss.CompleteAdaptiveColor{
+			Dark:  lipgloss.CompleteColor{TrueColor: blendHex(c.Dark.TrueColor, Ink.Dark.TrueColor, f), ANSI256: c.Dark.ANSI256, ANSI: c.Dark.ANSI},
+			Light: lipgloss.CompleteColor{TrueColor: blendHex(c.Light.TrueColor, Ink.Light.TrueColor, f), ANSI256: c.Light.ANSI256, ANSI: c.Light.ANSI},
+		}
+		styles[i] = lipgloss.NewStyle().Foreground(blended)
+	}
+	return styles
+}
+
+// blendHex lerps a #rrggbb color toward another by factor f (0 = pure fg).
+func blendHex(fg, bg string, f float64) string {
+	fr, fgr, fb, ok1 := parseHex(fg)
+	br, bgr, bb, ok2 := parseHex(bg)
+	if !ok1 || !ok2 {
+		return fg
+	}
+	lerp := func(a, b int) int { return a + int(f*float64(b-a)) }
+	return fmt.Sprintf("#%02x%02x%02x", lerp(fr, br), lerp(fgr, bgr), lerp(fb, bb))
+}
+
+func parseHex(s string) (r, g, b int, ok bool) {
+	if len(s) != 7 || s[0] != '#' {
+		return 0, 0, 0, false
+	}
+	n, err := strconv.ParseUint(s[1:], 16, 32)
+	if err != nil {
+		return 0, 0, 0, false
+	}
+	return int(n >> 16 & 0xff), int(n >> 8 & 0xff), int(n & 0xff), true
 }
 
 // ForKey returns a stable style from the Series cycle for a key, so the same

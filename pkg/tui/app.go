@@ -63,6 +63,12 @@ type traceProvider interface {
 	TraceID() string
 }
 
+// yankProvider is implemented by views that can supply the exact text the
+// global 'y' copies (the inspector's selected field value).
+type yankProvider interface {
+	YankText() (text, label string, ok bool)
+}
+
 type app struct {
 	opts Options
 	ds   *dataSource
@@ -440,9 +446,16 @@ func (a *app) togglePin() tea.Cmd {
 	return status(fmt.Sprintf("pinned %s — command-bar views now scope to it (ctrl+x unpins)", entityName(*entity)))
 }
 
-// yankSelection copies the most specific id under the cursor: trace id on a
-// waterfall, entity id elsewhere.
+// yankSelection copies the most specific value under the cursor: the
+// selected field on an inspector, trace id on a waterfall, entity id
+// elsewhere.
 func (a *app) yankSelection() tea.Cmd {
+	if yp, ok := a.top().(yankProvider); ok {
+		if text, label, ok := yp.YankText(); ok {
+			yank(text)
+			return status("copied " + label)
+		}
+	}
 	if tp, ok := a.top().(traceProvider); ok {
 		yank(tp.TraceID())
 		return status("copied trace id " + tp.TraceID())
@@ -772,7 +785,7 @@ func (a *app) renderHelp() string {
 	}{
 		{"Navigation", []keyHint{
 			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
-			{"enter", "detail / drill into children / waterfall"},
+			{"enter", "detail / drill into children / follow entity link / expand value / waterfall"},
 			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
 			{"/", "filter table · J/K sort column/direction"},

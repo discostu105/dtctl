@@ -314,6 +314,69 @@ the user intended.
 - Styled-string layout: `pad`/`cell` (lipgloss.Width) and `ansi.Truncate` are
   safe on already-styled strings; plain `fmt.Sprintf("%-20s", styled)` is not
   (counts escape bytes).
+- **`wrap()` (lipgloss `Width(w).Render`) pads every line to the full width**
+  with trailing spaces. Any "does this value fit inline?" check against
+  wrapped output always fails — strip the padding first (`wrapLines` in
+  render.go trims each line). This silently pushed every short string value
+  into the two-line block layout before it was caught on a live drive.
+
+## 3c. Typed values & inspector navigation (render.go / inspector.go)
+
+- **`renderValue` classifies record values for display**: entity ids (both
+  eras match `^[A-Z][A-Z0-9_]*-[0-9A-F]{16}$`, type = the prefix) become
+  accent links; RFC3339 strings render absolute + "· 23m ago"; `*duration*`
+  keys holding digit strings render `FormatNs` + raw ns; numeric strings get
+  thousands separators — **except identifier-ish keys** (`isIDKey`:
+  `aws.account.id` is a label, not a quantity); 16/32-hex are opaque uids;
+  maps/arrays and strings that parse as JSON render as an indented
+  syntax-highlighted block (keys sky, strings green, numbers peach). The raw
+  value is kept beside the styled lines for yank.
+- **Density first: scalars and arrays are one line by default.** Values too
+  big for their line collapse to a truncated compact preview (`compact`:
+  whitespace-squashed string / one-line JSON) marked with a dim `▸`; enter
+  expands to the full block (`▾`). **JSON objects are the exception** — they
+  read as structure, so they default to the expanded block (enter collapses).
+  The earlier layout (label line + indented block for anything long) read
+  nicely but wasted half the screen — user feedback killed it within an hour
+  of a live drive.
+- **The inspector has a field cursor, not a line scroller**: j/k moves over
+  fields, the viewport follows, and the selected row's label line gets the
+  gutter-bar + wash treatment (per-value colors drop on that line — strip
+  ANSI before washing). enter follows the selection: entity id → its detail
+  page, `trace*` 32-hex → the waterfall, expandable → toggle. Arrays whose
+  elements are all entity ids (`affected_entity_ids`) explode into one
+  navigable `key[i]` row each.
+- **Selection follows the cursor**: `Selection()` returns the highlighted
+  link's entity (falling back to the page entity), so pin/relations/open act
+  on what the user is looking at. `y` goes through the `yankProvider`
+  interface (app checks it before the entity-id fallback) and copies the
+  selected field's raw value. The record's own `id` field is styled opaque,
+  not as a link — a self-link is noise (but `id_classic` may be a *different*
+  entity and stays navigable).
+- **Id-only traversal must back-fill the name.** An entity link carries no
+  name; the detail page's tabs share a pointer to the page entity
+  (`scope.Entity = &v.entity`), and when the details-tab fetch returns,
+  `detailView` copies the learned name in. Unstarted signal tabs then compose
+  it — load-bearing for K8s entities, whose log scoping matches plain
+  `k8s.*` names (§1.3). Without this, logs on a traversed pod are silently
+  empty.
+
+## 3d. Metrics charts (btop-style)
+
+- Filled braille areas (`PlotFilled`), not line plots; per-row **vertical
+  gradient** via `theme.Gradient` — top row full series color, lower rows
+  blend toward the background ink. Only the truecolor tier fades; 256/16
+  fallbacks keep the flat base color (downsampled blends look muddy).
+- **Scaling is honest**: zero baseline for filled charts (min-based
+  autoscale exaggerates noise into drama), and `%` metrics render as a true
+  0–100 gauge — a host at 3% CPU *should* look nearly empty; the header
+  carries the numbers (`last` value prominent, min/avg/max dim).
+- Charts divide the body height (`(h - 2 - 2n) / n` rows each, clamped 2–9),
+  y-axis max/min labels sit on the first/last braille row (`┤` ticks), and a
+  single shared time axis (`└ 2h ago … now`) closes the page — every chart
+  spans the same window, so per-chart axes would be noise.
+- Unit-aware formatting: `"B"` → IEC bytes (a 15.3 GiB axis label, not
+  "16106.1M"), `%`/`ms` attach suffixes.
 
 ---
 

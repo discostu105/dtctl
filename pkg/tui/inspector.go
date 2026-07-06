@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
 	"github.com/dynatrace-oss/dtctl/pkg/tui/theme"
@@ -20,6 +21,11 @@ import (
 // (TUI_DESIGN.md, "Log record inspector"). The most relevant fields render
 // first as a highlighted block, and '/' narrows the property list by key or
 // value substring.
+//
+// Values render typed (render.go): timestamps with age, durations humanized,
+// JSON as highlighted blocks, and entity ids as traversable links — j/k moves
+// a cursor over fields, enter follows the selected link (entity → its detail
+// page, trace id → the waterfall) or expands a collapsed long value.
 //
 // With facts and a data source set (newEntityInfoView) it doubles as the
 // details tab of the entity page: a curated key-facts panel on top of the
@@ -42,8 +48,28 @@ type inspectorView struct {
 	searching   bool
 	search      string
 
+	rows     []fieldRow // selectable field rows, in content order
+	cursor   int
+	expanded map[string]bool // per-field expand state for long values
+
+	lines []string // assembled content lines (selection applied at render)
+
 	vp    viewport.Model
 	ready bool
+}
+
+// fieldRow is one selectable property in the assembled content: its first
+// line carries the label (and inline value); enter acts on its target.
+type fieldRow struct {
+	key   string // record key (search & expand identity)
+	label string // display label — key, or key[i] for exploded id arrays
+	val   valueView
+	line  int // first line index in lines
+	span  int
+	// values too big for one line collapse to a truncated preview by
+	// default; enter toggles the full block.
+	expandable bool
+	expanded   bool
 }
 
 // priorityFields render first as the "highlights" block, in this order,
@@ -57,7 +83,7 @@ func newInspectorView(title string, rec map[string]any) *inspectorView {
 	si := textinput.New()
 	si.Prompt = "/"
 	si.CharLimit = 64
-	return &inspectorView{title: title, rec: rec, searchInput: si}
+	return &inspectorView{title: title, rec: rec, searchInput: si, expanded: map[string]bool{}}
 }
 
 // newEntityInfoView builds the details tab of an entity page. rec is the
@@ -74,11 +100,31 @@ func newEntityInfoView(ds *dataSource, entity catalog.Entity, rec map[string]any
 // DQL reveals the detail query in entity mode (ctrl+q).
 func (v *inspectorView) DQL() string { return v.dql }
 
-// Selection exposes the inspected record (and entity, in entity mode) for
-// app-level actions: a problem record opens its problem, a log's source
-// entity pins.
+// Selection exposes the record and the most specific entity under the
+// cursor: a selected entity-id field wins over the page's own entity, so
+// pin/relations/open act on the highlighted link.
 func (v *inspectorView) Selection() (map[string]any, *catalog.Entity) {
+	if row := v.selectedRow(); row != nil && row.val.entity != nil {
+		e := *row.val.entity
+		return v.rec, &e
+	}
 	return v.rec, v.entity
+}
+
+// YankText supplies the selected field's raw value to the global 'y'.
+func (v *inspectorView) YankText() (text, label string, ok bool) {
+	row := v.selectedRow()
+	if row == nil || row.val.raw == "" {
+		return "", "", false
+	}
+	return row.val.raw, row.label, true
+}
+
+func (v *inspectorView) selectedRow() *fieldRow {
+	if v.cursor < 0 || v.cursor >= len(v.rows) {
+		return nil
+	}
+	return &v.rows[v.cursor]
 }
 
 func (v *inspectorView) Init() tea.Cmd {
@@ -120,7 +166,20 @@ func (v *inspectorView) Hints() []keyHint {
 	if v.searching {
 		return []keyHint{{"type", "search fields"}, {"enter", "apply"}, {"esc", "clear"}}
 	}
-	return []keyHint{{"/", "search"}, {"j/k", "scroll"}, {"g/G", "top/bottom"}}
+	hints := []keyHint{{"j/k", "fields"}}
+	if row := v.selectedRow(); row != nil {
+		switch {
+		case row.val.entity != nil:
+			hints = append(hints, keyHint{"enter", "open " + strings.ToLower(row.val.entity.Type)})
+		case row.val.trace != "":
+			hints = append(hints, keyHint{"enter", "open trace"})
+		case row.expandable && !row.expanded:
+			hints = append(hints, keyHint{"enter", "expand"})
+		case row.expandable:
+			hints = append(hints, keyHint{"enter", "collapse"})
+		}
+	}
+	return append(hints, keyHint{"y", "yank value"}, keyHint{"/", "search"})
 }
 
 func (v *inspectorView) Update(msg tea.Msg) tea.Cmd {
@@ -144,10 +203,17 @@ func (v *inspectorView) Update(msg tea.Msg) tea.Cmd {
 		}
 		if len(msg.records) > 0 {
 			v.rec = msg.records[0]
+			// An id-only jump learns the entity's name from the fetch.
+			if v.entity != nil && v.entity.Name == "" {
+				if name := catalog.Str(v.rec, "name"); name != "" {
+					v.entity.Name = name
+					v.title = name
+				}
+			}
 		} else if v.rec == nil {
 			v.err = errors.New("entity not found (no longer known to Smartscape?)")
 		}
-		v.setContent()
+		v.rebuild()
 		return nil
 
 	case tea.KeyMsg:
@@ -169,7 +235,7 @@ func (v *inspectorView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			v.searchInput, cmd = v.searchInput.Update(msg)
 			if v.searchInput.Value() != v.search {
 				v.search = v.searchInput.Value()
-				v.setContent()
+				v.rebuild()
 				v.vp.GotoTop()
 			}
 			return cmd
@@ -188,16 +254,85 @@ func (v *inspectorView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return claimKey
 		}
 		return nil // app pops the stack
+	case "j", "down":
+		v.moveCursor(1)
+		return nil
+	case "k", "up":
+		v.moveCursor(-1)
+		return nil
 	case "g", "home":
+		v.cursor = 0
+		v.refreshVP()
 		v.vp.GotoTop()
 		return nil
 	case "G", "end":
+		v.cursor = max(len(v.rows)-1, 0)
+		v.refreshVP()
 		v.vp.GotoBottom()
 		return nil
+	case "enter":
+		return v.enterRow()
 	}
 	var cmd tea.Cmd
 	v.vp, cmd = v.vp.Update(msg)
 	return cmd
+}
+
+// enterRow acts on the selected field: follow an entity/trace link, or
+// toggle a collapsed long value.
+func (v *inspectorView) enterRow() tea.Cmd {
+	row := v.selectedRow()
+	if row == nil {
+		return nil
+	}
+	switch {
+	case row.val.entity != nil:
+		entity := *row.val.entity
+		return func() tea.Msg { return detailMsg{entity: entity} }
+	case row.val.trace != "":
+		trace := row.val.trace
+		return func() tea.Msg { return waterfallMsg{traceID: trace} }
+	case row.expandable:
+		v.expanded[row.label] = !row.expanded
+		v.rebuild()
+		v.ensureVisible()
+		return claimKey
+	}
+	return nil
+}
+
+func (v *inspectorView) moveCursor(delta int) {
+	if len(v.rows) == 0 {
+		return
+	}
+	v.cursor += delta
+	if v.cursor < 0 {
+		v.cursor = 0
+	}
+	if v.cursor >= len(v.rows) {
+		v.cursor = len(v.rows) - 1
+	}
+	v.refreshVP()
+	v.ensureVisible()
+}
+
+// ensureVisible scrolls the viewport so the selected row is on screen.
+func (v *inspectorView) ensureVisible() {
+	row := v.selectedRow()
+	if row == nil || !v.ready {
+		return
+	}
+	first, last := row.line, row.line+row.span-1
+	switch {
+	case first < v.vp.YOffset:
+		v.vp.SetYOffset(first)
+	case last >= v.vp.YOffset+v.vp.Height:
+		off := last - v.vp.Height + 1
+		if off > first {
+			off = first
+		}
+		v.vp.SetYOffset(off)
+	}
 }
 
 func (v *inspectorView) clearSearch() {
@@ -205,7 +340,7 @@ func (v *inspectorView) clearSearch() {
 	v.searchInput.Blur()
 	v.searchInput.SetValue("")
 	v.search = ""
-	v.setContent()
+	v.rebuild()
 	v.vp.GotoTop()
 }
 
@@ -222,21 +357,45 @@ func (v *inspectorView) resize(width, height int) {
 	if !v.ready {
 		v.vp = viewport.New(width, bodyH)
 		v.ready = true
-		v.setContent()
+		v.rebuild()
 		return
 	}
 	widthChanged := v.vp.Width != width
 	v.vp.Width, v.vp.Height = width, bodyH
 	if widthChanged {
-		v.setContent()
+		v.rebuild()
 	}
 }
 
-func (v *inspectorView) setContent() {
+// refreshVP re-renders the assembled content into the viewport (cheap: the
+// lines are prebuilt; only the selected row's wash is applied here).
+func (v *inspectorView) refreshVP() {
 	if !v.ready {
 		return
 	}
-	v.vp.SetContent(v.content(v.vp.Width))
+	v.vp.SetContent(v.assemble())
+}
+
+// assemble joins the content lines, washing the selected row's label line
+// with the selection bar (per-value colors drop on that line — one calm bar,
+// same pattern as the tables).
+func (v *inspectorView) assemble() string {
+	row := v.selectedRow()
+	if row == nil {
+		return strings.Join(v.lines, "\n")
+	}
+	var b strings.Builder
+	for i, line := range v.lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		if i == row.line {
+			b.WriteString(theme.Gutter.Render("▌") + theme.Selected.Render(pad(ansi.Strip(line), v.vp.Width-1)))
+		} else {
+			b.WriteString(line)
+		}
+	}
+	return b.String()
 }
 
 func (v *inspectorView) View(width, height int) string {
@@ -258,23 +417,28 @@ func (v *inspectorView) View(width, height int) string {
 	return out
 }
 
-// content renders the record: the curated facts panel (entity mode), the
-// priority-field highlights, then namespace groups (k8s.*, event.*, …)
-// sorted by name. A search needle narrows fields by key or value.
-func (v *inspectorView) content(width int) string {
-	var b strings.Builder
+// rebuild renders the record into content lines and selectable rows: the
+// curated facts panel (entity mode), the priority-field highlights, then
+// namespace groups (k8s.*, event.*, …) sorted by name. A search needle
+// narrows fields by key or value.
+func (v *inspectorView) rebuild() {
+	if !v.ready || v.rec == nil {
+		return
+	}
+	v.lines = nil
+	v.rows = nil
 
 	if len(v.facts) > 0 {
 		for _, f := range v.facts {
 			if text := f.Value(v.rec); text != "" {
-				writeField(&b, f.Label, text, width, theme.FactLabel, 14)
+				v.addLine(" " + theme.FactLabel.Render(fmt.Sprintf("%-14s", f.Label)) + "  " + text)
 			}
 		}
-		b.WriteString("\n" + theme.Section("properties") + "\n")
+		v.addLine("")
+		v.addLine(theme.Section("properties"))
 	}
 
 	needle := strings.ToLower(strings.TrimSpace(v.search))
-	matches := 0
 	rendered := map[string]bool{}
 
 	var prio []string
@@ -290,11 +454,10 @@ func (v *inspectorView) content(width int) string {
 	}
 	if len(prio) > 0 {
 		if len(v.facts) == 0 {
-			b.WriteString(theme.Section("highlights") + "\n")
+			v.addLine(theme.Section("highlights"))
 		}
 		for _, key := range prio {
-			writeField(&b, key, catalog.FormatValue(v.rec[key]), width, v.labelStyle(needle, key, theme.FactLabel), 32)
-			matches++
+			v.addField(key, needle, theme.FactLabel)
 		}
 	}
 
@@ -322,20 +485,90 @@ func (v *inspectorView) content(width int) string {
 		keys := groups[g]
 		sort.Strings(keys)
 		if g != "" {
-			b.WriteString("\n" + theme.Section(g) + "\n")
-		} else if b.Len() > 0 {
-			b.WriteString("\n")
+			v.addLine("")
+			v.addLine(theme.Section(g))
+		} else if len(v.lines) > 0 && !strings.HasPrefix(ansi.Strip(v.lines[len(v.lines)-1]), "▍") {
+			// Separate ungrouped fields from the highlights — unless a
+			// section header directly precedes them (double gap otherwise).
+			v.addLine("")
 		}
 		for _, key := range keys {
-			writeField(&b, key, catalog.FormatValue(v.rec[key]), width, v.labelStyle(needle, key, theme.Label), 32)
-			matches++
+			v.addField(key, needle, theme.Label)
 		}
 	}
 
-	if needle != "" && matches == 0 {
-		b.WriteString(theme.Dim.Render("  no matching properties"))
+	if needle != "" && len(v.rows) == 0 {
+		v.addLine(theme.Dim.Render("  no matching properties"))
 	}
-	return b.String()
+
+	if v.cursor >= len(v.rows) {
+		v.cursor = max(len(v.rows)-1, 0)
+	}
+	v.refreshVP()
+}
+
+func (v *inspectorView) addLine(line string) { v.lines = append(v.lines, line) }
+
+// addField renders one record field as selectable row(s). Arrays of entity
+// ids explode into one navigable row per id; everything else is one row.
+func (v *inspectorView) addField(key, needle string, style lipgloss.Style) {
+	if ids := entityIDList(v.rec[key]); ids != nil {
+		for i, id := range ids {
+			label := fmt.Sprintf("%s[%d]", key, i)
+			v.addRow(key, label, v.labelStyle(needle, key, style), renderString(key, id, v.vp.Width-6))
+		}
+		return
+	}
+	val := renderValue(key, v.rec[key], v.vp.Width-6)
+	// The record's own id is not a jump target — style it opaque instead.
+	if val.entity != nil && v.entity != nil && val.entity.ID == v.entity.ID {
+		val.entity = nil
+		val.lines = []string{theme.UID.Render(val.raw)}
+	}
+	v.addRow(key, key, v.labelStyle(needle, key, style), val)
+}
+
+// addRow lays out one field. Scalars and arrays are one line by default — a
+// value too big for its line collapses to a truncated preview marked with ▸
+// (density first: a record is scannable without paging, detail is one
+// keypress away). JSON objects read as structure, so they default to the
+// full indented block; enter toggles either way.
+func (v *inspectorView) addRow(key, label string, style lipgloss.Style, val valueView) {
+	row := fieldRow{key: key, label: label, val: val, line: len(v.lines)}
+	labelText := " " + style.Render(fmt.Sprintf("%-32s", label))
+	avail := v.vp.Width - lipgloss.Width(labelText) - 2
+
+	oneLine := len(val.lines) == 1 && lipgloss.Width(val.lines[0]) <= avail
+	row.expanded = val.block
+	if exp, overridden := v.expanded[label]; overridden {
+		row.expanded = exp
+	}
+	row.expanded = row.expanded && !oneLine
+	row.expandable = !oneLine
+
+	switch {
+	case oneLine:
+		v.addLine(labelText + "  " + val.lines[0])
+	case !row.expanded:
+		preview := val.compact
+		if preview == "" {
+			preview = val.lines[0]
+		}
+		marker := theme.Dim.Render(" ▸")
+		preview = ansi.Truncate(preview, max(avail-2, 3), "…")
+		v.addLine(labelText + "  " + preview + marker)
+	default:
+		lines := val.lines
+		if len(lines) == 1 {
+			lines = wrapLines(lines[0], v.vp.Width-6)
+		}
+		v.addLine(labelText + "  " + theme.Dim.Render("▾"))
+		for _, l := range lines {
+			v.addLine("    " + l)
+		}
+	}
+	row.span = len(v.lines) - row.line
+	v.rows = append(v.rows, row)
 }
 
 // labelStyle highlights keys that themselves match the search needle (a field
@@ -353,17 +586,6 @@ func fieldMatches(needle, key string, val any) bool {
 	}
 	return strings.Contains(strings.ToLower(key), needle) ||
 		strings.Contains(strings.ToLower(catalog.FormatValue(val)), needle)
-}
-
-func writeField(b *strings.Builder, key, text string, width int, style lipgloss.Style, labelWidth int) {
-	label := style.Render(fmt.Sprintf("%-*s", labelWidth, key))
-	if strings.Contains(text, "\n") || len(text) > width-labelWidth-2 {
-		// Long or multi-line values get their own indented block.
-		b.WriteString(label + "\n")
-		b.WriteString(indent(wrap(text, width-4), 4) + "\n")
-		return
-	}
-	b.WriteString(label + "  " + text + "\n")
 }
 
 func indent(s string, n int) string {

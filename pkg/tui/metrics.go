@@ -7,6 +7,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
@@ -93,6 +94,10 @@ func (v *metricsView) Update(msg tea.Msg) tea.Cmd {
 	return nil
 }
 
+// axisW is the y-axis label column: right-aligned max/min values ahead of
+// the ┤ ticks.
+const axisW = 8
+
 func (v *metricsView) View(width, height int) string {
 	var b strings.Builder
 	title := " " + theme.OverlayTitle.Render(v.entity.Name) + "  " + theme.Badge.Render(v.entity.Type) +
@@ -112,31 +117,94 @@ func (v *metricsView) View(width, height int) string {
 		return b.String()
 	}
 
-	chartWidth := width - 2
-	if chartWidth < 10 {
-		chartWidth = 10
+	n := len(v.mspec.Series)
+	chartW := width - axisW - 2
+	if chartW < 10 {
+		chartW = 10
 	}
+	// Charts share the body height btop-style: title + per-series header
+	// lines + one time-axis line are fixed, the rest divides into chart rows.
+	chartRows := (height - 2 - 2*n) / n
+	if chartRows < 2 {
+		chartRows = 2
+	}
+	if chartRows > 9 {
+		chartRows = 9
+	}
+
 	for i, series := range v.mspec.Series {
 		style := theme.SeriesAt(i)
 		values := floatSeries(v.rec[series.Alias])
-		b.WriteString("\n " + style.Bold(true).Render(series.Title))
+		b.WriteString("\n")
 		if len(values) == 0 {
-			b.WriteString("  " + theme.Dim.Render("no data") + "\n")
+			b.WriteString(" " + style.Bold(true).Render("● "+series.Title) +
+				"  " + theme.Dim.Render("no data") + "\n")
 			continue
 		}
 		minV, maxV, avg, last := seriesStats(values)
-		stats := fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s%s",
-			theme.Dim.Render("min"), formatMetric(minV),
-			theme.Dim.Render("avg"), formatMetric(avg),
-			theme.Dim.Render("max"), formatMetric(maxV),
-			theme.Dim.Render("last"), formatMetric(last), theme.Dim.Render(series.Unit))
-		b.WriteString(stats + "\n")
+		// Filled area charts read from a zero baseline (min-based scaling
+		// exaggerates noise); percent metrics scale to a true 0–100 gauge.
+		plotMin := math.Min(0, minV)
+		plotMax := maxV
+		if series.Unit == "%" && maxV <= 100 {
+			plotMax = 100
+		}
+		if plotMax <= plotMin {
+			plotMax = plotMin + 1
+		}
 
-		graph := output.NewBrailleGraph(chartWidth, 3)
-		graph.PlotLine(values, minV, maxV)
-		b.WriteString(style.Render(indent(graph.Render(), 1)) + "\n")
+		header := " " + style.Bold(true).Render("● "+series.Title) +
+			"  " + theme.OverlayTitle.Render(fmtUnit(last, series.Unit)) +
+			theme.Dim.Render(fmt.Sprintf("   min %s · avg %s · max %s",
+				fmtUnit(minV, series.Unit), fmtUnit(avg, series.Unit), fmtUnit(maxV, series.Unit)))
+		b.WriteString(ansi.Truncate(header, width, "…") + "\n")
+
+		graph := output.NewBrailleGraph(chartW, chartRows)
+		graph.PlotFilled(values, plotMin, plotMax)
+		rows := strings.Split(graph.Render(), "\n")
+		grad := theme.Gradient(theme.SeriesColorAt(i), len(rows))
+		for r, rowStr := range rows {
+			switch {
+			case r == 0:
+				b.WriteString(theme.Dim.Render(cell(fmtUnit(plotMax, series.Unit), axisW, true)) + theme.Track.Render("┤"))
+			case r == len(rows)-1:
+				b.WriteString(theme.Dim.Render(cell(fmtUnit(plotMin, series.Unit), axisW, true)) + theme.Track.Render("┤"))
+			default:
+				b.WriteString(strings.Repeat(" ", axisW) + theme.Track.Render("│"))
+			}
+			b.WriteString(grad[r].Render(rowStr) + "\n")
+		}
 	}
+
+	// One shared time axis: every chart spans the same window.
+	leftLbl := " " + v.tf.Label + " ago"
+	gap := chartW - len(leftLbl) - 3
+	if gap < 1 {
+		gap = 1
+	}
+	b.WriteString(strings.Repeat(" ", axisW) + theme.Track.Render("└") +
+		theme.Dim.Render(leftLbl) + strings.Repeat(" ", gap) + theme.Dim.Render("now"))
 	return b.String()
+}
+
+// fmtUnit renders a metric value in its series unit ("B" gets IEC bytes,
+// "%" and "ms" attach their suffix, anything else appends the unit label).
+func fmtUnit(f float64, unit string) string {
+	switch unit {
+	case "%":
+		return formatMetric(f) + "%"
+	case "B":
+		if f >= 0 {
+			return catalog.FormatBytes(int64(f))
+		}
+		return formatMetric(f) + " B"
+	case "ms":
+		return formatMetric(f) + " ms"
+	case "":
+		return formatMetric(f)
+	default:
+		return formatMetric(f) + " " + unit
+	}
 }
 
 // floatSeries extracts the numeric points of a timeseries array field,
@@ -172,6 +240,8 @@ func seriesStats(values []float64) (minV, maxV, avg, last float64) {
 
 func formatMetric(f float64) string {
 	switch {
+	case math.Abs(f) >= 1_000_000_000:
+		return fmt.Sprintf("%.1fG", f/1_000_000_000)
 	case math.Abs(f) >= 1_000_000:
 		return fmt.Sprintf("%.1fM", f/1_000_000)
 	case math.Abs(f) >= 10_000:

@@ -31,10 +31,15 @@ type detailTab struct {
 }
 
 func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf catalog.Timeframe) *detailView {
-	scope := catalog.Scope{Entity: &entity, Timeframe: tf}
-	tabs := []detailTab{{name: "details", view: newEntityInfoView(ds, entity, rec)}}
+	v := &detailView{entity: entity}
+	// Signal tabs share a pointer to the page entity: when an id-only jump
+	// (an inspector entity link) learns the name from the detail fetch, the
+	// still-unstarted tabs compose it into their scope filters — K8s log
+	// scoping matches by plain k8s.* names, so the name is load-bearing.
+	scope := catalog.Scope{Entity: &v.entity, Timeframe: tf}
+	v.tabs = []detailTab{{name: "details", view: newEntityInfoView(ds, entity, rec)}}
 	if catalog.MetricsFor(entity.Type) != nil {
-		tabs = append(tabs, detailTab{name: "metrics", view: newMetricsView(ds, entity, tf)})
+		v.tabs = append(v.tabs, detailTab{name: "metrics", view: newMetricsView(ds, entity, tf)})
 	}
 	signalTabs := []string{"logs", "events", "problems"}
 	if catalog.SpanScopable(entity.Type) {
@@ -42,17 +47,31 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 	}
 	for _, name := range signalTabs {
 		if spec := catalog.Lookup(name); spec != nil {
-			tabs = append(tabs, detailTab{name: name, view: newTableView(ds, spec, scope)})
+			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, scope)})
 		}
 	}
-	return &detailView{entity: entity, tabs: tabs}
+	return v
 }
 
-// Selection exposes the page's entity for app-level actions (pin, relations,
-// open in browser) regardless of which tab is active.
+// Selection exposes the most specific entity for app-level actions (pin,
+// relations, open in browser): an entity link highlighted on the details tab
+// wins over the page's own entity.
 func (v *detailView) Selection() (map[string]any, *catalog.Entity) {
+	if iv, ok := v.tabs[v.active].view.(*inspectorView); ok {
+		if _, e := iv.Selection(); e != nil {
+			return nil, e
+		}
+	}
 	entity := v.entity
 	return nil, &entity
+}
+
+// YankText forwards the active tab's field-level yank (details tab).
+func (v *detailView) YankText() (string, string, bool) {
+	if yp, ok := v.tabs[v.active].view.(yankProvider); ok {
+		return yp.YankText()
+	}
+	return "", "", false
 }
 
 // DQL reveals the active tab's query (ctrl+q).
@@ -118,6 +137,14 @@ func (v *detailView) Update(msg tea.Msg) tea.Cmd {
 		for i := range v.tabs {
 			if cmd := v.tabs[i].view.Update(msg); cmd != nil {
 				cmds = append(cmds, cmd)
+			}
+		}
+		// An id-only jump learns the entity's name from the details-tab
+		// fetch; unstarted signal tabs pick it up via the shared scope
+		// pointer when they compose their queries.
+		if v.entity.Name == "" {
+			if iv, ok := v.tabs[0].view.(*inspectorView); ok && iv.entity != nil {
+				v.entity.Name = iv.entity.Name
 			}
 		}
 		return tea.Batch(cmds...)

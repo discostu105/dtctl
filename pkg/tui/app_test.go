@@ -420,3 +420,197 @@ func TestCatalogTimeframeDefaultsAgree(t *testing.T) {
 		t.Errorf("unexpected default timeframe %s", catalog.DefaultTimeframe.Label)
 	}
 }
+
+func TestInspectorFieldCursorTraversesEntityLinks(t *testing.T) {
+	a := testApp(t, "problems")
+	row := problemRow()
+	row["dt.smartscape.host"] = "HOST-0011223344556677"
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+
+	insp, ok := a.top().(*inspectorView)
+	if !ok {
+		t.Fatalf("top = %T, want inspector", a.top())
+	}
+	// Find the entity-link row and put the cursor on it.
+	target := -1
+	for i, r := range insp.rows {
+		if r.val.entity != nil && r.val.entity.ID == "HOST-0011223344556677" {
+			target = i
+		}
+	}
+	if target < 0 {
+		t.Fatalf("no navigable row for the host id; rows: %+v", insp.rows)
+	}
+	for insp.cursor < target {
+		press(a, key("j"))
+	}
+
+	// The selection follows the cursor (pin/relations act on the link) and
+	// yank copies the field value.
+	if _, e := insp.Selection(); e == nil || e.ID != "HOST-0011223344556677" {
+		t.Fatalf("selection entity = %+v", e)
+	}
+	if text, _, ok := insp.YankText(); !ok || text != "HOST-0011223344556677" {
+		t.Fatalf("yank = %q %v", text, ok)
+	}
+
+	// enter traverses to the linked entity's detail page.
+	press(a, key("enter"))
+	dv, ok := a.top().(*detailView)
+	if !ok {
+		t.Fatalf("enter on entity link should open detail, top = %T", a.top())
+	}
+	if dv.entity.ID != "HOST-0011223344556677" || dv.entity.Type != "HOST" {
+		t.Fatalf("detail entity = %+v", dv.entity)
+	}
+}
+
+func TestInspectorEnterOpensTraceWaterfall(t *testing.T) {
+	a := testApp(t, "problems")
+	trace := strings.Repeat("ab", 16)
+	row := problemRow()
+	row["trace_id"] = trace
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+
+	insp := a.top().(*inspectorView)
+	target := -1
+	for i, r := range insp.rows {
+		if r.val.trace == trace {
+			target = i
+		}
+	}
+	if target < 0 {
+		t.Fatal("no trace row found")
+	}
+	for insp.cursor < target {
+		press(a, key("j"))
+	}
+	press(a, key("enter"))
+	wf, ok := a.top().(*waterfallView)
+	if !ok {
+		t.Fatalf("enter on trace id should open waterfall, top = %T", a.top())
+	}
+	if wf.TraceID() != trace {
+		t.Errorf("waterfall trace = %q", wf.TraceID())
+	}
+}
+
+func TestInspectorBlockDefaultsAndCollapseToggle(t *testing.T) {
+	a := testApp(t, "problems")
+	obj := map[string]any{}
+	for _, k := range []string{"a", "b", "c", "d", "e", "f"} {
+		obj[k] = strings.Repeat(k, 3)
+	}
+	row := problemRow()
+	row["details"] = obj
+	row["long_text"] = strings.Repeat("lorem ipsum ", 30)
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+
+	insp := a.top().(*inspectorView)
+	find := func(key string) *fieldRow {
+		for i := range insp.rows {
+			if insp.rows[i].key == key {
+				return &insp.rows[i]
+			}
+		}
+		t.Fatalf("no row for %q", key)
+		return nil
+	}
+
+	// JSON objects read as structure — expanded block by default.
+	if r := find("details"); !r.expandable || !r.expanded || r.span < 2 {
+		t.Fatalf("object should default to a block: %+v", *r)
+	}
+	// Scalars (and arrays — problemRow's affected_entities) stay one line,
+	// truncated preview marked ▸.
+	if r := find("long_text"); !r.expandable || r.expanded || r.span != 1 {
+		t.Fatalf("long scalar should default to one line: %+v", *r)
+	}
+	if r := find("smartscape.affected_entities"); r.expanded || r.span != 1 {
+		t.Fatalf("array should default to one line: %+v", *r)
+	}
+	if body := insp.View(120, 40); !strings.Contains(body, "▸") {
+		t.Errorf("collapsed marker missing:\n%s", body)
+	}
+
+	// enter collapses a default-expanded object, and toggles back.
+	target := 0
+	for i, r := range insp.rows {
+		if r.key == "details" {
+			target = i
+		}
+	}
+	for insp.cursor < target {
+		press(a, key("j"))
+	}
+	press(a, key("enter"))
+	if got := find("details").span; got != 1 {
+		t.Fatalf("collapse toggle did not shrink the object to one line, got %d", got)
+	}
+	press(a, key("enter"))
+	if got := find("details").span; got < 2 {
+		t.Fatalf("re-expand failed, span = %d", got)
+	}
+	if len(a.stack) != 2 {
+		t.Fatalf("expand toggle must not navigate, depth = %d", len(a.stack))
+	}
+}
+
+func TestDetailFetchBackfillsEntityNameIntoTabScopes(t *testing.T) {
+	ds := &dataSource{runFn: func(string) ([]map[string]any, error) { return nil, nil }}
+	entity := catalog.Entity{ID: "K8S_POD-0011223344556677", Type: "K8S_POD"} // id-only jump: no name
+	dv := newDetailView(ds, entity, nil, catalog.DefaultTimeframe)
+	dv.Update(bodySizeMsg{width: 120, height: 40})
+	dv.Init() // starts the details-tab fetch (seq 1)
+
+	iv := dv.tabs[0].view.(*inspectorView)
+	dv.Update(dataMsg{owner: iv, seq: 1, records: []map[string]any{{
+		"id": entity.ID, "name": "checkout-abc123", "type": "K8S_POD",
+	}}})
+
+	if dv.entity.Name != "checkout-abc123" {
+		t.Fatalf("detail entity name = %q", dv.entity.Name)
+	}
+	if dv.Crumb() != "checkout-abc123" {
+		t.Errorf("crumb = %q", dv.Crumb())
+	}
+
+	// Activating the logs tab now composes the learned name — K8s log
+	// scoping matches by plain k8s.* names, so this is load-bearing.
+	logsIdx := -1
+	for i, tab := range dv.tabs {
+		if tab.name == "logs" {
+			logsIdx = i
+		}
+	}
+	deliverView(dv, dv.setActive(logsIdx))
+	logs := dv.tabs[logsIdx].view.(*tableView)
+	if !strings.Contains(logs.dql, `k8s.pod.name == "checkout-abc123"`) {
+		t.Errorf("logs tab did not pick up the fetched name:\n%s", logs.dql)
+	}
+}
+
+// deliverView executes a view command tree just far enough to trigger query
+// composition (data-source results are dropped, like deliver).
+func deliverView(v viewModel, cmd tea.Cmd) {
+	if cmd == nil {
+		return
+	}
+	msg := cmd()
+	if msg == nil {
+		return
+	}
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		for _, c := range batch {
+			deliverView(v, c)
+		}
+		return
+	}
+	if _, isData := msg.(dataMsg); isData {
+		return
+	}
+	deliverView(v, v.Update(msg))
+}
