@@ -139,9 +139,10 @@ func TestCensusEnterOpensTypedBrowser(t *testing.T) {
 func TestTraceRowEnterOpensWaterfallAndLogsJump(t *testing.T) {
 	a := testApp(t, "traces")
 	seedRows(t, a, []map[string]any{{
-		"trace.id": "140ea4cf0d16aa99aadde231773bd127", "root": "GET /checkout",
-		"svc": "checkout", "spans": "11", "failed": "1",
-		"start": "2026-07-06T16:17:56.000000000Z", "dur": "5800000",
+		"trace.id": "140ea4cf0d16aa99aadde231773bd127", "span.name": "GET /checkout",
+		"endpoint.name": "GET /checkout", "span.kind": "server",
+		"service.name": "checkout", "request.is_failed": true,
+		"start_time": "2026-07-06T16:17:56.000000000Z", "duration": "5800000",
 	}})
 	press(a, key("enter"))
 	wf, ok := a.top().(*waterfallView)
@@ -157,6 +158,49 @@ func TestTraceRowEnterOpensWaterfallAndLogsJump(t *testing.T) {
 	}
 	if !strings.Contains(logs.dql, `trace_id == "140ea4cf0d16aa99aadde231773bd127"`) {
 		t.Errorf("trace logs dql:\n%s", logs.dql)
+	}
+}
+
+func TestSpanLensSwitching(t *testing.T) {
+	a := testApp(t, "traces")
+	tv := a.top().(*tableView)
+	if !strings.Contains(tv.dql, "| filter isNull(span.parent_id)") {
+		t.Fatalf("traces should open on the roots lens:\n%s", tv.dql)
+	}
+
+	// Digits pick a lens directly (claimed from the hotkey map, like detail
+	// tabs); the crumb names any non-default lens.
+	press(a, key("2"))
+	if a.top() != tv {
+		t.Fatalf("digit on a lensed table must switch lens, not views (top = %T)", a.top())
+	}
+	if !strings.Contains(tv.dql, `span.status_code == "error"`) {
+		t.Errorf("lens 2 (errors) not composed:\n%s", tv.dql)
+	}
+	if tv.Crumb() != "traces·errors" {
+		t.Errorf("crumb = %q, want traces·errors", tv.Crumb())
+	}
+
+	// tab cycles forward, shift+tab back.
+	press(a, key("tab"))
+	if !strings.Contains(tv.dql, `span.kind == "server"`) {
+		t.Errorf("tab should advance to server lens:\n%s", tv.dql)
+	}
+	press(a, key("shift+tab"))
+	if !strings.Contains(tv.dql, `span.status_code == "error"`) {
+		t.Errorf("shift+tab should return to errors lens:\n%s", tv.dql)
+	}
+
+	// The db lens swaps in its curated statement columns.
+	press(a, key("5"))
+	if got := tv.columns()[1].Title; got != "STATEMENT" {
+		t.Errorf("db lens column[1] = %q, want STATEMENT", got)
+	}
+
+	// Digits past the lens list still hit their global hotkey (9 → aws).
+	press(a, key("9"))
+	if top, ok := a.top().(*tableView); !ok || top.spec.Name != "aws" {
+		t.Fatalf("digit 9 should stay a hotkey jump, top = %v", a.top().Crumb())
 	}
 }
 

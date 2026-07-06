@@ -50,6 +50,9 @@ type Scope struct {
 	Arg string
 	// TraceID scopes logs/traces to one distributed trace (log↔trace jumps).
 	TraceID string
+	// Lens indexes into the spec's Lenses (0 = default). Views without
+	// lenses ignore it.
+	Lens int
 }
 
 // ViewKind distinguishes entity views (the map) from signal views (the terrain).
@@ -86,6 +89,19 @@ func (c Column) Text(rec map[string]any) string {
 	return FormatValue(rec[c.Field])
 }
 
+// Lens is one quick server-side slice of a view's dataset — the spans view
+// offers roots/errors/server/…. Lenses render as a tab strip above the table
+// (digits and tab switch), and the active lens' filter is part of the spec's
+// Query output, so facet exploration and the DQL echo see it too.
+type Lens struct {
+	Name   string // strip label ("roots")
+	Desc   string // one-liner shown in the status bar on switch
+	Filter string // DQL condition the query composes ("" = unfiltered)
+	// Columns overrides the spec's columns while this lens is active
+	// (db → statement columns, genai → token columns). nil = spec columns.
+	Columns []Column
+}
+
 // Spec is a declarative view definition.
 type Spec struct {
 	Name    string
@@ -96,6 +112,9 @@ type Spec struct {
 	// s.Entity into a filter; entity views honor it when EntityScoped.
 	Query   func(s Scope) string
 	Columns []Column
+	// Lenses are the view's quick subset selections (nil = none). The
+	// spec's Query is responsible for composing the scoped lens' Filter.
+	Lenses []Lens
 	// Entity extracts the Smartscape entity a selected row stands for
 	// (nil when the row carries none). It supplies the scope for drills.
 	Entity func(rec map[string]any) *Entity
@@ -128,6 +147,19 @@ type Spec struct {
 
 // UsesScope reports whether a view's query can compose an entity scope.
 func (s *Spec) UsesScope() bool { return s.Kind == KindSignal || s.EntityScoped }
+
+// LensAt returns the lens at index i, falling back to the default (first)
+// lens when i is out of range — stale history entries must survive catalog
+// reorderings. Zero value for views without lenses.
+func (s *Spec) LensAt(i int) Lens {
+	if len(s.Lenses) == 0 {
+		return Lens{}
+	}
+	if i < 0 || i >= len(s.Lenses) {
+		i = 0
+	}
+	return s.Lenses[i]
+}
 
 // CanScope reports whether pinning entity e meaningfully narrows this view.
 // It is honest by construction: if composing the entity does not change the

@@ -35,6 +35,7 @@ type pageRef struct {
 	Searches []string        `json:"searches,omitempty"` // table's server-side searches
 	Facets   []catalog.Facet `json:"facets,omitempty"`   // table's server-side facets
 	Arg      string          `json:"arg,omitempty"`      // scope arg (census → typed list)
+	Lens     int             `json:"lens,omitempty"`     // table's active lens index
 	TraceID  string          `json:"traceId,omitempty"`  // waterfall / trace-scoped tables
 	DQL      string          `json:"dql,omitempty"`      // query editor content
 	Entity   *catalog.Entity `json:"entity,omitempty"`   // detail/metrics/relations/table scope
@@ -219,7 +220,7 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 	case *tableView:
 		ref := pageRef{Kind: "table", Crumb: v.Crumb(), View: v.spec.Name,
 			Filter: v.filter, Searches: v.searches, Facets: v.facets,
-			Arg: v.scope.Arg, TraceID: v.scope.TraceID}
+			Arg: v.scope.Arg, Lens: v.scope.Lens, TraceID: v.scope.TraceID}
 		if v.scope.Entity != nil {
 			e := *v.scope.Entity
 			ref.Entity = &e
@@ -258,8 +259,12 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 		if spec == nil {
 			return nil, fmt.Errorf("unknown view %q", ref.View)
 		}
-		v := newTableView(a.ds, spec, catalog.Scope{
-			Timeframe: tf, Arg: ref.Arg, TraceID: ref.TraceID, Entity: ref.Entity})
+		scope := catalog.Scope{
+			Timeframe: tf, Arg: ref.Arg, TraceID: ref.TraceID, Entity: ref.Entity}
+		if ref.Lens > 0 && ref.Lens < len(spec.Lenses) {
+			scope.Lens = ref.Lens
+		}
+		v := newTableView(a.ds, spec, scope)
 		if ref.Filter != "" {
 			v.setFilter(ref.Filter)
 		}

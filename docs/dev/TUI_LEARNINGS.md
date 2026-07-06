@@ -207,6 +207,32 @@ All validated live; implementation in `pkg/tui/catalog/facets.go`.
   `summarize`, that's what makes them filter the exact fields the columns
   (and the facet attribute picker, built from fetched record keys) present.
 
+### 1.11 Span lenses — why the traces view fetches spans directly
+
+The traces list originally aggregated (`summarize … by:{trace.id}`), which was
+slower and starved the facet picker: post-summarize only the aggregate fields
+exist. Fetching spans directly and slicing with lens filters keeps every span
+attribute available. Facts validated live (box tenant, 2h window, ~280k spans):
+
+- **Root heuristic:** `isNull(span.parent_id)` (~33.6k) is the OTel root
+  definition and what the lens uses. Dynatrace's `request.is_root_span == true`
+  (~42k) is broader — also true on spans whose parent fell outside ingest —
+  and the two only overlap on ~31.4k spans; neither subsumes the other.
+- **Failure signal:** `span.status_code == "error"` (681) vastly out-catches
+  `request.is_failed == true` (7), which exists only on entry spans. The
+  errors lens ORs both. `span.status_code` is null on ~99.8% of spans.
+- **DB spans:** `isNotNull(db.system.name)` (231k) is broader than
+  `db.query.text` (120k) — drivers emit `pool.acquire` etc. without query
+  text. The db lens filters on the former, displays the latter with
+  `span.name` fallback.
+- **GenAI spans:** `gen_ai.operation.name` is the discriminator;
+  `gen_ai.system` is empty on this tenant while `gen_ai.provider.name`,
+  `gen_ai.request.model`, and `gen_ai.usage.*_tokens` are populated.
+- **Multi-line cell values shear table rows.** `db.query.text` routinely
+  contains newlines (sqlc header comments); any `\n` in a cell breaks the
+  row grid. The table cell primitives (`pad`/`cell` in `table.go`) flatten
+  whitespace runs before truncation.
+
 ---
 
 ## 2. TUI extension model — how to add a view

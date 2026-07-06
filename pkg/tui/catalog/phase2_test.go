@@ -84,21 +84,77 @@ func TestWorkloadsQueryCoalescesDaemonSetStatus(t *testing.T) {
 func TestTracesQueryComposition(t *testing.T) {
 	spec := Lookup("traces")
 
+	// Direct span fetch — no summarize: every attribute survives into the
+	// rows (inspector, facet suggestions), and the default lens approximates
+	// the classic trace list via the root-span heuristic.
 	unscoped := spec.Query(fixtureScope(nil))
-	for _, want := range []string{
-		"fetch spans, from:now() - 2h",
-		"failed = countIf(request.is_failed == true)",
-		"root = takeFirst(if(isNull(span.parent_id), coalesce(endpoint.name, span.name)))",
-		"by:{trace.id}",
-	} {
-		if !strings.Contains(unscoped, want) {
-			t.Errorf("traces query missing %q:\n%s", want, unscoped)
-		}
+	want := "fetch spans, from:now() - 2h\n" +
+		"| filter isNull(span.parent_id)\n" +
+		"| sort start_time desc\n" +
+		"| limit 200"
+	if unscoped != want {
+		t.Errorf("traces query =\n%s\nwant\n%s", unscoped, want)
 	}
 
 	scoped := spec.Query(fixtureScope(&Entity{ID: "K8S_POD-42", Name: "checkout-1", Type: "K8S_POD"}))
 	if !strings.Contains(scoped, `dt.smartscape.k8s_pod == toSmartscapeId("K8S_POD-42")`) {
 		t.Errorf("pod scope not composed into spans:\n%s", scoped)
+	}
+	if !strings.Contains(scoped, "| filter isNull(span.parent_id)") {
+		t.Errorf("entity scope must not displace the lens filter:\n%s", scoped)
+	}
+}
+
+func TestTracesLenses(t *testing.T) {
+	spec := Lookup("traces")
+	if len(spec.Lenses) == 0 {
+		t.Fatal("traces spec should offer lenses")
+	}
+	if spec.Lenses[0].Name != "roots" {
+		t.Errorf("default lens should be roots, got %q", spec.Lenses[0].Name)
+	}
+
+	// Each lens composes its filter (the last, "all", none at all).
+	filters := map[string]string{
+		"roots":  "| filter isNull(span.parent_id)",
+		"errors": `| filter span.status_code == "error" or request.is_failed == true`,
+		"server": `| filter span.kind == "server"`,
+		"client": `| filter span.kind == "client"`,
+		"db":     "| filter isNotNull(db.system.name)",
+		"genai":  "| filter isNotNull(gen_ai.operation.name)",
+	}
+	for i, l := range spec.Lenses {
+		s := fixtureScope(nil)
+		s.Lens = i
+		q := spec.Query(s)
+		if l.Name == "all" {
+			if strings.Contains(q, "| filter") {
+				t.Errorf("lens all should not filter:\n%s", q)
+			}
+			continue
+		}
+		if !strings.Contains(q, filters[l.Name]) {
+			t.Errorf("lens %s query missing %q:\n%s", l.Name, filters[l.Name], q)
+		}
+	}
+
+	// A stale history index falls back to the default lens, not a panic.
+	s := fixtureScope(nil)
+	s.Lens = 99
+	if q := spec.Query(s); !strings.Contains(q, "isNull(span.parent_id)") {
+		t.Errorf("out-of-range lens should clamp to roots:\n%s", q)
+	}
+	if got := spec.LensAt(-1).Name; got != "roots" {
+		t.Errorf("LensAt(-1) = %q, want roots", got)
+	}
+
+	// Curated lens columns exist where the default table would be mute.
+	for _, name := range []string{"db", "genai"} {
+		for _, l := range spec.Lenses {
+			if l.Name == name && l.Columns == nil {
+				t.Errorf("lens %s should curate its own columns", name)
+			}
+		}
 	}
 }
 

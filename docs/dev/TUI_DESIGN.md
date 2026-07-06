@@ -140,7 +140,7 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 |---|---|---|---|
 | Problems | `:problems`, `:pb` | `dt.davis.problems` | severity, status, title, root cause, impact, age; **the investigation entry point** |
 | Logs | `:logs` | `logs` | live-follow toggle, severity coloring, grouped-by-pattern mode, record inspector |
-| Traces | `:traces`, `:spans` | `spans` | failed/slowest span tables per scope; trace-ID lookup (`:trace <id>`); waterfall view |
+| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · genai · all, tab/digits switch); trace-ID lookup (`:trace <id>`); waterfall view |
 | Metrics | `:metrics` | `timeseries` | metric browser for the scoped entity; braille/sparkline charts |
 | Events | `:events` | `events`, `dt.davis.events` | deployments, K8s events, Davis events; filterable by kind |
 | Security | `:security`, `:vulns` | `security.events` | vulnerabilities (CVE, DSS score, affected entities), detections (MITRE), posture findings |
@@ -713,7 +713,10 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 - Relations panel (`x`) over `smartscapeEdges` (both directions in one
   query, batched name resolution, raw-id fallback for nodeless types);
   scope pinning (`.` / `ctrl-x`).
-- Traces view (spans summarized by `trace.id`) + span waterfall
+- Traces view (direct span fetch sliced by lenses — roots · errors ·
+  server · client · db · genai · all; no aggregation, so queries stay fast
+  and every span attribute reaches the inspector and the facet picker;
+  root heuristic `isNull(span.parent_id)`) + span waterfall
   (`toUid()` cast, tree from `span.parent_id`, proportional bars, failed
   markers, auto-widening window); log ↔ trace jumps in both directions
   (`s` on a log record, `l` on a waterfall — log `trace_id` is a plain

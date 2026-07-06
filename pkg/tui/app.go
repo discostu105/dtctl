@@ -330,13 +330,17 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	top := a.top()
 	if !top.InputActive() {
 		// Digit hotkeys jump to bookmarked views. On a detail page the digits
-		// that name a tab (1..N) switch tabs instead; the rest (0, and any
-		// past the last tab) still hit their hotkey, so '0' → home works
-		// everywhere the help overlay promises it does.
+		// that name a tab (1..N) switch tabs instead — likewise the digits
+		// naming a lens on a lensed table; the rest (0, and any past the last
+		// tab) still hit their hotkey, so '0' → home works everywhere the
+		// help overlay promises it does.
 		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
 			claimedByTab := false
 			if dv, isDetail := top.(*detailView); isDetail {
 				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(dv.tabs))
+			}
+			if tv, isTable := top.(*tableView); isTable {
+				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(tv.spec.Lenses))
 			}
 			if !claimedByTab {
 				if name, ok := hotkeys[key]; ok {
@@ -850,6 +854,7 @@ func (a *app) renderHelp() string {
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall"},
 			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
+			{"tab / 1-N", "switch tab (detail pages) or lens (traces: roots · errors · server · client · db · genai · all)"},
 			{"H", "history — restore a previous page (survives restarts)"},
 			{"/", "filter table (live) — enter adds it as a server-side search, alt+enter replaces"},
 			{"f / F", "facet manager: add attribute=value filters (fieldsSummary top values, * patterns), edit/remove each / clear all"},

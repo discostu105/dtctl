@@ -115,6 +115,37 @@ func newTableView(ds *dataSource, spec *catalog.Spec, scope catalog.Scope) *tabl
 
 func (v *tableView) Init() tea.Cmd { return v.Refresh() }
 
+// columns returns the active column set: the lens' override when the active
+// lens curates its own (db → statement, genai → tokens), else the spec's.
+func (v *tableView) columns() []catalog.Column {
+	if len(v.spec.Lenses) > 0 {
+		if cols := v.spec.LensAt(v.scope.Lens).Columns; cols != nil {
+			return cols
+		}
+	}
+	return v.spec.Columns
+}
+
+// setLens activates a lens by index (wrapping when asked — tab cycles) and
+// refetches. Sort resets: lenses may carry different columns.
+func (v *tableView) setLens(i int, wrap bool) tea.Cmd {
+	n := len(v.spec.Lenses)
+	if n == 0 {
+		return nil
+	}
+	if wrap {
+		i = ((i % n) + n) % n
+	}
+	if i < 0 || i >= n || i == v.scope.Lens {
+		return nil
+	}
+	v.scope.Lens = i
+	v.sortCol = -1
+	v.cursor, v.offset = 0, 0
+	l := v.spec.Lenses[i]
+	return tea.Batch(v.Refresh(), markHistory, status(fmt.Sprintf("lens: %s — %s", l.Name, l.Desc)))
+}
+
 // composeDQL renders the list query: the spec's scope query with the server
 // searches injected after the source (DQL rejects them later in the
 // pipeline) and the facet filters before the sort/limit tail.
@@ -147,6 +178,10 @@ func (v *tableView) Busy() bool { return v.loading || v.facetLoading }
 
 func (v *tableView) Crumb() string {
 	label := v.spec.Name
+	// The default lens is the view's understood state; only deviations show.
+	if len(v.spec.Lenses) > 0 && v.scope.Lens > 0 {
+		label += "·" + v.spec.LensAt(v.scope.Lens).Name
+	}
 	if v.scope.Arg != "" {
 		label += fmt.Sprintf(" (%s)", strings.ToLower(v.scope.Arg))
 	}
@@ -208,6 +243,9 @@ func (v *tableView) Hints() []keyHint {
 		return []keyHint{{"type", "filter rows"}, {"enter", "add server search"}, {"alt+enter", "replace"}, {"esc", "clear"}}
 	}
 	var hints []keyHint
+	if n := len(v.spec.Lenses); n > 0 {
+		hints = append(hints, keyHint{fmt.Sprintf("tab/1-%d", n), "lens"})
+	}
 	switch {
 	case v.spec.EnterTarget != "":
 		hints = append(hints, keyHint{"enter", v.spec.EnterTarget})
@@ -384,7 +422,7 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.move(len(v.rows))
 	case "J": // next sort column (wraps through "no sort")
 		v.sortCol++
-		if v.sortCol >= len(v.spec.Columns) {
+		if v.sortCol >= len(v.columns()) {
 			v.sortCol = -1
 		}
 		v.sortDesc = v.defaultDesc()
@@ -392,14 +430,22 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if v.sortCol < 0 {
 			return status("sort: fetch order")
 		}
-		return status(fmt.Sprintf("sort: %s %s", v.spec.Columns[v.sortCol].Title, sortArrow(v.sortDesc)))
+		return status(fmt.Sprintf("sort: %s %s", v.columns()[v.sortCol].Title, sortArrow(v.sortDesc)))
 	case "K": // toggle direction of the current sort column
 		if v.sortCol < 0 {
 			return status("no sort column (J selects one)")
 		}
 		v.sortDesc = !v.sortDesc
 		v.applyFilter()
-		return status(fmt.Sprintf("sort: %s %s", v.spec.Columns[v.sortCol].Title, sortArrow(v.sortDesc)))
+		return status(fmt.Sprintf("sort: %s %s", v.columns()[v.sortCol].Title, sortArrow(v.sortDesc)))
+	case "tab", "]":
+		if len(v.spec.Lenses) > 0 {
+			return v.setLens(v.scope.Lens+1, true)
+		}
+	case "shift+tab", "[":
+		if len(v.spec.Lenses) > 0 {
+			return v.setLens(v.scope.Lens-1, true)
+		}
 	case "/":
 		v.filtering = true
 		v.filterInput.Focus()
@@ -463,6 +509,12 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return v.inspect(rec)
 	default:
+		// Digits pick a lens directly, mirroring detail-page tabs (the app
+		// layer already kept them from the global hotkey map).
+		if key := msg.String(); len(v.spec.Lenses) > 0 && len(key) == 1 &&
+			key[0] >= '1' && key[0] < byte('1'+len(v.spec.Lenses)) {
+			return v.setLens(int(key[0]-'1'), false)
+		}
 		if target, ok := v.spec.Drills[msg.String()]; ok {
 			return v.drill(target)
 		}
@@ -976,8 +1028,12 @@ func (v *tableView) move(delta int) {
 }
 
 func (v *tableView) pageSize() int {
-	if v.height > 3 {
-		return v.height - 3
+	chrome := 3
+	if len(v.spec.Lenses) > 0 {
+		chrome++ // the lens strip line
+	}
+	if v.height > chrome {
+		return v.height - chrome
 	}
 	return 10
 }
@@ -1005,7 +1061,7 @@ func (v *tableView) applyFilter() {
 		v.rows = nil
 		for _, rec := range v.all {
 			var cells []string
-			for _, c := range v.spec.Columns {
+			for _, c := range v.columns() {
 				cells = append(cells, c.Text(rec))
 			}
 			if strings.Contains(strings.ToLower(strings.Join(cells, " ")), needle) {
@@ -1037,10 +1093,10 @@ func (v *tableView) sortKey(col catalog.Column, rec map[string]any) any {
 
 // sortRows orders rows by the active sort column (stable; empties last).
 func (v *tableView) sortRows() {
-	if v.sortCol < 0 || v.sortCol >= len(v.spec.Columns) {
+	if v.sortCol < 0 || v.sortCol >= len(v.columns()) {
 		return
 	}
-	col := v.spec.Columns[v.sortCol]
+	col := v.columns()[v.sortCol]
 	sort.SliceStable(v.rows, func(i, j int) bool {
 		a, aEmpty := sortable(v.sortKey(col, v.rows[i]))
 		b, bEmpty := sortable(v.sortKey(col, v.rows[j]))
@@ -1061,10 +1117,10 @@ func (v *tableView) sortRows() {
 // defaultDesc picks the natural direction for a freshly selected sort column:
 // numbers biggest-first (CPU, restarts), text A-to-Z.
 func (v *tableView) defaultDesc() bool {
-	if v.sortCol < 0 || v.sortCol >= len(v.spec.Columns) {
+	if v.sortCol < 0 || v.sortCol >= len(v.columns()) {
 		return false
 	}
-	col := v.spec.Columns[v.sortCol]
+	col := v.columns()[v.sortCol]
 	for _, rec := range v.rows {
 		key, empty := sortable(v.sortKey(col, rec))
 		if empty {
@@ -1157,9 +1213,9 @@ func (v *tableView) View(width, height int) string {
 	if v.elapsed != "" {
 		head += theme.Dim.Render(" · " + v.elapsed)
 	}
-	if v.sortCol >= 0 && v.sortCol < len(v.spec.Columns) {
+	if v.sortCol >= 0 && v.sortCol < len(v.columns()) {
 		head += theme.Dim.Render(" · ") +
-			theme.SortMark.Render(sortArrow(v.sortDesc)+" "+v.spec.Columns[v.sortCol].Title)
+			theme.SortMark.Render(sortArrow(v.sortDesc)+" "+v.columns()[v.sortCol].Title)
 	}
 	for _, s := range v.searches {
 		head += "  " + theme.Badge.Render("⌕ "+s)
@@ -1176,6 +1232,23 @@ func (v *tableView) View(width, height int) string {
 	b.WriteString(ansi.Truncate(head, width, "…"))
 	b.WriteString("\n")
 
+	// Lens strip: the view's quick subsets, detail-tab style (tab/digits).
+	chrome := 2
+	if n := len(v.spec.Lenses); n > 0 {
+		chrome = 3
+		labels := make([]string, n)
+		for i, l := range v.spec.Lenses {
+			label := fmt.Sprintf("%d · %s", i+1, l.Name)
+			if i == v.scope.Lens {
+				labels[i] = theme.TabActive.Render(label)
+			} else {
+				labels[i] = theme.TabInactive.Render(label)
+			}
+		}
+		b.WriteString(ansi.Truncate(" "+strings.Join(labels, " "), width, "…"))
+		b.WriteString("\n")
+	}
+
 	if v.err != nil {
 		b.WriteString("\n" + theme.Error.Render("✗ "+wrap(v.err.Error(), width-2)))
 		return b.String()
@@ -1186,7 +1259,7 @@ func (v *tableView) View(width, height int) string {
 
 	// Header row.
 	var hdr []string
-	for i, c := range v.spec.Columns {
+	for i, c := range v.columns() {
 		title := c.Title
 		if i == v.sortCol {
 			title += sortArrow(v.sortDesc)
@@ -1196,7 +1269,7 @@ func (v *tableView) View(width, height int) string {
 	b.WriteString(" " + theme.TableHeader.Render(ansi.Truncate(strings.Join(hdr, "  "), width-1, "")))
 	b.WriteString("\n")
 
-	visible := height - 2
+	visible := height - chrome
 	if visible < 1 {
 		visible = 1
 	}
@@ -1214,8 +1287,12 @@ func (v *tableView) View(width, height int) string {
 		if v.filter != "" && len(v.all) > 0 {
 			b.WriteString(theme.Dim.Render(fmt.Sprintf("  no rows match %q (%d fetched — esc clears the filter)", v.filter, len(v.all))))
 		} else {
-			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center,
-				theme.Dim.Render("∅ no data in timeframe (last "+v.scope.Timeframe.Label+")")))
+			empty := "∅ no data in timeframe (last " + v.scope.Timeframe.Label + ")"
+			if len(v.spec.Lenses) > 0 {
+				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — tab switches lens",
+					v.spec.LensAt(v.scope.Lens).Name, v.scope.Timeframe.Label)
+			}
+			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))
 		}
 	}
 	return b.String()
@@ -1226,7 +1303,7 @@ func (v *tableView) renderRow(i int, widths []int, width int) string {
 	selected := i == v.cursor
 
 	var cells []string
-	for ci, c := range v.spec.Columns {
+	for ci, c := range v.columns() {
 		text := cell(c.Text(rec), widths[ci], c.Right)
 		if !selected && c.Class != nil {
 			if class := c.Class(strings.TrimSpace(text)); class != "" {
@@ -1246,9 +1323,10 @@ func (v *tableView) renderRow(i int, widths []int, width int) string {
 
 // columnWidths assigns fixed widths and shares the remainder among flex columns.
 func (v *tableView) columnWidths(total int) []int {
-	widths := make([]int, len(v.spec.Columns))
+	cols := v.columns()
+	widths := make([]int, len(cols))
 	fixed, flexCount := 0, 0
-	for i, c := range v.spec.Columns {
+	for i, c := range cols {
 		if c.Width > 0 {
 			widths[i] = c.Width
 			fixed += c.Width
@@ -1256,14 +1334,14 @@ func (v *tableView) columnWidths(total int) []int {
 			flexCount++
 		}
 	}
-	gaps := 2 * (len(v.spec.Columns) - 1)
+	gaps := 2 * (len(cols) - 1)
 	remaining := total - fixed - gaps
 	if flexCount > 0 {
 		per := remaining / flexCount
 		if per < 8 {
 			per = 8
 		}
-		for i, c := range v.spec.Columns {
+		for i, c := range cols {
 			if c.Width == 0 {
 				widths[i] = per
 			}
@@ -1272,9 +1350,20 @@ func (v *tableView) columnWidths(total int) []int {
 	return widths
 }
 
+// flatten collapses line breaks and tabs to single spaces — a multi-line
+// value (SQL statements, log content) must not shear a table row apart.
+func flatten(s string) string {
+	if !strings.ContainsAny(s, "\n\r\t") {
+		return s
+	}
+	return strings.Join(strings.FieldsFunc(s, func(r rune) bool {
+		return r == '\n' || r == '\r' || r == '\t' || r == ' '
+	}), " ")
+}
+
 // pad truncates or pads s to exactly w display cells (ANSI-aware).
 func pad(s string, w int) string {
-	s = ansi.Truncate(s, w, "…")
+	s = ansi.Truncate(flatten(s), w, "…")
 	if gap := w - lipgloss.Width(s); gap > 0 {
 		s += strings.Repeat(" ", gap)
 	}
@@ -1286,7 +1375,7 @@ func cell(s string, w int, right bool) string {
 	if !right {
 		return pad(s, w)
 	}
-	s = ansi.Truncate(s, w, "…")
+	s = ansi.Truncate(flatten(s), w, "…")
 	if gap := w - lipgloss.Width(s); gap > 0 {
 		s = strings.Repeat(" ", gap) + s
 	}
