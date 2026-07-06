@@ -222,7 +222,7 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return a.navigate(view, msg.replace)
 
 	case inspectMsg:
-		return a.navigate(newInspectorView(msg.title, msg.rec), false)
+		return a.navigate(newInspectorView(a.ds, msg.title, msg.rec), false)
 
 	case detailMsg:
 		return a.navigate(newDetailView(a.ds, msg.entity, msg.rec, a.tf), false)
@@ -860,6 +860,7 @@ func (a *app) renderHelp() string {
 			{"f / F", "facet manager: add attribute=value filters (fieldsSummary top values, * patterns), edit/remove each / clear all"},
 			{"J/K", "sort column/direction"},
 			{"j/k ↑/↓ g/G", "move"},
+			{"pgup/pgdn", "page jump (ctrl+d/u half page in inspectors)"},
 		}},
 		{"Drill-down (pre-scoped to selection)", []keyHint{
 			{"l", "logs"},

@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -85,6 +87,24 @@ func TestRenderValueJSONBlocks(t *testing.T) {
 	}
 	if v.raw != `{"level":"error","code":500}` {
 		t.Errorf("raw must stay verbatim, got %q", v.raw)
+	}
+}
+
+func TestRenderValueHugeJSONDefaultsCollapsed(t *testing.T) {
+	big := map[string]any{}
+	for i := 0; i < maxAutoExpandLines+10; i++ {
+		big[fmt.Sprintf("key%02d", i)] = fmt.Sprintf("value %d", i)
+	}
+	if v := renderValue("k8s.object", big, 80); v.block {
+		t.Error("a JSON doc taller than a screen must not auto-expand")
+	}
+	if v := renderValue("details", map[string]any{"a": "b"}, 80); !v.block {
+		t.Error("small objects should still auto-expand")
+	}
+	// The same cap applies to JSON carried in strings.
+	raw, _ := json.Marshal(big)
+	if v := renderValue("k8s.object", string(raw), 80); v.block {
+		t.Error("a huge JSON string must not auto-expand")
 	}
 }
 

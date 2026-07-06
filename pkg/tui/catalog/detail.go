@@ -15,11 +15,15 @@ type Fact struct {
 
 // DetailQuery fetches the full Smartscape node behind an entity. Validated
 // live: id must be compared via toSmartscapeId() — a plain string comparison
-// silently matches nothing. k8s.object (the raw manifest, multiple KB of
-// JSON) is dropped alongside references; the curated facts cover its
-// interesting parts.
+// silently matches nothing. Unlike the list queries, nothing is stripped:
+// this is one record, and k8s.object (the full manifest — spec, status,
+// images, resources) and references (containment edges as navigable entity
+// ids) are exactly the depth a detail page is for. references is NOT in the
+// default projection and must be fieldsAdd-ed explicitly (validated live).
+// The inspector keeps huge JSON docs collapsed by default, so the manifest
+// cannot swamp the page.
 func DetailQuery(e Entity) string {
-	return fmt.Sprintf("smartscapeNodes %q\n| filter id == toSmartscapeId(%q)\n| fieldsRemove references, k8s.object\n| limit 1",
+	return fmt.Sprintf("smartscapeNodes %q\n| filter id == toSmartscapeId(%q)\n| fieldsAdd references\n| limit 1",
 		e.Type, e.ID)
 }
 

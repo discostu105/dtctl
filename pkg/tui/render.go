@@ -37,6 +37,7 @@ type valueView struct {
 	lines   []string        // styled display lines, wrapped to width
 	compact string          // one-line preview for the collapsed layout ("" = lines[0])
 	block   bool            // render expanded by default (JSON objects read as blocks)
+	doc     any             // decoded JSON document — expands into per-line rows
 	entity  *catalog.Entity // set when the value is a traversable entity id
 	trace   string          // set when the value is a trace id
 	raw     string          // unstyled text for yank
@@ -65,9 +66,11 @@ func renderValue(key string, val any, width int) valueView {
 	case string:
 		return renderString(key, v, width)
 	case map[string]any:
-		return valueView{lines: jsonLines(v, 0, width), compact: rawJSON(v), raw: rawJSON(v), block: true}
+		lines := jsonLines(v, 0, width)
+		return valueView{lines: lines, compact: rawJSON(v), raw: rawJSON(v),
+			block: len(lines) <= maxAutoExpandLines, doc: v}
 	case []any:
-		return valueView{lines: jsonLines(v, 0, width), compact: rawJSON(v), raw: rawJSON(v)}
+		return valueView{lines: jsonLines(v, 0, width), compact: rawJSON(v), raw: rawJSON(v), doc: v}
 	default:
 		text := fmt.Sprintf("%v", v)
 		return valueView{lines: []string{text}, raw: text}
@@ -113,10 +116,25 @@ func renderString(key, s string, width int) valueView {
 	// a highlighted block instead of an escaped one-liner.
 	if doc := parseJSONDoc(s); doc != nil {
 		_, isObj := doc.(map[string]any)
-		return valueView{lines: jsonLines(doc, 0, width), compact: compactText(s), raw: raw, block: isObj}
+		lines := jsonLines(doc, 0, width)
+		return valueView{lines: lines, compact: compactText(s), raw: raw,
+			block: (isObj || blockString(key, s)) && len(lines) <= maxAutoExpandLines, doc: doc}
 	}
 
-	return valueView{lines: wrapLines(s, width), compact: compactText(s), raw: raw}
+	return valueView{lines: wrapLines(s, width), compact: compactText(s), raw: raw, block: blockString(key, s)}
+}
+
+// maxAutoExpandLines caps default expansion of JSON blocks: a k8s.object
+// manifest renders to hundreds of lines and would swamp the record — huge
+// docs start collapsed (enter expands; per-row navigation and paging make
+// them workable).
+const maxAutoExpandLines = 40
+
+// blockString reports whether a plain string should render expanded by
+// default: log content, multi-line text, and very long values read better
+// wrapped than behind a ▸ preview.
+func blockString(key, s string) bool {
+	return key == "content" || strings.ContainsRune(s, '\n') || len(s) > 160
 }
 
 // compactText squashes a value onto one line for the collapsed preview.
@@ -244,50 +262,115 @@ func rawJSON(v any) string {
 // block (YAML-ish: keys and nesting carry the structure, no braces). Arrays
 // of scalars render inline; arrays of objects get [i] index headers.
 func jsonLines(v any, depth, width int) []string {
+	var lines []string
+	for _, n := range jsonRows(v, "", depth, width) {
+		lines = append(lines, n.lines...)
+	}
+	return lines
+}
+
+// jsonNode is one selectable unit inside an expanded JSON block: a key or
+// array element's own styled lines, its dotted path, and the yankable raw
+// value (a scalar's text, or the compact JSON of a subtree).
+type jsonNode struct {
+	lines  []string
+	path   string
+	raw    string
+	entity *catalog.Entity // set when the leaf is a traversable entity id
+}
+
+// jsonRows renders a decoded JSON value as one node per key/element so the
+// inspector can make every line of an expanded block individually selectable
+// and yankable. jsonLines flattens the same nodes into the plain block.
+func jsonRows(v any, path string, depth, width int) []jsonNode {
 	pad := strings.Repeat("  ", depth)
 	switch val := v.(type) {
 	case map[string]any:
+		if len(val) == 0 {
+			return []jsonNode{{lines: []string{pad + theme.JSONPunct.Render("{}")}, path: path, raw: "{}"}}
+		}
 		keys := make([]string, 0, len(val))
 		for k := range val {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
-		var lines []string
+		var nodes []jsonNode
 		for _, k := range keys {
+			childPath := joinJSONPath(path, k)
 			label := pad + theme.JSONKey.Render(k) + theme.JSONPunct.Render(":")
 			if scalar, ok := jsonScalar(val[k]); ok {
-				lines = append(lines, wrapIndented(label+" "+scalar, width, depth+1)...)
+				nodes = append(nodes, scalarNode(label+" "+scalar, childPath, val[k], width, depth))
 			} else {
-				lines = append(lines, label)
-				lines = append(lines, jsonLines(val[k], depth+1, width)...)
+				nodes = append(nodes, jsonNode{lines: []string{label}, path: childPath, raw: rawJSON(val[k])})
+				nodes = append(nodes, jsonRows(val[k], childPath, depth+1, width)...)
 			}
 		}
-		if len(lines) == 0 {
-			return []string{pad + theme.JSONPunct.Render("{}")}
-		}
-		return lines
+		return nodes
 	case []any:
 		if len(val) == 0 {
-			return []string{pad + theme.JSONPunct.Render("[]")}
+			return []jsonNode{{lines: []string{pad + theme.JSONPunct.Render("[]")}, path: path, raw: "[]"}}
 		}
-		if inline, ok := inlineArray(val, width-lipgloss.Width(pad)); ok {
-			return []string{pad + inline}
-		}
-		var lines []string
-		for i, e := range val {
-			idx := pad + theme.JSONPunct.Render(fmt.Sprintf("[%d]", i))
-			if scalar, ok := jsonScalar(e); ok {
-				lines = append(lines, wrapIndented(idx+" "+scalar, width, depth+1)...)
-			} else {
-				lines = append(lines, idx)
-				lines = append(lines, jsonLines(e, depth+1, width)...)
+		// Arrays of entity ids (references) don't inline past one element:
+		// each id gets its own navigable row instead of one opaque line.
+		if len(val) == 1 || entityIDList(val) == nil {
+			if inline, ok := inlineArray(val, width-lipgloss.Width(pad)); ok {
+				n := jsonNode{lines: []string{pad + inline}, path: path, raw: rawJSON(val)}
+				if s, ok := val[0].(string); ok && len(val) == 1 && entityIDRe.MatchString(s) {
+					n.entity = entityFromID(s)
+					n.raw = s
+				}
+				return []jsonNode{n}
 			}
 		}
-		return lines
+		var nodes []jsonNode
+		for i, e := range val {
+			childPath := fmt.Sprintf("%s[%d]", path, i)
+			idx := pad + theme.JSONPunct.Render(fmt.Sprintf("[%d]", i))
+			if scalar, ok := jsonScalar(e); ok {
+				nodes = append(nodes, scalarNode(idx+" "+scalar, childPath, e, width, depth))
+			} else {
+				nodes = append(nodes, jsonNode{lines: []string{idx}, path: childPath, raw: rawJSON(e)})
+				nodes = append(nodes, jsonRows(e, childPath, depth+1, width)...)
+			}
+		}
+		return nodes
 	default:
 		scalar, _ := jsonScalar(v)
-		return wrapIndented(pad+scalar, width, depth+1)
+		return []jsonNode{scalarNode(pad+scalar, path, v, width, depth)}
 	}
+}
+
+func joinJSONPath(path, key string) string {
+	if path == "" {
+		return key
+	}
+	return path + "." + key
+}
+
+// scalarNode builds the node for one leaf line, carrying the unquoted raw
+// value for yank and the entity link when the value is a traversable id.
+func scalarNode(line, path string, v any, width, depth int) jsonNode {
+	n := jsonNode{lines: wrapIndented(line, width, depth+1), path: path, raw: scalarRaw(v)}
+	if s, ok := v.(string); ok && entityIDRe.MatchString(s) {
+		n.entity = entityFromID(s)
+	}
+	return n
+}
+
+// scalarRaw is the yank text of a JSON leaf — strings unquoted, everything
+// else as displayed.
+func scalarRaw(v any) string {
+	switch val := v.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return strconv.FormatBool(val)
+	case float64:
+		return catalog.FormatValue(val)
+	case string:
+		return val
+	}
+	return fmt.Sprintf("%v", v)
 }
 
 // jsonScalar renders a leaf value ("" and false when v nests).
@@ -337,6 +420,28 @@ func wrapIndented(line string, width, depth int) []string {
 		parts[i] = pad + parts[i]
 	}
 	return parts
+}
+
+// collectEntityIDs gathers every entity id in a record value — top-level,
+// nested in arrays/objects, and inside JSON-document strings — for batched
+// name resolution.
+func collectEntityIDs(v any, into map[string]bool) {
+	switch val := v.(type) {
+	case string:
+		if entityIDRe.MatchString(val) {
+			into[val] = true
+		} else if doc := parseJSONDoc(val); doc != nil {
+			collectEntityIDs(doc, into)
+		}
+	case []any:
+		for _, e := range val {
+			collectEntityIDs(e, into)
+		}
+	case map[string]any:
+		for _, e := range val {
+			collectEntityIDs(e, into)
+		}
+	}
 }
 
 // entityIDList returns the elements of an all-entity-id array (problems carry

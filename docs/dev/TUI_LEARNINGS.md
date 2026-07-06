@@ -36,7 +36,13 @@ returns non-empty before trusting a field name.
 - Nodes also carry `references` (a lazy forward-only adjacency object) and, for
   K8s, `k8s.object` (the entire manifest as a multi-KB JSON string). **Always
   project** with `| fields ...` or `| fieldsRemove references, k8s.object` in
-  the TUI — never fetch full records into a list.
+  the TUI's *list* queries — never fetch full records into a list. The
+  single-record detail query keeps both (the manifest and containment edges
+  are exactly what a detail page is for; the inspector collapses huge JSON by
+  default). Gotcha: `references` is **not in the default projection** — it
+  comes back only with an explicit `| fieldsAdd references` (or `fields`)
+  clause (validated live; `fieldsRemove references` on a list query is
+  therefore belt-and-braces, not load-bearing).
 
 ### 1.2 The two ID casts you cannot forget
 

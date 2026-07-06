@@ -301,7 +301,7 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 	case "waterfall":
 		return newWaterfallView(a.ds, ref.TraceID, tf), nil
 	case "inspector":
-		return newInspectorView(ref.Title, ref.Rec), nil
+		return newInspectorView(a.ds, ref.Title, ref.Rec), nil
 	}
 	return nil, fmt.Errorf("unknown page kind %q", ref.Kind)
 }

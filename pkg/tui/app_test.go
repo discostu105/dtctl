@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
 )
@@ -38,6 +40,14 @@ func key(s string) tea.KeyMsg {
 		return tea.KeyMsg{Type: tea.KeyTab}
 	case "shift+tab":
 		return tea.KeyMsg{Type: tea.KeyShiftTab}
+	case "ctrl+d":
+		return tea.KeyMsg{Type: tea.KeyCtrlD}
+	case "ctrl+u":
+		return tea.KeyMsg{Type: tea.KeyCtrlU}
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}
 	default:
 		return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 	}
@@ -524,15 +534,30 @@ func TestInspectorBlockDefaultsAndCollapseToggle(t *testing.T) {
 		return nil
 	}
 
-	// JSON objects read as structure — expanded block by default.
-	if r := find("details"); !r.expandable || !r.expanded || r.span < 2 {
+	countSubRows := func() int {
+		n := 0
+		for _, r := range insp.rows {
+			if r.key == "details" && r.label != "details" {
+				n++
+			}
+		}
+		return n
+	}
+
+	// JSON objects read as structure — expanded by default, exploded into
+	// one selectable row per key.
+	if r := find("details"); !r.expandable || !r.expanded {
 		t.Fatalf("object should default to a block: %+v", *r)
 	}
-	// Scalars (and arrays — problemRow's affected_entities) stay one line,
-	// truncated preview marked ▸.
-	if r := find("long_text"); !r.expandable || r.expanded || r.span != 1 {
-		t.Fatalf("long scalar should default to one line: %+v", *r)
+	if got := countSubRows(); got != 6 {
+		t.Fatalf("expanded object should contribute 6 selectable sub-rows, got %d", got)
 	}
+	// Very long scalars wrap expanded by default too (log content must be
+	// readable without a keypress).
+	if r := find("long_text"); !r.expandable || !r.expanded || r.span < 2 {
+		t.Fatalf("long scalar should default to a wrapped block: %+v", *r)
+	}
+	// Short-ish arrays stay one line, truncated preview marked ▸.
 	if r := find("smartscape.affected_entities"); r.expanded || r.span != 1 {
 		t.Fatalf("array should default to one line: %+v", *r)
 	}
@@ -540,10 +565,11 @@ func TestInspectorBlockDefaultsAndCollapseToggle(t *testing.T) {
 		t.Errorf("collapsed marker missing:\n%s", body)
 	}
 
-	// enter collapses a default-expanded object, and toggles back.
+	// enter collapses a default-expanded object (sub-rows fold away), and
+	// toggles back.
 	target := 0
 	for i, r := range insp.rows {
-		if r.key == "details" {
+		if r.key == "details" && r.label == "details" {
 			target = i
 		}
 	}
@@ -554,12 +580,178 @@ func TestInspectorBlockDefaultsAndCollapseToggle(t *testing.T) {
 	if got := find("details").span; got != 1 {
 		t.Fatalf("collapse toggle did not shrink the object to one line, got %d", got)
 	}
+	if got := countSubRows(); got != 0 {
+		t.Fatalf("collapse should fold the sub-rows away, %d remain", got)
+	}
 	press(a, key("enter"))
-	if got := find("details").span; got < 2 {
-		t.Fatalf("re-expand failed, span = %d", got)
+	if got := countSubRows(); got != 6 {
+		t.Fatalf("re-expand should restore the sub-rows, got %d", got)
 	}
 	if len(a.stack) != 2 {
 		t.Fatalf("expand toggle must not navigate, depth = %d", len(a.stack))
+	}
+}
+
+func TestInspectorJSONSubRowsSelectableAndYankable(t *testing.T) {
+	a := testApp(t, "problems")
+	row := problemRow()
+	row["details"] = map[string]any{
+		"nested": map[string]any{"service": "SERVICE-8899AABBCCDDEEFF"},
+		"reason": "quota exceeded",
+	}
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+	insp := a.top().(*inspectorView)
+
+	find := func(label string) int {
+		t.Helper()
+		for i, r := range insp.rows {
+			if r.label == label {
+				return i
+			}
+		}
+		t.Fatalf("no row labeled %q", label)
+		return -1
+	}
+	moveTo := func(i int) {
+		for insp.cursor < i {
+			press(a, key("j"))
+		}
+		for insp.cursor > i {
+			press(a, key("k"))
+		}
+	}
+
+	// A leaf inside the expanded block yanks its own (unquoted) value.
+	moveTo(find("details.reason"))
+	if text, _, ok := insp.YankText(); !ok || text != "quota exceeded" {
+		t.Fatalf("leaf yank = %q %v", text, ok)
+	}
+	// A container row yanks its whole subtree as compact JSON.
+	moveTo(find("details.nested"))
+	if text, _, _ := insp.YankText(); text != `{"service":"SERVICE-8899AABBCCDDEEFF"}` {
+		t.Fatalf("subtree yank = %q", text)
+	}
+	// An entity id nested in the document is a real link: selection carries
+	// it and enter opens its detail page.
+	moveTo(find("details.nested.service"))
+	if _, e := insp.Selection(); e == nil || e.ID != "SERVICE-8899AABBCCDDEEFF" {
+		t.Fatalf("selection = %+v", e)
+	}
+	press(a, key("enter"))
+	dv, ok := a.top().(*detailView)
+	if !ok || dv.entity.ID != "SERVICE-8899AABBCCDDEEFF" {
+		t.Fatalf("enter on nested entity id should open detail, top = %T", a.top())
+	}
+}
+
+func TestInspectorGroupOrderingPutsDtLast(t *testing.T) {
+	a := testApp(t, "problems")
+	row := problemRow()
+	row["aws.region"] = "us-east-1"
+	row["k8s.cluster.name"] = "prod"
+	row["dt.openpipeline.pipelines"] = "default"
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+	insp := a.top().(*inspectorView)
+
+	sectionAt := func(name string) int {
+		t.Helper()
+		for i, line := range insp.lines {
+			if strings.Contains(ansi.Strip(line), " "+name+" ") || strings.HasSuffix(ansi.Strip(line), " "+name) {
+				return i
+			}
+		}
+		t.Fatalf("no section header %q in:\n%s", name, strings.Join(insp.lines, "\n"))
+		return -1
+	}
+	dt := sectionAt("dt")
+	if aws := sectionAt("aws"); dt < aws {
+		t.Errorf("dt section (line %d) should render after aws (line %d)", dt, aws)
+	}
+	if k8s := sectionAt("k8s"); dt < k8s {
+		t.Errorf("dt section (line %d) should render after k8s (line %d)", dt, k8s)
+	}
+}
+
+func TestInspectorPageJumpsMoveCursor(t *testing.T) {
+	a := testApp(t, "problems")
+	row := problemRow()
+	for i := 0; i < 60; i++ {
+		row[fmt.Sprintf("field_%02d", i)] = fmt.Sprintf("value %d", i)
+	}
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+	insp := a.top().(*inspectorView)
+
+	press(a, key("ctrl+d"))
+	half := insp.cursor
+	if half < 2 {
+		t.Fatalf("ctrl+d should jump multiple rows, cursor = %d", half)
+	}
+	press(a, key("ctrl+u"))
+	if insp.cursor != 0 {
+		t.Errorf("ctrl+u should jump back to the top, cursor = %d", insp.cursor)
+	}
+	press(a, key("pgdown"))
+	if insp.cursor <= half {
+		t.Errorf("pgdown (full page) should jump past ctrl+d (half): %d <= %d", insp.cursor, half)
+	}
+	press(a, key("pgup"))
+	if insp.cursor != 0 {
+		t.Errorf("pgup should return to the top, cursor = %d", insp.cursor)
+	}
+}
+
+func TestInspectorResolvesEntityNames(t *testing.T) {
+	a := testApp(t, "problems")
+	var queries []string
+	a.ds.runFn = func(dql string) ([]map[string]any, error) {
+		queries = append(queries, dql)
+		return nil, nil
+	}
+	row := problemRow()
+	row["dt.smartscape.host"] = "HOST-0011223344556677"
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+	insp := a.top().(*inspectorView)
+
+	// Opening the inspector issues one batched name lookup for the ids.
+	found := false
+	for _, q := range queries {
+		if strings.Contains(q, "smartscapeNodes") && strings.Contains(q, "HOST-0011223344556677") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no name-resolution query issued, queries: %v", queries)
+	}
+
+	// The resolved name renders next to the id and rides on the link target.
+	insp.Update(dataMsg{owner: inspNameOwner{insp}, records: []map[string]any{
+		{"id": "HOST-0011223344556677", "name": "web-01.example.invalid"},
+	}})
+	if body := insp.View(120, 40); !strings.Contains(body, "web-01.example.invalid") {
+		t.Fatalf("resolved name not rendered:\n%s", body)
+	}
+	target := -1
+	for i, r := range insp.rows {
+		if r.val.entity != nil && r.val.entity.ID == "HOST-0011223344556677" {
+			target = i
+		}
+	}
+	if target < 0 {
+		t.Fatal("no entity row found")
+	}
+	for insp.cursor < target {
+		press(a, key("j"))
+	}
+	if _, e := insp.Selection(); e == nil || e.Name != "web-01.example.invalid" {
+		t.Errorf("selection should carry the resolved name, got %+v", e)
+	}
+	// Yank still returns the raw id, not the decorated line.
+	if text, _, _ := insp.YankText(); text != "HOST-0011223344556677" {
+		t.Errorf("yank = %q", text)
 	}
 }
 

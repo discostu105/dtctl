@@ -546,6 +546,26 @@ entity IDs, `dt.openpipeline.*`) collapsible; field descriptions from the
 semantic dictionary shown on focus (see Runtime discovery). `s` jumps to the
 trace when a trace ID is present; `x` to the source entity.
 
+Value rendering rules (implemented in `render.go` / `inspector.go`):
+
+- **Long values expand by default**: `content`, multi-line strings, and any
+  string > 160 chars render as a wrapped block instead of a `▸` preview —
+  a log record must be readable without a keypress. `enter` still collapses.
+- **Expanded JSON is row-per-key**: an expanded object/array contributes one
+  selectable row per key/element (`details.nested.service`), so `y` yanks the
+  leaf (or a container's subtree as compact JSON) and `enter` follows entity
+  ids nested inside the document. The cursor never jumps over a block.
+- **Entity ids resolve to names**: every id in the record (top-level, arrays,
+  nested JSON) goes into one batched `smartscapeNodes` lookup; resolved names
+  render dim next to the id and ride on the link target, so detail pages open
+  pre-titled.
+- **Group ordering**: ungrouped fields first, domain groups alphabetically,
+  `dt.*` always last (pipeline metadata and entity-id plumbing, rarely what
+  triage reads first).
+- **Page jumps**: `ctrl+d`/`ctrl+u` move the field cursor half a page,
+  `pgup`/`pgdn` (`ctrl+b`/`ctrl+f`) a full page — long property lists are
+  navigable without holding `j`.
+
 ### Findings that shape all pages
 
 Three lessons from the live exploration, baked into the design:

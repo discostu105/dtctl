@@ -7,7 +7,7 @@ import (
 
 func TestDetailQuery(t *testing.T) {
 	got := DetailQuery(Entity{ID: "HOST-AAAABBBBCCCCDDDD", Type: "HOST"})
-	want := "smartscapeNodes \"HOST\"\n| filter id == toSmartscapeId(\"HOST-AAAABBBBCCCCDDDD\")\n| fieldsRemove references, k8s.object\n| limit 1"
+	want := "smartscapeNodes \"HOST\"\n| filter id == toSmartscapeId(\"HOST-AAAABBBBCCCCDDDD\")\n| fieldsAdd references\n| limit 1"
 	if got != want {
 		t.Errorf("DetailQuery:\ngot  %q\nwant %q", got, want)
 	}

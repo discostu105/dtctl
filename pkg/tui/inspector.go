@@ -52,6 +52,9 @@ type inspectorView struct {
 	cursor   int
 	expanded map[string]bool // per-field expand state for long values
 
+	names   map[string]string // entity id → display name (batched lookup)
+	nameReq map[string]bool   // ids already sent to a name query
+
 	lines []string // assembled content lines (selection applied at render)
 
 	vp    viewport.Model
@@ -79,23 +82,26 @@ var priorityFields = []string{
 	"event.category", "timestamp", "loglevel", "status", "host.name",
 }
 
-func newInspectorView(title string, rec map[string]any) *inspectorView {
+func newInspectorView(ds *dataSource, title string, rec map[string]any) *inspectorView {
 	si := textinput.New()
 	si.Prompt = "/"
 	si.CharLimit = 64
-	return &inspectorView{title: title, rec: rec, searchInput: si, expanded: map[string]bool{}}
+	return &inspectorView{title: title, rec: rec, ds: ds, searchInput: si,
+		expanded: map[string]bool{}, names: map[string]string{}, nameReq: map[string]bool{}}
 }
 
 // newEntityInfoView builds the details tab of an entity page. rec is the
 // already-fetched list row (shown instantly); nil triggers a fetch on Init.
 func newEntityInfoView(ds *dataSource, entity catalog.Entity, rec map[string]any) *inspectorView {
-	v := newInspectorView(entityName(entity), rec)
+	v := newInspectorView(ds, entityName(entity), rec)
 	v.facts = catalog.KeyFacts(entity.Type)
-	v.ds = ds
 	v.dql = catalog.DetailQuery(entity)
 	v.entity = &entity
 	return v
 }
+
+// inspNameOwner tags the batched id→name resolution query.
+type inspNameOwner struct{ v *inspectorView }
 
 // DQL reveals the detail query in entity mode (ctrl+q).
 func (v *inspectorView) DQL() string { return v.dql }
@@ -130,11 +136,9 @@ func (v *inspectorView) selectedRow() *fieldRow {
 func (v *inspectorView) Init() tea.Cmd {
 	// Entity mode always fetches the full Smartscape node: the list row
 	// renders instantly, but summarized rows (pods, workloads) carry only
-	// their table fields — the fetch upgrades them in place.
-	if v.rec == nil || v.ds != nil {
-		return v.Refresh()
-	}
-	return nil
+	// their table fields — the fetch upgrades them in place. Entity ids in
+	// the record resolve to display names in a second batched query.
+	return tea.Batch(v.Refresh(), v.resolveNames())
 }
 
 func (v *inspectorView) Refresh() tea.Cmd {
@@ -145,6 +149,55 @@ func (v *inspectorView) Refresh() tea.Cmd {
 	v.loading = true
 	v.err = nil
 	return v.ds.query(v, v.seq, v.dql)
+}
+
+// resolveNames issues one batched Smartscape lookup for every entity id in
+// the record (top-level, arrays, nested JSON) not yet requested, so ids
+// render with their display names next to them.
+func (v *inspectorView) resolveNames() tea.Cmd {
+	if v.ds == nil || v.rec == nil {
+		return nil
+	}
+	found := map[string]bool{}
+	for _, val := range v.rec {
+		collectEntityIDs(val, found)
+	}
+	var ids []string
+	for id := range found {
+		if !v.nameReq[id] {
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	sort.Strings(ids)
+	if len(ids) > 100 {
+		ids = ids[:100]
+	}
+	for _, id := range ids {
+		v.nameReq[id] = true
+	}
+	return v.ds.query(inspNameOwner{v}, v.seq, namesQuery(ids))
+}
+
+// withName appends the resolved Smartscape name next to an entity-id value
+// and carries it on the link target (detail pages open pre-titled).
+func (v *inspectorView) withName(val valueView) valueView {
+	if val.entity == nil || len(val.lines) == 0 {
+		return val
+	}
+	name := v.names[val.entity.ID]
+	if name == "" {
+		return val
+	}
+	e := *val.entity
+	e.Name = name
+	val.entity = &e
+	lines := append([]string(nil), val.lines...)
+	lines[0] += theme.Dim.Render(" · ") + name
+	val.lines = lines
+	return val
 }
 
 func (v *inspectorView) SetTimeframe(tf catalog.Timeframe) tea.Cmd { return nil }
@@ -189,6 +242,18 @@ func (v *inspectorView) Update(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case dataMsg:
+		if no, ok := msg.owner.(inspNameOwner); ok && no.v == v {
+			// Merge whatever resolved; failures fall back to raw ids.
+			if msg.err == nil && len(msg.records) > 0 {
+				for _, rec := range msg.records {
+					if id := catalog.Str(rec, "id"); id != "" {
+						v.names[id] = catalog.Str(rec, "name")
+					}
+				}
+				v.rebuild()
+			}
+			return nil
+		}
 		if msg.owner != any(v) || msg.seq != v.seq {
 			return nil
 		}
@@ -214,7 +279,7 @@ func (v *inspectorView) Update(msg tea.Msg) tea.Cmd {
 			v.err = errors.New("entity not found (no longer known to Smartscape?)")
 		}
 		v.rebuild()
-		return nil
+		return v.resolveNames()
 
 	case tea.KeyMsg:
 		return v.handleKey(msg)
@@ -259,6 +324,18 @@ func (v *inspectorView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	case "k", "up":
 		v.moveCursor(-1)
+		return nil
+	case "ctrl+d":
+		v.pageCursor(max(v.vp.Height/2, 1))
+		return nil
+	case "ctrl+u":
+		v.pageCursor(-max(v.vp.Height/2, 1))
+		return nil
+	case "pgdown", "ctrl+f":
+		v.pageCursor(max(v.vp.Height-1, 1))
+		return nil
+	case "pgup", "ctrl+b":
+		v.pageCursor(-max(v.vp.Height-1, 1))
 		return nil
 	case "g", "home":
 		v.cursor = 0
@@ -348,6 +425,36 @@ func (v *inspectorView) moveCursor(delta int) {
 	if v.cursor >= len(v.rows) {
 		v.cursor = len(v.rows) - 1
 	}
+	v.refreshVP()
+	v.ensureVisible()
+}
+
+// pageCursor moves the field cursor by roughly deltaLines of content — page
+// jumps over long property lists (ctrl+d/u half page, pgup/pgdn full page)
+// instead of one row at a time.
+func (v *inspectorView) pageCursor(deltaLines int) {
+	if len(v.rows) == 0 {
+		return
+	}
+	target := v.rows[v.cursor].line + deltaLines
+	i := v.cursor
+	if deltaLines > 0 {
+		for i < len(v.rows)-1 && v.rows[i+1].line <= target {
+			i++
+		}
+	} else {
+		for i > 0 && v.rows[i-1].line >= target {
+			i--
+		}
+	}
+	if i == v.cursor { // always make progress, even over a tall block
+		if deltaLines > 0 && i < len(v.rows)-1 {
+			i++
+		} else if deltaLines < 0 && i > 0 {
+			i--
+		}
+	}
+	v.cursor = i
 	v.refreshVP()
 	v.ensureVisible()
 }
@@ -513,9 +620,15 @@ func (v *inspectorView) rebuild() {
 	for g := range groups {
 		names = append(names, g)
 	}
-	sort.Strings(names)
-	// Top-level (ungrouped) fields come right after the highlights block.
-	sort.SliceStable(names, func(i, j int) bool { return names[i] == "" && names[j] != "" })
+	// Top-level (ungrouped) fields come right after the highlights block;
+	// dt.* sinks to the bottom — it mostly carries pipeline metadata and
+	// entity-id plumbing, not what someone triaging reads first.
+	sort.Slice(names, func(i, j int) bool {
+		if ri, rj := groupRank(names[i]), groupRank(names[j]); ri != rj {
+			return ri < rj
+		}
+		return names[i] < names[j]
+	})
 
 	for _, g := range names {
 		keys := groups[g]
@@ -551,7 +664,7 @@ func (v *inspectorView) addField(key, needle string, style lipgloss.Style) {
 	if ids := entityIDList(v.rec[key]); ids != nil {
 		for i, id := range ids {
 			label := fmt.Sprintf("%s[%d]", key, i)
-			v.addRow(key, label, v.labelStyle(needle, key, style), renderString(key, id, v.vp.Width-6))
+			v.addRow(key, label, v.labelStyle(needle, key, style), v.withName(renderString(key, id, v.vp.Width-6)))
 		}
 		return
 	}
@@ -561,7 +674,7 @@ func (v *inspectorView) addField(key, needle string, style lipgloss.Style) {
 		val.entity = nil
 		val.lines = []string{theme.UID.Render(val.raw)}
 	}
-	v.addRow(key, key, v.labelStyle(needle, key, style), val)
+	v.addRow(key, key, v.labelStyle(needle, key, style), v.withName(val))
 }
 
 // addRow lays out one field. Scalars and arrays are one line by default — a
@@ -594,17 +707,60 @@ func (v *inspectorView) addRow(key, label string, style lipgloss.Style, val valu
 		preview = ansi.Truncate(preview, max(avail-2, 3), "…")
 		v.addLine(labelText + "  " + preview + marker)
 	default:
+		v.addLine(labelText + "  " + theme.Dim.Render("▾"))
+		if val.doc != nil {
+			// Expanded JSON explodes into one row per key/element, so every
+			// nested value is individually selectable and yankable.
+			row.span = len(v.lines) - row.line
+			v.rows = append(v.rows, row)
+			v.addJSONRows(key, label, val.doc)
+			return
+		}
 		lines := val.lines
 		if len(lines) == 1 {
 			lines = wrapLines(lines[0], v.vp.Width-6)
 		}
-		v.addLine(labelText + "  " + theme.Dim.Render("▾"))
 		for _, l := range lines {
 			v.addLine("    " + l)
 		}
 	}
 	row.span = len(v.lines) - row.line
 	v.rows = append(v.rows, row)
+}
+
+// addJSONRows appends the per-node rows of an expanded JSON block: y yanks
+// the leaf (or subtree) under the cursor and enter follows entity ids nested
+// inside the document.
+func (v *inspectorView) addJSONRows(key, parentLabel string, doc any) {
+	for _, node := range jsonRows(doc, "", 0, v.vp.Width-8) {
+		label := parentLabel
+		if node.path != "" {
+			if strings.HasPrefix(node.path, "[") {
+				label = parentLabel + node.path
+			} else {
+				label = parentLabel + "." + node.path
+			}
+		}
+		val := v.withName(valueView{lines: node.lines, raw: node.raw, entity: node.entity})
+		row := fieldRow{key: key, label: label, val: val, line: len(v.lines), span: len(val.lines)}
+		for _, l := range val.lines {
+			v.addLine("    " + l)
+		}
+		v.rows = append(v.rows, row)
+	}
+}
+
+// groupRank orders the namespace groups: ungrouped fields first, domain
+// groups alphabetically, dt.* last.
+func groupRank(g string) int {
+	switch g {
+	case "":
+		return 0
+	case "dt":
+		return 2
+	default:
+		return 1
+	}
 }
 
 // labelStyle highlights keys that themselves match the search needle (a field
