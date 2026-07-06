@@ -229,6 +229,7 @@ pod → workload → namespace → the sibling workload that's actually broken.
 |---|---|
 | `esc` | back (pop breadcrumb stack; view state and data preserved) |
 | `-` | toggle between the two most recent views (k9s-style) |
+| `H` | **history** — every breadcrumb trail visited, persisted per context across sessions (`~/.local/state/dtctl/tui-history.json`); enter restores the whole trail (data refetched, timeframe reapplied) |
 | `/` | incremental filter of the current table; `esc` clears |
 | `shift-j/k` or click header | sort by column, toggle direction |
 | `1`–`9` | hotkeys — user-assignable view bookmarks (`:hotkeys` to manage; defaults: 1 problems, 2 services, 3 hosts, 4 pods, 5 logs) |

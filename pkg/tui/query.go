@@ -55,7 +55,15 @@ func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe) *queryView {
 	return v
 }
 
-func (v *queryView) Init() tea.Cmd { return textarea.Blink }
+// Init re-runs an already-submitted query — fresh views never have one, but
+// a page restored from history arrives with current set and should come back
+// with results, not just editor text.
+func (v *queryView) Init() tea.Cmd {
+	if v.current != "" {
+		return tea.Batch(textarea.Blink, v.results.Refresh())
+	}
+	return textarea.Blink
+}
 
 func (v *queryView) Refresh() tea.Cmd {
 	if v.current == "" {

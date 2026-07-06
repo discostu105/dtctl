@@ -3,11 +3,13 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/dynatrace-oss/dtctl/pkg/config"
 	"github.com/dynatrace-oss/dtctl/pkg/tui"
 	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
 )
@@ -27,6 +29,8 @@ narrow the jump (:pods checkout, :trace <id>). Every drill-down key
 the target pre-scoped to the selected entity and the active timeframe.
 '.' pins an entity as the global scope, ctrl+q reveals any view's DQL in
 an editable query, and o deep-links the selection into the Dynatrace UI.
+H opens the navigation history — every page you visited, kept across
+sessions — and restores a page with its full breadcrumb trail.
 Press ? inside the TUI for the full key reference.
 
 The TUI is read-only and interactive-only: it refuses to start in agent
@@ -77,6 +81,7 @@ mode, with --plain, or when stdout is not a terminal.`,
 			SafetyLevel: string(ctxObj.GetEffectiveSafetyLevel()),
 			Executor:    NewDQLExecutorFromConfig(cfg, c),
 			InitialView: view,
+			HistoryPath: filepath.Join(config.StateDir(), "tui-history.json"),
 		})
 	},
 }

@@ -26,6 +26,7 @@ type Options struct {
 	SafetyLevel string
 	Executor    *exec.DQLExecutor
 	InitialView string // catalog view name or alias; "" = problems
+	HistoryPath string // navigation-history file; "" = in-memory only
 }
 
 // Run launches the TUI and blocks until the user quits.
@@ -88,6 +89,11 @@ type app struct {
 	helpActive bool
 	tfActive   bool
 	tfSel      int
+	histActive bool
+	histSel    int
+	histList   []historyEntry // snapshot shown by the open picker
+
+	hist *historyStore
 
 	status    string
 	statusErr bool
@@ -113,6 +119,7 @@ func newApp(opts Options) (*app, error) {
 		opts: opts,
 		ds:   &dataSource{exec: opts.Executor},
 		tf:   catalog.DefaultTimeframe,
+		hist: loadHistory(opts.HistoryPath, opts.ContextName),
 	}
 	a.cmdInput = ci
 	for i, tf := range catalog.Timeframes {
@@ -276,7 +283,8 @@ func spinTick() tea.Cmd {
 }
 
 // navigate pushes a view (or replaces the stack for command-bar jumps),
-// remembering the previous stack for the '-' toggle.
+// remembering the previous stack for the '-' toggle and recording the new
+// trail in the persistent history.
 func (a *app) navigate(view viewModel, replace bool) tea.Cmd {
 	a.prev = a.stack
 	if replace {
@@ -284,6 +292,7 @@ func (a *app) navigate(view viewModel, replace bool) tea.Cmd {
 	} else {
 		a.stack = append(append([]viewModel{}, a.stack...), view)
 	}
+	a.recordHistory()
 	return tea.Batch(
 		view.Update(bodySizeMsg{width: a.width, height: a.bodyHeight()}),
 		view.Init(),
@@ -294,7 +303,7 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	key := msg.String()
 
 	if key == "ctrl+c" {
-		return tea.Quit
+		return a.quit()
 	}
 
 	if a.cmdActive {
@@ -302,6 +311,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if a.tfActive {
 		return a.updateTfPicker(msg)
+	}
+	if a.histActive {
+		return a.updateHistPicker(msg)
 	}
 	if a.helpActive {
 		a.helpActive = false
@@ -327,7 +339,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		switch key {
 		case "q":
-			return tea.Quit
+			return a.quit()
+		case "H":
+			return a.openHistory()
 		case ":":
 			a.cmdActive = true
 			a.cmdInput.SetValue("")
@@ -496,6 +510,13 @@ func (a *app) openSelection() tea.Cmd {
 	return status("opened in browser")
 }
 
+// quit records the final stack — "where I left off" for the next session —
+// before stopping the program.
+func (a *app) quit() tea.Cmd {
+	a.recordHistory()
+	return tea.Quit
+}
+
 func (a *app) scheduleRefresh() tea.Cmd {
 	gen := a.refreshGen
 	return tea.Tick(refreshIntervals[a.refreshIdx], func(time.Time) tea.Msg {
@@ -546,10 +567,12 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 		arg := strings.Join(input[1:], " ")
 		switch input[0] {
 		case "q", "quit":
-			return tea.Quit
+			return a.quit()
 		case "help":
 			a.helpActive = true
 			return nil
+		case "history", "hist":
+			return a.openHistory()
 		case "home", "query", "dql":
 			return a.jumpTo(input[0], "")
 		case "trace":
@@ -722,7 +745,7 @@ func (a *app) renderCmdPalette() string {
 	if rest := len(a.cmdMatches) - limit; rest > 0 {
 		b.WriteString(theme.Dim.Render(fmt.Sprintf(" … %d more", rest)) + "\n")
 	}
-	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :home :query :trace <id>"))
+	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :home :query :history :trace <id>"))
 	return b.String()
 }
 
@@ -733,6 +756,9 @@ func (a *app) renderBody() string {
 	}
 	if a.tfActive {
 		return overlay(a.width, bodyH, a.renderTfPicker())
+	}
+	if a.histActive {
+		return overlay(a.width, bodyH, a.renderHistory())
 	}
 	if a.cmdActive {
 		return lipgloss.Place(a.width, bodyH, lipgloss.Center, lipgloss.Position(0.2),
@@ -747,6 +773,8 @@ func (a *app) renderFooter() string {
 	case a.cmdActive:
 		// Command bar owns the keyboard: only its keys work.
 		hints = []keyHint{{"enter", "open"}, {"tab", "next match"}, {"esc", "cancel"}}
+	case a.histActive:
+		hints = []keyHint{{"enter", "restore"}, {"j/k", "move"}, {"esc", "close"}}
 	case a.top().InputActive():
 		// A view's text input (filter, search, query editor) is focused — the
 		// global keys would just type characters, so show only the view's own
@@ -788,6 +816,7 @@ func (a *app) renderHelp() string {
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall"},
 			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
+			{"H", "history — restore a previous page (survives restarts)"},
 			{"/", "filter table · J/K sort column/direction"},
 			{"j/k ↑/↓ g/G", "move"},
 		}},

@@ -183,6 +183,12 @@ func DataDir() string {
 	return filepath.Join(xdg.DataHome, "dtctl")
 }
 
+// StateDir returns the state directory path following XDG Base Directory spec
+// (persistent but disposable data: history, logs). Typically ~/.local/state/dtctl.
+func StateDir() string {
+	return filepath.Join(xdg.StateHome, "dtctl")
+}
+
 // LocalConfigName is the name of the per-project config file
 const LocalConfigName = ".dtctl.yaml"
 
