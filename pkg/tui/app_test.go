@@ -98,7 +98,11 @@ func seedRows(t *testing.T, a *app, rows []map[string]any) {
 	}
 	tv.seq++
 	tv.loading = true
-	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: rows, elapsed: time.Second, dql: tv.spec.Query(tv.scope)})
+	dql := ""
+	if tv.spec.Query != nil {
+		dql = tv.spec.Query(tv.scope)
+	}
+	tv.Update(dataMsg{owner: tv, seq: tv.seq, records: rows, elapsed: time.Second, dql: dql})
 }
 
 func problemRow() map[string]any {

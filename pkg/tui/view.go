@@ -40,12 +40,16 @@ type busyReporter interface{ Busy() bool }
 
 // pushViewMsg opens a catalog view. replace resets the stack (command-bar
 // jumps); otherwise the view is pushed as a drill-down. filter pre-fills the
-// incremental table filter (command-bar arguments, home-panel jumps).
+// incremental table filter (command-bar arguments, home-panel jumps);
+// searches/facets pre-fill the server-side narrowing (the patterns drill
+// analyzes exactly the list the user was looking at).
 type pushViewMsg struct {
-	spec    *catalog.Spec
-	scope   catalog.Scope
-	replace bool
-	filter  string
+	spec     *catalog.Spec
+	scope    catalog.Scope
+	replace  bool
+	filter   string
+	searches []string
+	facets   []catalog.Facet
 }
 
 // waterfallMsg opens the span waterfall for one trace.

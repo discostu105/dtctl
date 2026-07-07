@@ -31,7 +31,7 @@ var frontendsSpec = &Spec{
 		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
 	},
 	Entity: nodeEntity("FRONTEND"),
-	Drills: map[string]string{"m": "metrics", "p": "problems", "v": "events"},
+	Drills: map[string]string{"m": "metrics", "p": "problems", "v": "events", "u": "sessions", "e": "userevents"},
 	Enrich: &EnrichSpec{
 		Key:    func(rec map[string]any) string { return Str(rec, "id") },
 		By:     "dt.smartscape.frontend",

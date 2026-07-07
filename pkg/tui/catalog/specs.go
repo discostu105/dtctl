@@ -182,6 +182,12 @@ var logsSpec = &Spec{
 			// toUid() needed, unlike span trace.id.
 			fmt.Fprintf(&b, "\n| filter trace_id == %q", s.TraceID)
 		}
+		if s.Pattern != "" {
+			// The DPL predicate keeps only records matching the extracted
+			// pattern (validated live; an invalid pattern is a hard error,
+			// not a silent empty).
+			fmt.Fprintf(&b, "\n| filter matchesPattern(content, %q)", s.Pattern)
+		}
 		b.WriteString("\n| sort timestamp desc\n| limit 300")
 		return b.String()
 	},
@@ -194,7 +200,8 @@ var logsSpec = &Spec{
 	},
 	Entity: signalSourceEntity,
 	Trace:  func(rec map[string]any) string { return Str(rec, "trace_id") },
-	Drills: map[string]string{"p": "problems", "s": "trace"},
+	// 'a' analyzes the current logs into Davis patterns ('g' is go-to-top).
+	Drills: map[string]string{"p": "problems", "s": "trace", "a": "patterns"},
 }
 
 // logLevel prefers loglevel over the coarser status field.

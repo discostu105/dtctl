@@ -20,13 +20,18 @@ var tuiCmd = &cobra.Command{
 	Long: `Launch the interactive terminal UI — a k9s-style navigator over
 observability primitives: problems, services, hosts, Kubernetes (pods,
 workloads, namespaces, nodes, clusters), traces with a span waterfall,
-logs, events, AWS inventory, frontends (RUM), databases, GenAI entities,
-and security vulnerabilities.
+logs with Davis log-pattern clustering, events, AWS inventory, frontends
+and RUM (user sessions and events with Core Web Vitals), business
+events, synthetic monitors, databases, GenAI entities, security
+vulnerabilities, SLOs with live evaluation, anomaly detectors, the
+semantic dictionary (models and fields), and a Grail data explorer
+(tables, buckets, lookup files with record sampling).
 
 Views are opened from the command bar (:) by name or alias — arguments
 narrow the jump (:pods checkout, :trace <id>). Every drill-down key
-(l logs, s traces, m metrics, p problems, v events, x relations) opens
-the target pre-scoped to the selected entity and the active timeframe.
+(l logs, s traces, m metrics, p problems, v events, x relations,
+a log patterns, u sessions) opens the target pre-scoped to the selected
+entity and the active timeframe.
 '.' pins an entity as the global scope, ctrl+q reveals any view's DQL in
 an editable query, and o deep-links the selection into the Dynatrace UI.
 H opens the navigation history — every page you visited, kept across
@@ -80,6 +85,7 @@ mode, with --plain, or when stdout is not a terminal.`,
 			Environment: ctxObj.Environment,
 			SafetyLevel: string(ctxObj.GetEffectiveSafetyLevel()),
 			Executor:    NewDQLExecutorFromConfig(cfg, c),
+			Sources:     tuiSources(c),
 			InitialView: view,
 			HistoryPath: filepath.Join(config.StateDir(), "tui-history.json"),
 		})

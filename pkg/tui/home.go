@@ -141,6 +141,33 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 			},
 		},
 		{
+			title: "frontend errors (24h)",
+			dot:   theme.SeriesAt(1).Render("●"),
+			query: func(catalog.Timeframe) string {
+				return `fetch user.events, from:now() - 24h
+| filter characteristics.classifier == "error"
+| summarize count = count(), app = takeFirst(frontend.name), by:{error.display_name}
+| sort count desc
+| limit 8`
+			},
+			line: func(rec map[string]any) (string, string) {
+				return fmt.Sprintf("%5s×  %s · %s",
+					catalog.Str(rec, "count"), catalog.Str(rec, "error.display_name"),
+					catalog.Str(rec, "app")), "warn"
+			},
+			action: func(rec map[string]any, tf catalog.Timeframe) tea.Msg {
+				// The panel looks back 24h — the jump must too. Lens 1 is the
+				// userevents errors lens; the error name narrows client-side.
+				day := catalog.Timeframe{Label: "24h", Dur: 24 * time.Hour}
+				if tf.Dur > day.Dur {
+					day = tf
+				}
+				return pushViewMsg{spec: catalog.Lookup("userevents"),
+					scope:  catalog.Scope{Timeframe: day, Lens: 1},
+					filter: catalog.Str(rec, "error.display_name")}
+			},
+		},
+		{
 			title: "open vulnerabilities (24h)",
 			dot:   theme.SeriesAt(2).Render("●"),
 			query: func(catalog.Timeframe) string {

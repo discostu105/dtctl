@@ -161,6 +161,38 @@ func FormatNs(v any) string {
 	}
 }
 
+// FloatValue coerces a record value to a float64. Grail serializes longs as
+// JSON strings and doubles as numbers — the same logical field arrives as
+// either depending on its type (validated live).
+func FloatValue(v any) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case string:
+		f, err := strconv.ParseFloat(val, 64)
+		if err != nil {
+			return 0, false
+		}
+		return f, true
+	}
+	return 0, false
+}
+
+// nsToMs converts a nanosecond field (string or number) to milliseconds.
+func nsToMs(v any) (float64, bool) {
+	f, ok := FloatValue(v)
+	if !ok {
+		return 0, false
+	}
+	return f / 1e6, true
+}
+
+// parseMsSuffix parses a rendered "1234ms" cell back to its number (column
+// Class funcs receive the formatted text).
+func parseMsSuffix(val string) (float64, error) {
+	return strconv.ParseFloat(strings.TrimSuffix(val, "ms"), 64)
+}
+
 // FloatSeries extracts the numeric points of a timeseries array, skipping
 // nulls (gaps compress, which is fine for a sparkline).
 func FloatSeries(v any) []float64 {

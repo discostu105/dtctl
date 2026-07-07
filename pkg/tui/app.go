@@ -25,6 +25,10 @@ type Options struct {
 	Environment string
 	SafetyLevel string
 	Executor    *exec.DQLExecutor
+	// Sources backs the API views (catalog.Spec.API): "slos",
+	// "anomaly-detectors", "log-patterns". Constructed in cmd/tui.go so no
+	// HTTP lives in pkg/tui.
+	Sources     map[string]Source
 	InitialView string // catalog view name or alias; "" = problems
 	HistoryPath string // navigation-history file; "" = in-memory only
 }
@@ -117,7 +121,7 @@ func newApp(opts Options) (*app, error) {
 	ci.CharLimit = 64
 	a := &app{
 		opts: opts,
-		ds:   &dataSource{exec: opts.Executor},
+		ds:   &dataSource{exec: opts.Executor, sources: opts.Sources},
 		tf:   catalog.DefaultTimeframe,
 		hist: loadHistory(opts.HistoryPath, opts.ContextName),
 	}
@@ -219,6 +223,10 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		if msg.filter != "" {
 			view.setFilter(msg.filter)
 		}
+		// Inherited server narrowing must be in place before navigate runs
+		// Init (which composes and fires the query).
+		view.searches = msg.searches
+		view.facets = msg.facets
 		return a.navigate(view, msg.replace)
 
 	case inspectMsg:
@@ -871,10 +879,12 @@ func (a *app) renderHelp() string {
 		}},
 		{"Drill-down (pre-scoped to selection)", []keyHint{
 			{"l", "logs"},
-			{"s", "traces (spans) / jump to a log's trace"},
+			{"s", "traces (spans) / jump to a log's or RUM event's trace"},
 			{"m", "metrics — canned charts, or the metric explorer for other types"},
 			{"p", "problems"},
 			{"v", "events"},
+			{"a", "log patterns — Davis clustering of the current logs (enter: matching records)"},
+			{"u / e", "user sessions / user events of a frontend"},
 			{"x", "relations — walk the Smartscape topology"},
 			{"d", "describe / details"},
 		}},

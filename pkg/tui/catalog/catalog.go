@@ -46,13 +46,18 @@ type Scope struct {
 	Entity    *Entity
 	Timeframe Timeframe
 	// Arg is a view-specific argument: the node type for the generic entity
-	// browser ("AWS_EC2_INSTANCE"), set by census drill-downs.
+	// browser ("AWS_EC2_INSTANCE"), the table/bucket/file for the record
+	// sampler, the model for the dictionary fields view, or the monitor id
+	// for synthetic executions — set by EnterArg drill-downs.
 	Arg string
 	// TraceID scopes logs/traces to one distributed trace (log↔trace jumps).
 	TraceID string
 	// Lens indexes into the spec's Lenses (0 = default). Views without
 	// lenses ignore it.
 	Lens int
+	// Pattern scopes the logs view to records matching a DPL pattern —
+	// the log-patterns drill (enter on a pattern row) fills it.
+	Pattern string
 }
 
 // ViewKind distinguishes entity views (the map) from signal views (the terrain).
@@ -110,8 +115,25 @@ type Spec struct {
 	Desc    string
 	// Query renders the list query for a scope. Signal views compose
 	// s.Entity into a filter; entity views honor it when EntityScoped.
+	// nil for API-backed views without an underlying query (see API).
 	Query   func(s Scope) string
 	Columns []Column
+	// API names a non-DQL data source (wired in tui.Options.Sources) that
+	// fetches this view's records: REST-backed lists (SLOs, anomaly
+	// detectors) and analyzer executions (log patterns). When Query is also
+	// set, its output is handed to the source as input — the log-patterns
+	// source analyzes the composed logs query. Server facets need
+	// fieldsSummary and stay disabled for API views; server search applies
+	// only when Query is set.
+	API string
+	// Echo renders the CLI equivalent for API-backed views (dql is the
+	// composed Query output, "" when Query is nil). DQL views echo
+	// `dtctl query` automatically and leave this nil.
+	Echo func(s Scope, dql string) string
+	// Dynamic derives the column set from the fetched records (the record
+	// sampler browses arbitrary tables); Columns is the empty-result
+	// fallback.
+	Dynamic bool
 	// Lenses are the view's quick subset selections (nil = none). The
 	// spec's Query is responsible for composing the scoped lens' Filter.
 	Lenses []Lens
@@ -169,6 +191,9 @@ func (s *Spec) LensAt(i int) Lens {
 // filter differs but would match nothing (traces on a non-span-scopable
 // type).
 func (s *Spec) CanScope(tf Timeframe, e Entity) bool {
+	if s.Query == nil {
+		return false
+	}
 	if s.Query(Scope{Timeframe: tf, Entity: &e}) == s.Query(Scope{Timeframe: tf}) {
 		return false
 	}
@@ -203,6 +228,11 @@ var specs = []*Spec{
 	podsSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec,
 	awsSpec, entitiesSpec, resourcesSpec,
 	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, metricsSpec,
+	sessionsSpec, userEventsSpec, bizeventsSpec,
+	patternsSpec, slosSpec, detectorsSpec,
+	syntheticSpec, executionsSpec,
+	modelsSpec, fieldsSpec,
+	tablesSpec, bucketsSpec, filesSpec, recordsSpec,
 }
 
 // All returns every registered view spec.

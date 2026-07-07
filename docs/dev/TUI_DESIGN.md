@@ -774,6 +774,39 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   apps by `nodeId`, anything else → Smartscape topology; `y`/`c` yank
   ids and CLI commands over OSC 52.
 
+### Phase 3.5 — Data & analysis breadth ✅ implemented
+
+- **RUM**: `:sessions` (24h-floored window — sessions are sparse; lenses
+  all · errors · bounced; enter = the session's event timeline) and
+  `:userevents` (lenses all · errors · actions · views · requests, the
+  views lens carrying Core Web Vitals columns with threshold coloring;
+  `s` jumps request events to their trace waterfall). Frontends gained
+  `u`/`e` drills into both. Home gained a "frontend errors (24h)" panel.
+- **Business events**: `:bizevents` (24h floor, type/provider facets, a
+  best-effort content column — producers name payloads inconsistently).
+- **Semantic dictionary**: `:models` → enter → `:fields (model)` via the
+  expand + leftOuter-join pipeline (fields.model_id is dead — see
+  TUI_LEARNINGS); `:fields` standalone with stability lenses; enter opens
+  the full definition (examples, enums) in the inspector.
+- **Data explorer**: `:tables` (19 tables / 344 views, fieldsSnapshot-only
+  objects refuse entry), `:buckets` (records/size/retention; enter samples
+  the bucket via `dt.system.bucket ==`), `:files` (Grail lookup data;
+  enter runs `load "<path>"`), all feeding the generic `:records` sampler
+  with derived columns.
+- **Synthetic**: `:synthetic` (classic-entity union of browser + HTTP
+  monitors with an availability-sparkline enrichment across both metric
+  families) → enter → `:executions` (dt.synthetic.events; lenses
+  runs · steps · failed).
+- **Log patterns**: `a` on any logs view runs the Davis
+  `LogPatternExtractor` analyzer over exactly the visible query (scope +
+  server searches + facets); enter on a pattern drills back into the
+  matching records via `matchesPattern`.
+- **API-backed views**: the catalog gained `Spec.API` — named non-DQL
+  sources wired in `cmd/tui.go` (`tui.Options.Sources`) — powering
+  `:slos` (definitions + parallel per-SLO live evaluation for
+  status/SLI/error-budget columns) and `:detectors` (Settings API), with
+  facets/server-search honestly disabled where no DQL exists.
+
 ### Phase 4 — Assets & mutations
 
 - Management resource browser for the full existing CRUD surface; workflow

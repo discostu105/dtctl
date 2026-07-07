@@ -63,6 +63,10 @@ type tableView struct {
 	// hatch derives result columns from it).
 	onData func(records []map[string]any)
 
+	// dynCols is the column set derived from the fetched records when the
+	// spec is Dynamic (the record sampler browses arbitrary tables).
+	dynCols []catalog.Column
+
 	width, height int
 }
 
@@ -116,12 +120,16 @@ func newTableView(ds *dataSource, spec *catalog.Spec, scope catalog.Scope) *tabl
 func (v *tableView) Init() tea.Cmd { return v.Refresh() }
 
 // columns returns the active column set: the lens' override when the active
-// lens curates its own (db → statement, genai → tokens), else the spec's.
+// lens curates its own (db → statement, genai → tokens), the derived set for
+// dynamic specs, else the spec's.
 func (v *tableView) columns() []catalog.Column {
 	if len(v.spec.Lenses) > 0 {
 		if cols := v.spec.LensAt(v.scope.Lens).Columns; cols != nil {
 			return cols
 		}
+	}
+	if v.spec.Dynamic && v.dynCols != nil {
+		return v.dynCols
 	}
 	return v.spec.Columns
 }
@@ -148,8 +156,12 @@ func (v *tableView) setLens(i int, wrap bool) tea.Cmd {
 
 // composeDQL renders the list query: the spec's scope query with the server
 // searches injected after the source (DQL rejects them later in the
-// pipeline) and the facet filters before the sort/limit tail.
+// pipeline) and the facet filters before the sort/limit tail. API-backed
+// views without a query render "".
 func (v *tableView) composeDQL() string {
+	if v.spec.Query == nil {
+		return ""
+	}
 	dql := catalog.InjectSearches(v.spec.Query(v.scope), v.searches)
 	var stages []string
 	for _, f := range v.facets {
@@ -163,6 +175,9 @@ func (v *tableView) Refresh() tea.Cmd {
 	v.loading = true
 	v.err = nil
 	v.dql = v.composeDQL()
+	if v.spec.API != "" {
+		return v.ds.call(v, v.seq, v.spec.API, v.scope, v.dql)
+	}
 	return v.ds.query(v, v.seq, v.dql)
 }
 
@@ -192,6 +207,9 @@ func (v *tableView) Crumb() string {
 		}
 		label += fmt.Sprintf(" (%s)", name)
 	}
+	if v.scope.Pattern != "" {
+		label += " [pattern]"
+	}
 	// Server-side narrowing is scope the query kept — the breadcrumb (and the
 	// history trail snapshotted from it) must say so.
 	var narrow []string
@@ -215,6 +233,9 @@ func (v *tableView) setFilter(f string) {
 }
 
 func (v *tableView) Echo() string {
+	if v.spec.API != "" && v.spec.Echo != nil {
+		return v.spec.Echo(v.scope, v.dql)
+	}
 	if v.dql == "" {
 		return ""
 	}
@@ -247,23 +268,28 @@ func (v *tableView) Hints() []keyHint {
 		hints = append(hints, keyHint{fmt.Sprintf("tab/1-%d", n), "lens"})
 	}
 	switch {
+	case v.spec.EnterTarget == "pattern-logs":
+		hints = append(hints, keyHint{"enter", "matching logs"})
 	case v.spec.EnterTarget != "":
 		hints = append(hints, keyHint{"enter", v.spec.EnterTarget})
 		if v.spec.EnterArg == nil && v.spec.Kind == catalog.KindEntity {
 			hints = append(hints, keyHint{"d", "details"})
 		}
-	case v.spec.Kind == catalog.KindEntity:
+	case v.spec.Kind == catalog.KindEntity && v.spec.Entity != nil:
 		hints = append(hints, keyHint{"enter", "details"}, keyHint{"d", "record"})
 	default:
 		hints = append(hints, keyHint{"enter", "inspect"})
 	}
 	// Stable order for the drill keys.
-	for _, k := range []string{"l", "s", "m", "p", "v"} {
+	for _, k := range []string{"l", "s", "m", "p", "v", "u", "e", "a"} {
 		if target, ok := v.spec.Drills[k]; ok {
 			hints = append(hints, keyHint{k, target})
 		}
 	}
-	hints = append(hints, keyHint{"/", "filter"}, keyHint{"f", "facets"})
+	hints = append(hints, keyHint{"/", "filter"})
+	if v.spec.API == "" {
+		hints = append(hints, keyHint{"f", "facets"})
+	}
 	if len(v.searches) > 0 || len(v.facets) > 0 {
 		hints = append(hints, keyHint{"F", "clear facets"})
 	}
@@ -305,6 +331,9 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 		if msg.err == nil {
 			v.all = msg.records
 			v.elapsed = catalog.FormatDuration(msg.elapsed)
+			if v.spec.Dynamic {
+				v.dynCols = deriveColumns(msg.records)
+			}
 			if v.onData != nil {
 				v.onData(msg.records)
 			}
@@ -385,6 +414,11 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			// (each is a chained | search stage); alt+enter replaces the
 			// active terms with this one instead.
 			if term := strings.TrimSpace(v.filter); term != "" {
+				// A view without a query has nothing to inject a server
+				// search into — the client filter stays as the narrowing.
+				if v.spec.Query == nil {
+					return status(fmt.Sprintf("client filter %q (no server search on %s)", term, v.spec.Name))
+				}
 				v.filterInput.SetValue("")
 				v.filter = ""
 				v.applyFilter()
@@ -488,11 +522,24 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			return func() tea.Msg { return metricChartMsg{key: key, entity: entity} }
 		}
+		if v.spec.EnterTarget == "pattern-logs" {
+			// Logs matching the selected pattern, keeping the patterns view's
+			// own scope (entity + timeframe) so the drill stays honest.
+			pattern := catalog.PatternOf(rec)
+			if pattern == "" {
+				return statusErr("row carries no pattern")
+			}
+			spec := catalog.Lookup("logs")
+			scope := catalog.Scope{Timeframe: v.scope.Timeframe, Entity: v.scope.Entity, Pattern: pattern}
+			return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
+		}
 		if v.spec.EnterTarget != "" {
 			if target := catalog.Lookup(v.spec.EnterTarget); target != nil {
 				scope := catalog.Scope{Timeframe: v.scope.Timeframe}
 				if v.spec.EnterArg != nil {
-					scope.Arg = v.spec.EnterArg(rec)
+					if scope.Arg = v.spec.EnterArg(rec); scope.Arg == "" {
+						return statusErr("row is not enterable (no fetchable target)")
+					}
 				} else if e := v.entityOf(rec); e != nil {
 					scope.Entity = e
 				}
@@ -540,6 +587,11 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 // openFacets opens the manager: active filters (edit/remove) above the
 // attribute candidates from the fetched records' keys.
 func (v *tableView) openFacets() tea.Cmd {
+	if v.spec.API != "" {
+		// Facet exploration needs fieldsSummary over a DQL pipeline; API
+		// sources have none. '/' still filters client-side.
+		return statusErr("facets need a DQL-backed view — / filters " + v.spec.Name + " client-side")
+	}
 	v.facetFields = v.facetCandidates()
 	if len(v.facetFields) == 0 && len(v.searches)+len(v.facets) == 0 {
 		return statusErr("no attributes to facet on (no rows fetched)")
@@ -948,8 +1000,18 @@ func (v *tableView) inspect(rec map[string]any) tea.Cmd {
 
 // drill opens the target view scoped to the selected row's entity. The
 // special targets: "metrics" (canned charts), "trace" (waterfall jump via
-// the record's trace id).
+// the record's trace id), "patterns" (analyze the whole current list).
 func (v *tableView) drill(target string) tea.Cmd {
+	if target == "patterns" {
+		// Pattern extraction describes the list being looked at, not one
+		// row: it inherits the view's scope AND its server-side narrowing,
+		// and needs no selection.
+		spec := catalog.Lookup("patterns")
+		scope := catalog.Scope{Entity: v.scope.Entity, Timeframe: v.scope.Timeframe}
+		return func() tea.Msg {
+			return pushViewMsg{spec: spec, scope: scope, searches: v.searches, facets: v.facets}
+		}
+	}
 	rec := v.selected()
 	if rec == nil {
 		return nil

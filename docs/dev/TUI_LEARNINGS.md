@@ -276,6 +276,94 @@ attribute available. Facts validated live (box tenant, 2h window, ~280k spans):
   row grid. The table cell primitives (`pad`/`cell` in `table.go`) flatten
   whitespace runs before truncation.
 
+### 1.12 The expansion tables (RUM, bizevents, dictionary, dt.system, synthetic)
+
+Validated live for Phase 3.5 (box tenant; synthetic on the demo tenant):
+
+- **`user.events` has NO `event.type`** — `summarize by:{event.type}`
+  returns one null bucket, silently. The discriminator is
+  `characteristics.classifier` (request, error, user_action, view_summary,
+  page_summary, navigation, …), and the field set varies per classifier.
+  Durations and web vitals are **ns strings** (`"1948000000"` = 1948ms) but
+  `web_vitals.cumulative_layout_shift` and `ttfb.*_duration` are raw floats.
+- **`user.sessions` is sparse** (single digits over 2h) — the view floors
+  its window at 24h (same pattern as vulnerabilities). The session↔events
+  join key is `dt.rum.session.id` on both tables, `-0` suffix included.
+  `dt.smartscape.frontend` / `frontend.name` are **scalars on events but
+  arrays on sessions** — the sessions scope filter goes through
+  `matchesPhrase(arrayToString(…))`, the events one through
+  `== toSmartscapeId(…)`.
+- **`bizevents` payloads are producer-shaped**: one producer writes flat
+  `slo_name`, another dotted `slo.name`, a third only `event.category` —
+  and `event.category` can be entirely absent. A content column is a
+  client-side coalesce chain; `event.type` + `event.provider` are the
+  reliable facets. Window floored at 24h (2h hid all but one producer).
+- **`dt.semantic_dictionary.fields.model_id` is null on all ~1400 records**
+  — a dead column. The real join is reversed: `models.fields` is a string
+  array; `expand fields | join [fetch …fields], kind: leftOuter, on: {
+  left[field_name] == right[name] }`. Default (inner) join silently drops
+  the ~13% of declared names without a definition row. No model is named
+  `spans`/`logs` — the Grail table lives in `data_object`, and five
+  link-models carry the **literal string "null"** there.
+- **`dt.system.data_objects`** distinguishes tables from views by `type`
+  (19/344 on box); the `metrics` object is `usable_with:
+  ["fieldsSnapshot"]` only — `fetch metrics` is invalid, so the tables
+  view refuses enter there. **`dt.system.buckets`** is snake_case
+  (`retention_days`, `dt.bucket.class`, `dt.system.table`) and has no
+  status column (REST-only). **`load` syntax**: double quotes, absolute
+  path, no scheme — wrong shapes fail loud (PARSE_ERROR_SINGLE_QUOTES /
+  TABULAR_FILE_MUST_START_WITH_SLASH / UNKNOWN_TABULAR_FILE), and both
+  `| search` and facet filters compose after `load` fine.
+- **Synthetic is not in Smartscape.** `smartscapeNodes "SYNTHETIC_*"` is
+  empty even on tenants with dozens of monitors; the views run on classic
+  `fetch dt.entity.synthetic_test` / `dt.entity.http_check` (union via
+  `append [ … ]` — validated) with `fieldsAdd lifetime, tags` (unknown
+  attributes there **hard-fail** with FIELD_DOES_NOT_EXIST, unlike most of
+  Grail). Two metric families keyed by different entity dims
+  (`dt.synthetic.browser.*` by `dt.entity.synthetic_test`,
+  `dt.synthetic.http.*` by `dt.entity.http_check`) — the availability
+  enrichment appends two timeseries and aliases both dims to one `key`
+  field. Classic entity ids are plain strings: `in(dim, {"ID"})` without
+  `toSmartscapeId`. Execution results: `fetch dt.synthetic.events` (exact
+  name), HTTP step events are `http_step_execution` (no "monitor").
+- **LogPatternExtractor** (`dt.statistics.clustering.LogPatternExtractor`):
+  input `{"logQuery": …}` — the query **must project `timestamp` and
+  `content`** (schema-enforced) — plus `numberOfExamples` and
+  `generalParameters.timeframe`. The generic `--query` shorthand of
+  `dtctl exec analyzer` maps to `timeSeriesData` and is wrong for this
+  analyzer. Execution is effectively synchronous (<1s for hundreds of
+  records; the SDK's ExecuteAndWait covers the async path). Output items
+  `{patternExpression, sampleMatches, numberOfMatches}` arrive **unsorted**
+  — sort client-side. The pattern drops straight into
+  `| filter matchesPattern(content, "<pattern>")` (validated live; invalid
+  patterns fail loud with ERROR_IN_PARSING_PATTERN, a rare non-silent DQL
+  error).
+
+### 1.13 API-backed table views (Spec.API)
+
+Views without a DQL substrate (SLOs, anomaly detectors) or with a non-DQL
+execution engine (log patterns) set `Spec.API` to a source name; sources are
+`func(ctx, scope, dql)` closures built in `cmd/tui_sources.go` from the
+existing resource handlers and injected via `tui.Options.Sources` — pkg/tui
+stays HTTP-free. Rules learned:
+
+- The composed `Spec.Query` output (when present) is handed to the source as
+  input — the patterns source analyzes it, so `/`-searches and facets keep
+  working on an analyzer-backed view. Sources that ignore the dql (slos)
+  must have `Query == nil`, which makes the table view refuse server
+  searches and facets **with a status message** instead of showing narrowing
+  pills that silently did nothing.
+- `Spec.Echo` supplies the command echo (`dtctl get slos`) since there is no
+  query to render. `CanScope` is false by construction when `Query == nil`.
+- The SLO API returns definitions only — no status/value/error budget. The
+  slos source runs the evaluation endpoint per SLO (parallel, bounded,
+  ~12s cap) and merges the first criteria's result; evaluation failures
+  degrade to blank cells, never errors.
+- The drill into patterns is view-level, not row-level: 'a' needs no
+  selection and inherits the view's scope **and** its server
+  searches/facets (`pushViewMsg.searches/.facets`) — patterns describe the
+  list you are looking at. ('g' was unavailable: it is go-to-top.)
+
 ---
 
 ## 2. TUI extension model — how to add a view

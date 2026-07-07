@@ -84,6 +84,14 @@ func TestInjectStagesEmpty(t *testing.T) {
 func TestInjectionOnEveryCatalogQuery(t *testing.T) {
 	scope := Scope{Timeframe: DefaultTimeframe}
 	for _, spec := range All() {
+		if spec.Query == nil {
+			// API-backed views without a query have no DQL surface — the
+			// table view disables server search and facets for them.
+			if spec.API == "" {
+				t.Errorf("%s: neither Query nor API set", spec.Name)
+			}
+			continue
+		}
 		dql := spec.Query(scope)
 		lines := strings.Split(dql, "\n")
 		if strings.HasPrefix(strings.TrimSpace(lines[0]), "|") {
