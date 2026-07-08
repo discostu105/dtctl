@@ -254,14 +254,23 @@ func (v *relationsView) move(delta int) {
 	}
 }
 
-// relationVerb renders the edge with its direction read naturally:
-// "runs on →" vs "← runs on" (the neighbor does it to us).
-func relationVerb(r relRow) string {
+// relationLabel renders the edge together with the neighbor's type so each
+// row reads as a sentence around the arrow: "calls → HOST" (we do it to the
+// neighbor) vs "PROCESS ← runs on" (the neighbor does it to us). The styled
+// form colors the verb by direction and dims the type; the plain form feeds
+// width math and the selected row, whose row style paints the whole line.
+func relationLabel(r relRow, styled bool) string {
 	verb := strings.ReplaceAll(r.edgeType, "_", " ")
-	if r.outgoing {
-		return verb + " →"
+	if !styled {
+		if r.outgoing {
+			return verb + " → " + r.otherType
+		}
+		return r.otherType + " ← " + verb
 	}
-	return "← " + verb
+	if r.outgoing {
+		return theme.ArrowOut.Render(verb+" →") + " " + theme.Dim.Render(r.otherType)
+	}
+	return theme.Dim.Render(r.otherType) + " " + theme.ArrowIn.Render("← "+verb)
 }
 
 func (v *relationsView) View(width, height int) string {
@@ -290,8 +299,13 @@ func (v *relationsView) View(width, height int) string {
 		return b.String()
 	}
 
-	verbW, typeW := 18, 26
-	nameW := width - verbW - typeW - 5
+	relW := 18
+	for _, row := range v.rows {
+		if w := lipgloss.Width(relationLabel(row, false)); w > relW {
+			relW = w
+		}
+	}
+	nameW := width - relW - 3
 	if nameW < 16 {
 		nameW = 16
 	}
@@ -307,14 +321,10 @@ func (v *relationsView) View(width, height int) string {
 			name = row.otherID
 		}
 		if i == v.cursor {
-			line := pad(relationVerb(row), verbW) + " " + pad(name, nameW) + " " + pad(row.otherType, typeW)
+			line := pad(relationLabel(row, false), relW) + " " + pad(name, nameW)
 			b.WriteString(theme.Gutter.Render("▌") + theme.Selected.Render(pad(line, width-1)))
 		} else {
-			arrow := theme.ArrowOut
-			if !row.outgoing {
-				arrow = theme.ArrowIn
-			}
-			line := " " + arrow.Render(pad(relationVerb(row), verbW)) + " " + pad(name, nameW) + " " + theme.Dim.Render(pad(row.otherType, typeW))
+			line := " " + pad(relationLabel(row, true), relW) + " " + pad(name, nameW)
 			b.WriteString(ansi.Truncate(line, width, "…"))
 		}
 		if i < end-1 {

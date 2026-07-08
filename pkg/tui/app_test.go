@@ -251,9 +251,13 @@ func TestHostDetailRelatedTab(t *testing.T) {
 			"target_id": "HOST-AAAABBBBCCCCDDDD", "target_type": "HOST"},
 		{"source_id": "K8S_NODE-0000000000000001", "source_type": "K8S_NODE", "type": "runs_on",
 			"target_id": "HOST-AAAABBBBCCCCDDDD", "target_type": "HOST"},
+		{"source_id": "HOST-AAAABBBBCCCCDDDD", "source_type": "HOST", "type": "calls",
+			"target_id": "HOST-0000000000000002", "target_type": "HOST"},
 	}})
 	body := dv.View(120, 30)
-	for _, want := range []string{"← runs on", "PROCESS", "K8S_NODE", "2 relations"} {
+	// Each row reads type-and-verb around the arrow: the neighbor acts on us
+	// ("PROCESS ← runs on") or we act on it ("calls → HOST").
+	for _, want := range []string{"PROCESS ← runs on", "K8S_NODE ← runs on", "calls → HOST", "3 relations"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("related tab missing %q:\n%s", want, body)
 		}
