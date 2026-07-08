@@ -11,6 +11,19 @@ import (
 // server/entry spans (null elsewhere), span.status_code is null on the vast
 // majority of spans and "error"/"ok" where instrumentation set it.
 //
+// Span attributes arrive in two semantic-convention eras, and a tenant holds
+// either or both: OneAgent emits the Dynatrace semantic dictionary's mix
+// (old db.system next to new db.query.text/db.namespace), pure-OTLP ingest
+// emits stable OTel semconv (db.system.name), and the populations are
+// disjoint — validated live on two tenants, one of which had zero
+// db.system.name spans. Every category filter and display column therefore
+// coalesces both names. Renames that matter here: db.system →
+// db.system.name (semconv 1.30, stable 1.33), db.statement → db.query.text,
+// db.name → db.namespace, db.operation → db.operation.name (1.26),
+// http.method → http.request.method, messaging.operation →
+// messaging.operation.type, and request.is_failed → transaction.is_failed
+// (Dynatrace dictionary deprecation; both dup-emitted today).
+//
 // The view fetches spans directly — no summarize — so every span attribute
 // survives into the row (the inspector and the facet picker see the full
 // record) and the query skips the aggregation cost. Lenses slice the firehose
@@ -23,13 +36,17 @@ var spanLenses = []Lens{
 	{Name: "roots", Desc: "trace root spans (no parent) — one row per trace",
 		Filter: "isNull(span.parent_id)"},
 	{Name: "errors", Desc: "failed spans of any kind",
-		Filter: `span.status_code == "error" or request.is_failed == true`},
+		Filter: `span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`},
 	{Name: "server", Desc: "incoming requests handled by a service",
 		Filter: `span.kind == "server"`},
 	{Name: "client", Desc: "outgoing calls (HTTP, RPC, DB drivers)",
 		Filter: `span.kind == "client"`},
 	{Name: "db", Desc: "database statements",
-		Filter: "isNotNull(db.system.name)", Columns: dbSpanColumns},
+		Filter: "isNotNull(db.system.name) or isNotNull(db.system)", Columns: dbSpanColumns},
+	{Name: "rpc", Desc: "remote procedure calls (gRPC, SOAP, cloud APIs)",
+		Filter: "isNotNull(rpc.system)", Columns: rpcSpanColumns},
+	{Name: "messaging", Desc: "queue/topic publishes and consumes",
+		Filter: "isNotNull(messaging.system)", Columns: messagingSpanColumns},
 	// Both GenAI instrumentation eras: semconv spans carry
 	// gen_ai.operation.name, traceloop/LangChain spans llm.request.type
 	// (validated live — the demo tenant's agents emit only the latter).
@@ -85,17 +102,58 @@ var spanDurationColumn = Column{
 	Sort:  func(rec map[string]any) any { return rec["duration"] },
 }
 
-// dbSpanColumns put the statement front and center (db lens).
+// dbSpanColumns put the statement front and center (db lens). Every db.*
+// display field coalesces its two semconv-era names.
 var dbSpanColumns = []Column{
 	spanStartColumn,
 	{Title: "STATEMENT", Value: func(rec map[string]any) string {
-		if q := Str(rec, "db.query.text"); q != "" {
+		if q := firstNonEmpty(Str(rec, "db.query.text"), Str(rec, "db.statement")); q != "" {
 			return q
 		}
 		return Str(rec, "span.name")
 	}},
-	{Title: "SYSTEM", Width: 10, Field: "db.system.name"},
-	{Title: "DATABASE", Width: 14, Field: "db.namespace"},
+	{Title: "SYSTEM", Width: 10, Value: func(rec map[string]any) string {
+		return firstNonEmpty(Str(rec, "db.system.name"), Str(rec, "db.system"))
+	}},
+	{Title: "DATABASE", Width: 14, Value: func(rec map[string]any) string {
+		return firstNonEmpty(Str(rec, "db.namespace"), Str(rec, "db.name"))
+	}},
+	{Title: "SERVICE", Field: "service.name", Width: 20},
+	spanDurationColumn,
+}
+
+// rpcSpanColumns read like stack frames (rpc lens): the remote
+// service.method being called, and which RPC flavor carried it. OneAgent
+// emits meaningful rpc.service/rpc.method even where rpc.system leaks
+// numeric enum values ("1", "2") — validated live.
+var rpcSpanColumns = []Column{
+	spanStartColumn,
+	{Title: "CALL", Value: func(rec map[string]any) string {
+		if call := joinNonEmpty(".", Str(rec, "rpc.service"), Str(rec, "rpc.method")); call != "" {
+			return call
+		}
+		return spanLabel(rec)
+	}},
+	{Title: "SYSTEM", Width: 11, Field: "rpc.system"},
+	{Title: "KIND", Width: 8, Field: "span.kind"},
+	{Title: "SERVICE", Field: "service.name", Width: 20},
+	spanDurationColumn,
+}
+
+// messagingSpanColumns name the broker interaction (messaging lens): which
+// queue/topic, what was done to it (publish/receive/process), which broker.
+var messagingSpanColumns = []Column{
+	spanStartColumn,
+	{Title: "DESTINATION", Value: func(rec map[string]any) string {
+		if d := Str(rec, "messaging.destination.name"); d != "" {
+			return d
+		}
+		return spanLabel(rec)
+	}},
+	{Title: "OP", Width: 8, Value: func(rec map[string]any) string {
+		return firstNonEmpty(Str(rec, "messaging.operation.type"), Str(rec, "messaging.operation"))
+	}},
+	{Title: "SYSTEM", Width: 10, Field: "messaging.system"},
 	{Title: "SERVICE", Field: "service.name", Width: 20},
 	spanDurationColumn,
 }
@@ -139,10 +197,37 @@ func spanLabel(rec map[string]any) string {
 	return Str(rec, "span.name")
 }
 
+// SpanFailed reports Dynatrace's request verdict for a span:
+// transaction.is_failed or its deprecated alias request.is_failed (dictionary
+// rename; tenants dup-emit both today but either may stand alone).
+func SpanFailed(rec map[string]any) bool {
+	if failed, _ := rec["transaction.is_failed"].(bool); failed {
+		return true
+	}
+	failed, _ := rec["request.is_failed"].(bool)
+	return failed
+}
+
+// SpanCategory classifies a span by its semconv discriminator attribute so
+// views can badge it — "db" or "messaging", "" otherwise. Precedence: db
+// wins over messaging (a span carrying both is a driver-level DB call).
+// GenAI has its own richer treatment (GenAIOp) and RPC/HTTP spans keep
+// span.kind — for those the call direction is the story, for db and
+// messaging the fact that a database/broker is involved is.
+func SpanCategory(rec map[string]any) string {
+	if firstNonEmpty(Str(rec, "db.system.name"), Str(rec, "db.system")) != "" {
+		return "db"
+	}
+	if Str(rec, "messaging.system") != "" {
+		return "messaging"
+	}
+	return ""
+}
+
 // spanStatus renders the span's failure state: Dynatrace's request verdict
 // where present (entry spans), else the OTel status code.
 func spanStatus(rec map[string]any) string {
-	if failed, _ := rec["request.is_failed"].(bool); failed {
+	if SpanFailed(rec) {
 		return "failed"
 	}
 	return Str(rec, "span.status_code")

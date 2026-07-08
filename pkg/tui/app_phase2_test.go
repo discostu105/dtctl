@@ -197,10 +197,21 @@ func TestSpanLensSwitching(t *testing.T) {
 		t.Errorf("db lens column[1] = %q, want STATEMENT", got)
 	}
 
-	// Digits past the lens list still hit their global hotkey (9 → aws).
+	// The category lenses carry their own columns too.
+	press(a, key("7"))
+	if got := tv.columns()[1].Title; got != "DESTINATION" {
+		t.Errorf("messaging lens column[1] = %q, want DESTINATION", got)
+	}
+
+	// All nine digits are lens-claimed on traces (9 lenses); digits outside
+	// the lens range still hit their global hotkey (0 → home).
 	press(a, key("9"))
-	if top, ok := a.top().(*tableView); !ok || top.spec.Name != "aws" {
-		t.Fatalf("digit 9 should stay a hotkey jump, top = %v", a.top().Crumb())
+	if a.top() != tv || tv.Crumb() != "traces·all" {
+		t.Fatalf("digit 9 should pick the all lens, top = %v", a.top().Crumb())
+	}
+	press(a, key("0"))
+	if _, ok := a.top().(*homeView); !ok {
+		t.Fatalf("digit 0 should stay a hotkey jump to home, top = %T", a.top())
 	}
 }
 

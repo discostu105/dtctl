@@ -140,7 +140,7 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 |---|---|---|---|
 | Problems | `:problems`, `:pb` | `dt.davis.problems` | severity, status, title, root cause, impact, age; **the investigation entry point** |
 | Logs | `:logs` | `logs` | live-follow toggle, severity coloring, grouped-by-pattern mode, record inspector |
-| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · genai · all, tab/digits switch); trace-ID lookup (`:trace <id>`); waterfall view |
+| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · rpc · messaging · genai · all, tab/digits switch); trace-ID lookup (`:trace <id>`); waterfall view |
 | Metrics | `:metrics` | `timeseries` | metric browser for the scoped entity; braille/sparkline charts |
 | Events | `:events` | `events`, `dt.davis.events` | deployments, K8s events, Davis events; filterable by kind |
 | Security | `:security`, `:vulns` | `security.events` | vulnerabilities (CVE, DSS score, affected entities), detections (MITRE), posture findings |
@@ -508,8 +508,11 @@ without a new page implementation.
 ### Trace waterfall (traces view → enter)
 
 Confirmed span fields: `span.name`, `span.kind`, `span.parent_id`, `duration`,
-`start_time`, `request.is_failed`, `endpoint.name`, `http.route`,
-`db.system.name` / `db.query.text`, `code.function`, `trace.id`.
+`start_time`, `request.is_failed` / `transaction.is_failed`, `endpoint.name`,
+`http.route`, `db.system.name` / `db.query.text`, `code.function`, `trace.id`.
+Category attributes come in two semconv eras per tenant (see TUI_LEARNINGS
+§1.11) — filters and columns coalesce both. The kind column badges db
+(`⛁ db`) and messaging (`✉ msg`) spans the way GenAI ops already replace it.
 
 ```
 ┌ trace: b617ac8d… ──────────────────── 12 spans · 341ms · 1 failed ──────────┐
@@ -523,7 +526,8 @@ Confirmed span fields: `span.name`, `span.kind`, `span.parent_id`, `duration`,
 ```
 
 Tree from `span.parent_id`; bars proportional on the trace's time axis; kind
-and service columns; failed spans (`request.is_failed`) marked `✗` red.
+and service columns; failed spans (`transaction.is_failed`, falling back to
+its deprecated alias `request.is_failed`) marked `✗` red.
 `enter` on a span → attribute inspector; `l` → logs with the same `trace.id`
 (both directions of the logs↔traces link); `x` → the span's service entity.
 
@@ -723,9 +727,14 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   **problems, services, hosts, logs** — enough for the core triage loop.
 - Drill-down vocabulary (`l m p v d o enter esc -`), command echo, refresh.
 - Tabbed entity detail page (`enter` on an entity row): curated key-facts
-  panel + full properties, with metrics / logs / events / problems as
-  lazily-loaded pre-scoped tabs (`tab` / digits to switch). Record inspector
-  with a highlights block and `/` property search.
+  panel + full properties, a **related** tab (the entity's Smartscape
+  neighbors — a host's processes/containers/K8s node — embedded relations
+  view; enter navigates, the highlighted neighbor drives pin/x/o), a
+  containment tab where one exists (K8S_NODE → its pods, completing
+  host → related → node → pods; pods edge to the node, never the host),
+  and metrics / logs / events / problems as lazily-loaded pre-scoped tabs
+  (`tab` / digits to switch). Record inspector with a highlights block and
+  `/` property search.
 - Read-only. Success criterion: the incident-triage journey works end to end.
 
 ### Phase 2 — Topology + traces + Kubernetes ✅ implemented

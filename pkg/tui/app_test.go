@@ -151,30 +151,38 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	// The details tab renders instantly from the list row: tab bar, curated
 	// key facts, and full properties without waiting for a fetch.
 	body := a.top().View(120, 30)
-	for _, want := range []string{"1 · details", "2 · metrics", "3 · logs", "4 · events", "5 · problems",
+	for _, want := range []string{"1 · details", "2 · related", "3 · metrics", "4 · logs", "5 · events", "6 · problems",
 		"7.6 GiB", "2 logical / 1 physical", "aws us-east-1b", "HOST-AAAABBBBCCCCDDDD"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("details tab missing %q:\n%s", want, body)
 		}
 	}
 
-	// tab switches to metrics and lazily starts its availability probe (the
-	// chart query follows once the probe returns).
+	// tab switches to the related tab and lazily starts its edge walk — the
+	// host's processes/pods topology is one keypress from the facts.
 	press(a, key("tab"))
 	if dv.active != 1 {
-		t.Fatalf("tab should move to metrics, active = %d", dv.active)
+		t.Fatalf("tab should move to related, active = %d", dv.active)
 	}
-	mv, ok := dv.tabs[1].view.(*metricsView)
+	rv, ok := dv.tabs[1].view.(*relationsView)
+	if !ok || !strings.Contains(rv.dql, `source_id == toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
+		t.Fatalf("related tab dql = %q", rv.dql)
+	}
+
+	// Digits jump straight to a tab: metrics starts its availability probe
+	// (the chart query follows once the probe returns).
+	press(a, key("3"))
+	mv, ok := dv.tabs[2].view.(*metricsView)
 	if !ok || !strings.Contains(mv.dql, "metrics from:") ||
 		!strings.Contains(mv.dql, `toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Fatalf("metrics tab dql = %q", mv.dql)
 	}
 
-	// Digits jump straight to a tab; the logs tab is pre-scoped to the host.
-	press(a, key("3"))
+	// The logs tab is pre-scoped to the host.
+	press(a, key("4"))
 	logs, ok := dv.tabs[dv.active].view.(*tableView)
 	if !ok || logs.spec.Name != "logs" {
-		t.Fatalf("'3' should activate logs tab, active view = %T", dv.tabs[dv.active].view)
+		t.Fatalf("'4' should activate logs tab, active view = %T", dv.tabs[dv.active].view)
 	}
 	if !strings.Contains(logs.dql, `dt.smartscape.host == toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Errorf("logs tab not scoped to host:\n%s", logs.dql)
@@ -194,7 +202,7 @@ func TestDetailTabEscClearsChildFilterBeforePopping(t *testing.T) {
 	a := testApp(t, "hosts")
 	seedRows(t, a, []map[string]any{hostRow()})
 	press(a, key("enter"))
-	press(a, key("3")) // logs tab
+	press(a, key("4")) // logs tab
 
 	dv := a.top().(*detailView)
 	logs := dv.tabs[dv.active].view.(*tableView)
@@ -217,6 +225,63 @@ func TestDetailTabEscClearsChildFilterBeforePopping(t *testing.T) {
 	press(a, key("esc"))
 	if len(a.stack) != 1 {
 		t.Fatalf("second esc should pop the detail page, depth = %d", len(a.stack))
+	}
+}
+
+// TestHostDetailRelatedTab: the related tab lists the host's Smartscape
+// neighbors (its processes, its K8s node), the highlighted neighbor drives
+// app-level actions, and enter opens its detail page — where a K8s node
+// carries a node-scoped pods tab (host → node → pods: pods edge to the
+// node in Smartscape, never to the host directly).
+func TestHostDetailRelatedTab(t *testing.T) {
+	a := testApp(t, "hosts")
+	seedRows(t, a, []map[string]any{hostRow()})
+	press(a, key("enter"))
+	dv := a.top().(*detailView)
+
+	press(a, key("2"))
+	rv, ok := dv.tabs[dv.active].view.(*relationsView)
+	if !ok {
+		t.Fatalf("'2' should activate the related tab, view = %T", dv.tabs[dv.active].view)
+	}
+
+	dv.Update(dataMsg{owner: rv, seq: rv.seq, records: []map[string]any{
+		{"source_id": "PROCESS-0000000000000001", "source_type": "PROCESS", "type": "runs_on",
+			"target_id": "HOST-AAAABBBBCCCCDDDD", "target_type": "HOST"},
+		{"source_id": "K8S_NODE-0000000000000001", "source_type": "K8S_NODE", "type": "runs_on",
+			"target_id": "HOST-AAAABBBBCCCCDDDD", "target_type": "HOST"},
+	}})
+	body := dv.View(120, 30)
+	for _, want := range []string{"← runs on", "PROCESS", "K8S_NODE", "2 relations"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("related tab missing %q:\n%s", want, body)
+		}
+	}
+
+	// The highlighted neighbor wins Selection — pin/relations/open act on it
+	// (incoming edges sort by neighbor type: the node row is first).
+	if _, e := dv.Selection(); e == nil || e.Type != "K8S_NODE" {
+		t.Fatalf("selection should be the highlighted neighbor, got %+v", e)
+	}
+
+	press(a, key("enter"))
+	nd, ok := a.top().(*detailView)
+	if !ok || nd.entity.Type != "K8S_NODE" {
+		t.Fatalf("enter on a neighbor should open its detail page, top = %T", a.top())
+	}
+	podsIdx := -1
+	for i, tab := range nd.tabs {
+		if tab.name == "pods" {
+			podsIdx = i
+		}
+	}
+	if podsIdx < 0 {
+		t.Fatalf("node detail page has no pods tab")
+	}
+	deliverView(nd, nd.setActive(podsIdx))
+	pods := nd.tabs[podsIdx].view.(*tableView)
+	if !strings.Contains(pods.dql, "k8s.node.name ==") {
+		t.Errorf("pods tab not scoped to the node:\n%s", pods.dql)
 	}
 }
 

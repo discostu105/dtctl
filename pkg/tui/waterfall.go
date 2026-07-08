@@ -48,6 +48,9 @@ type wfRow struct {
 	// prompts and tool calls, not as anonymous client/internal spans.
 	genaiOp string
 	tokens  string
+	// category badges db/messaging spans in the kind column ("client" says
+	// less than "the span talked to a database").
+	category string
 }
 
 func newWaterfallView(ds *dataSource, traceID string, tf catalog.Timeframe) *waterfallView {
@@ -232,16 +235,16 @@ func buildWaterfall(records []map[string]any) []wfRow {
 				childPrefix += "│  "
 			}
 		}
-		failed, _ := rec["request.is_failed"].(bool)
 		row := wfRow{
-			rec:    rec,
-			guide:  guide,
-			label:  label,
-			kind:   catalog.Str(rec, "span.kind"),
-			svc:    catalog.Str(rec, "service.name"),
-			start:  parseTimeNs(catalog.Str(rec, "start_time")),
-			end:    parseTimeNs(catalog.Str(rec, "end_time")),
-			failed: failed,
+			rec:      rec,
+			guide:    guide,
+			label:    label,
+			kind:     catalog.Str(rec, "span.kind"),
+			svc:      catalog.Str(rec, "service.name"),
+			start:    parseTimeNs(catalog.Str(rec, "start_time")),
+			end:      parseTimeNs(catalog.Str(rec, "end_time")),
+			failed:   catalog.SpanFailed(rec),
+			category: catalog.SpanCategory(rec),
 		}
 		if op := catalog.GenAIOp(rec); op != "" {
 			row.genaiOp = catalog.GenAIOpShort(op)
@@ -344,8 +347,13 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 		label += " ⟨" + r.tokens + "⟩"
 	}
 	kindText := r.kind
-	if r.genaiOp != "" {
+	switch {
+	case r.genaiOp != "":
 		kindText = genaiGlyph(r.genaiOp) + " " + r.genaiOp
+	case r.category == "db":
+		kindText = "⛁ db"
+	case r.category == "messaging":
+		kindText = "✉ msg"
 	}
 	tree := pad(r.guide+label, treeW)
 	kind := pad(kindText, kindW)
@@ -393,8 +401,11 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 		svc = barStyle.Render("●") + " " + pad(r.svc, max(svcW-2, 0))
 	}
 	kindStyle := theme.Dim
-	if r.genaiOp != "" {
+	switch {
+	case r.genaiOp != "":
 		kindStyle = theme.GenAI
+	case r.category != "":
+		kindStyle = theme.Label
 	}
 	return ansi.Truncate(" "+tree+" "+kindStyle.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
 }

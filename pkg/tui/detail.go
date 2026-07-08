@@ -37,7 +37,22 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 	// still-unstarted tabs compose it into their scope filters — K8s log
 	// scoping matches by plain k8s.* names, so the name is load-bearing.
 	scope := catalog.Scope{Entity: &v.entity, Timeframe: tf}
-	v.tabs = []detailTab{{name: "details", view: newEntityInfoView(ds, entity, rec)}}
+	v.tabs = []detailTab{
+		{name: "details", view: newEntityInfoView(ds, entity, rec)},
+		// Every entity's topology neighbors, one tab away: a host's
+		// processes, containers, and K8s node; a service's callers. enter
+		// navigates to the neighbor, x keeps walking.
+		{name: "related", view: newEmbeddedRelationsView(ds, entity, tf)},
+	}
+	// Containment tab: a K8s node's pods as a pre-scoped pods table — the
+	// same hop the nodes list offers via enter, kept on the node's page. A
+	// host's pods live here too (host → related → its K8S_NODE → pods): pods
+	// edge to the node in Smartscape, not to the host.
+	if entity.Type == "K8S_NODE" {
+		if spec := catalog.Lookup("pods"); spec != nil {
+			v.tabs = append(v.tabs, detailTab{name: "pods", view: newTableView(ds, spec, scope)})
+		}
+	}
 	// Every entity gets a metrics tab: the canned charts where a type has
 	// them (enter opens the explorer from there), the scoped metric explorer
 	// where it doesn't.
@@ -74,10 +89,15 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 
 // Selection exposes the most specific entity for app-level actions (pin,
 // relations, open in browser): an entity link highlighted on the details tab
-// wins over the page's own entity.
+// or a neighbor highlighted on the related tab wins over the page's entity.
 func (v *detailView) Selection() (map[string]any, *catalog.Entity) {
-	if iv, ok := v.tabs[v.active].view.(*inspectorView); ok {
-		if _, e := iv.Selection(); e != nil {
+	switch t := v.tabs[v.active].view.(type) {
+	case *inspectorView:
+		if _, e := t.Selection(); e != nil {
+			return nil, e
+		}
+	case *relationsView:
+		if _, e := t.Selection(); e != nil {
 			return nil, e
 		}
 	}

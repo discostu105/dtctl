@@ -114,14 +114,18 @@ func TestTracesLenses(t *testing.T) {
 		t.Errorf("default lens should be roots, got %q", spec.Lenses[0].Name)
 	}
 
-	// Each lens composes its filter (the last, "all", none at all).
+	// Each lens composes its filter (the last, "all", none at all). Category
+	// lenses OR both semconv eras of their discriminator — a tenant holds
+	// either (validated live: OneAgent emits db.system, OTLP db.system.name).
 	filters := map[string]string{
-		"roots":  "| filter isNull(span.parent_id)",
-		"errors": `| filter span.status_code == "error" or request.is_failed == true`,
-		"server": `| filter span.kind == "server"`,
-		"client": `| filter span.kind == "client"`,
-		"db":     "| filter isNotNull(db.system.name)",
-		"genai":  "| filter isNotNull(gen_ai.operation.name)",
+		"roots":     "| filter isNull(span.parent_id)",
+		"errors":    `| filter span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`,
+		"server":    `| filter span.kind == "server"`,
+		"client":    `| filter span.kind == "client"`,
+		"db":        "| filter isNotNull(db.system.name) or isNotNull(db.system)",
+		"rpc":       "| filter isNotNull(rpc.system)",
+		"messaging": "| filter isNotNull(messaging.system)",
+		"genai":     "| filter isNotNull(gen_ai.operation.name)",
 	}
 	for i, l := range spec.Lenses {
 		s := fixtureScope(nil)
@@ -149,12 +153,77 @@ func TestTracesLenses(t *testing.T) {
 	}
 
 	// Curated lens columns exist where the default table would be mute.
-	for _, name := range []string{"db", "genai"} {
+	for _, name := range []string{"db", "rpc", "messaging", "genai"} {
 		for _, l := range spec.Lenses {
 			if l.Name == name && l.Columns == nil {
 				t.Errorf("lens %s should curate its own columns", name)
 			}
 		}
+	}
+}
+
+// TestSpanDualConventions pins the two semconv eras onto the display
+// helpers: a OneAgent-era record (db.system, db.statement, db.name,
+// request.is_failed) and a stable-semconv record (db.system.name,
+// db.query.text, db.namespace, transaction.is_failed) must render the same.
+func TestSpanDualConventions(t *testing.T) {
+	oneagent := map[string]any{
+		"db.system": "postgresql", "db.statement": "SELECT 1", "db.name": "otel",
+		"request.is_failed": true,
+	}
+	otlp := map[string]any{
+		"db.system.name": "postgresql", "db.query.text": "SELECT 1", "db.namespace": "otel",
+		"transaction.is_failed": true,
+	}
+	for _, rec := range []map[string]any{oneagent, otlp} {
+		if got := dbSpanColumns[1].Text(rec); got != "SELECT 1" {
+			t.Errorf("STATEMENT = %q, want SELECT 1 (rec %v)", got, rec)
+		}
+		if got := dbSpanColumns[2].Text(rec); got != "postgresql" {
+			t.Errorf("SYSTEM = %q, want postgresql (rec %v)", got, rec)
+		}
+		if got := dbSpanColumns[3].Text(rec); got != "otel" {
+			t.Errorf("DATABASE = %q, want otel (rec %v)", got, rec)
+		}
+		if !SpanFailed(rec) {
+			t.Errorf("SpanFailed = false for %v", rec)
+		}
+		if got := SpanCategory(rec); got != "db" {
+			t.Errorf("SpanCategory = %q, want db (rec %v)", got, rec)
+		}
+	}
+
+	// Precedence: a DynamoDB call carries db.system AND rpc.system=aws_api
+	// (validated live) — the db category wins; plain broker spans classify
+	// as messaging; unadorned spans stay uncategorized.
+	dynamo := map[string]any{"db.system": "dynamodb", "rpc.system": "aws_api"}
+	if got := SpanCategory(dynamo); got != "db" {
+		t.Errorf("SpanCategory(dynamodb) = %q, want db", got)
+	}
+	kafka := map[string]any{"messaging.system": "kafka", "messaging.operation.type": "process"}
+	if got := SpanCategory(kafka); got != "messaging" {
+		t.Errorf("SpanCategory(kafka) = %q, want messaging", got)
+	}
+	if got := SpanCategory(map[string]any{"span.kind": "server"}); got != "" {
+		t.Errorf("SpanCategory(plain) = %q, want empty", got)
+	}
+
+	// Messaging columns coalesce operation eras too.
+	if got := messagingSpanColumns[2].Text(kafka); got != "process" {
+		t.Errorf("messaging OP = %q, want process", got)
+	}
+	old := map[string]any{"messaging.system": "kafka", "messaging.operation": "receive"}
+	if got := messagingSpanColumns[2].Text(old); got != "receive" {
+		t.Errorf("messaging OP (old era) = %q, want receive", got)
+	}
+
+	// RPC columns compose service.method with a span-name fallback.
+	rpc := map[string]any{"rpc.service": "OrderController", "rpc.method": "getLatestStatus"}
+	if got := rpcSpanColumns[1].Text(rpc); got != "OrderController.getLatestStatus" {
+		t.Errorf("rpc CALL = %q", got)
+	}
+	if got := rpcSpanColumns[1].Text(map[string]any{"span.name": "POST /x"}); got != "POST /x" {
+		t.Errorf("rpc CALL fallback = %q, want POST /x", got)
 	}
 }
 

@@ -87,12 +87,12 @@ func TestDetailPageMetricsTabForUncuratedType(t *testing.T) {
 	ds := &dataSource{runFn: func(string) ([]map[string]any, error) { return nil, nil }}
 	dv := newDetailView(ds, catalog.Entity{ID: "AWS_X-1", Name: "x", Type: "AWS_X"}, nil, catalog.DefaultTimeframe)
 
-	if len(dv.tabs) < 2 || dv.tabs[1].name != "metrics" {
+	if len(dv.tabs) < 3 || dv.tabs[2].name != "metrics" {
 		t.Fatalf("uncurated detail page should still carry a metrics tab, tabs = %+v", dv.tabs)
 	}
-	tv, ok := dv.tabs[1].view.(*tableView)
+	tv, ok := dv.tabs[2].view.(*tableView)
 	if !ok || tv.spec.Name != "metrics" {
-		t.Fatalf("uncurated metrics tab should be the explorer, got %T", dv.tabs[1].view)
+		t.Fatalf("uncurated metrics tab should be the explorer, got %T", dv.tabs[2].view)
 	}
 	if !strings.Contains(tv.spec.Query(tv.scope), `dt.smartscape_source.id == toSmartscapeId("AWS_X-1")`) {
 		t.Errorf("explorer tab not scoped to the entity:\n%s", tv.spec.Query(tv.scope))

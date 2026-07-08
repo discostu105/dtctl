@@ -266,8 +266,33 @@ attribute available. Facts validated live (box tenant, 2h window, ~280k spans):
   errors lens ORs both. `span.status_code` is null on ~99.8% of spans.
 - **DB spans:** `isNotNull(db.system.name)` (231k) is broader than
   `db.query.text` (120k) — drivers emit `pool.acquire` etc. without query
-  text. The db lens filters on the former, displays the latter with
-  `span.name` fallback.
+  text. The db lens filters on the system attribute (both era names, see
+  below), displays the query text with `span.name` fallback.
+- **Two semconv eras, disjoint populations.** OTel renamed the database
+  attributes on the way to stability (`db.statement` → `db.query.text`,
+  `db.name` → `db.namespace`, `db.operation` → `db.operation.name` in
+  semconv 1.26; `db.system` → `db.system.name` in 1.30, stable since 1.33) —
+  and the two big demo tenants sit on opposite sides. Validated live (4h
+  windows): the OneAgent-fed tenant has **1.73M `db.system` / 0
+  `db.system.name`** spans (the Dynatrace semantic dictionary itself defines
+  `db.system` next to new-style `db.query.text`/`db.namespace` — OneAgent
+  emits that mix), the OTLP-fed tenant has **0 / 349k** — the exact inverse.
+  Same story for HTTP (652k spans carry only legacy `http.method`, 4.26M the
+  stable `http.request.method`) and messaging (`messaging.operation.type` on
+  all 14.6k, legacy `messaging.operation` dup-emitted on a subset). A filter
+  or column that reads only one era's name silently loses an entire tenant:
+  every category discriminator must OR both, every display column coalesce
+  both. `request.is_failed` → `transaction.is_failed` is the same pattern on
+  the Dynatrace side (dictionary deprecation; both tenants dup-emit both
+  today — `catalog.SpanFailed` checks both).
+- **RPC and messaging carve out real subsets.** `isNotNull(rpc.system)`
+  (1.9M: grpc, apache_axis, aws_api, dotnet_remoting — OneAgent also leaks
+  numeric enums "1"/"2" with meaningful `rpc.service`/`rpc.method` beside
+  them) and `isNotNull(messaging.system)` (kafka, artemis, mqseries, aws_sqs
+  with `messaging.destination.name` + operation type) each got a lens.
+  DynamoDB spans carry `db.system` **and** `rpc.system=aws_api` —
+  `SpanCategory` gives db precedence. FaaS spans exist (`faas.trigger`,
+  140k) but all also categorize via http/rpc, so no faas lens.
 - **GenAI spans:** `gen_ai.operation.name` is the discriminator;
   `gen_ai.system` is empty on this tenant while `gen_ai.provider.name`,
   `gen_ai.request.model`, and `gen_ai.usage.*_tokens` are populated.

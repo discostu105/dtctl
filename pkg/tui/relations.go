@@ -16,6 +16,9 @@ import (
 // relationsView is the topology hop behind 'x': every Smartscape edge of an
 // entity, both directions, with names resolved in a second batched query.
 // enter navigates to the neighbor's detail page; x again keeps walking.
+// It also serves as the detail page's "related" tab (embedded), where a
+// host's processes, containers, and K8s node are one tab away instead of
+// one keypress.
 type relationsView struct {
 	ds     *dataSource
 	entity catalog.Entity
@@ -25,6 +28,8 @@ type relationsView struct {
 	names  map[string]string // id → display name (second query)
 	cursor int
 	offset int
+
+	embedded bool // detail-page tab: the page header already names the entity
 
 	loading bool
 	err     error
@@ -43,6 +48,13 @@ type relRow struct {
 
 func newRelationsView(ds *dataSource, entity catalog.Entity, tf catalog.Timeframe) *relationsView {
 	return &relationsView{ds: ds, entity: entity, tf: tf, names: map[string]string{}}
+}
+
+// newEmbeddedRelationsView builds the detail page's "related" tab.
+func newEmbeddedRelationsView(ds *dataSource, entity catalog.Entity, tf catalog.Timeframe) *relationsView {
+	v := newRelationsView(ds, entity, tf)
+	v.embedded = true
+	return v
 }
 
 // nameOwner tags the second (name-resolution) query.
@@ -157,8 +169,20 @@ func (v *relationsView) resolveNames() tea.Cmd {
 	return v.ds.query(nameOwner{v}, v.seq, namesQuery(ids))
 }
 
-// buildRelations turns edge records into direction-aware rows, outgoing
-// first, grouped by edge type.
+// edgeRank orders relation rows for reading: structure (what this thing runs
+// on, owns, is part of — a host's processes, containers, K8s node) before the
+// communication mesh (calls, routes_to), which on a busy host is a hundred
+// host→host rows that would bury the structure.
+func edgeRank(edgeType string) int {
+	switch edgeType {
+	case "calls", "routes_to":
+		return 1
+	}
+	return 0
+}
+
+// buildRelations turns edge records into direction-aware rows: structural
+// edges first, outgoing before incoming, grouped by edge type.
 func buildRelations(selfID string, records []map[string]any) []relRow {
 	var rows []relRow
 	for _, rec := range records {
@@ -176,6 +200,9 @@ func buildRelations(selfID string, records []map[string]any) []relRow {
 		rows = append(rows, row)
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
+		if a, b := edgeRank(rows[i].edgeType), edgeRank(rows[j].edgeType); a != b {
+			return a < b
+		}
 		if rows[i].outgoing != rows[j].outgoing {
 			return rows[i].outgoing
 		}
@@ -236,9 +263,12 @@ func (v *relationsView) View(width, height int) string {
 	v.width, v.height = width, height
 	var b strings.Builder
 
-	title := " " + theme.OverlayTitle.Render(entityName(v.entity)) + "  " + theme.Badge.Render(v.entity.Type)
+	title := ""
+	if !v.embedded {
+		title = " " + theme.OverlayTitle.Render(entityName(v.entity)) + "  " + theme.Badge.Render(v.entity.Type) + " "
+	}
 	if !v.loading && v.err == nil {
-		title += theme.Dim.Render(fmt.Sprintf("  %d relations", len(v.rows)))
+		title += theme.Dim.Render(fmt.Sprintf(" %d relations", len(v.rows)))
 	}
 	b.WriteString(ansi.Truncate(title, width, "…") + "\n")
 
