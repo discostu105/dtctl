@@ -43,6 +43,11 @@ type wfRow struct {
 	start  int64 // ns since epoch
 	end    int64
 	failed bool
+	// GenAI annotations: the operation badge replaces the span kind and the
+	// token usage rides on the label — an agent trace reads as its
+	// prompts and tool calls, not as anonymous client/internal spans.
+	genaiOp string
+	tokens  string
 }
 
 func newWaterfallView(ds *dataSource, traceID string, tf catalog.Timeframe) *waterfallView {
@@ -157,7 +162,8 @@ func (v *waterfallView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.move(len(v.rows))
 	case "enter", "d":
 		if rec, _ := v.Selection(); rec != nil {
-			label := v.rows[v.cursor].label
+			// GenAI labels carry whole prompts — keep the crumb short.
+			label := ansi.Truncate(v.rows[v.cursor].label, 40, "…")
 			return func() tea.Msg { return inspectMsg{title: label, rec: rec} }
 		}
 	case "l":
@@ -227,7 +233,7 @@ func buildWaterfall(records []map[string]any) []wfRow {
 			}
 		}
 		failed, _ := rec["request.is_failed"].(bool)
-		rows = append(rows, wfRow{
+		row := wfRow{
 			rec:    rec,
 			guide:  guide,
 			label:  label,
@@ -236,7 +242,17 @@ func buildWaterfall(records []map[string]any) []wfRow {
 			start:  parseTimeNs(catalog.Str(rec, "start_time")),
 			end:    parseTimeNs(catalog.Str(rec, "end_time")),
 			failed: failed,
-		})
+		}
+		if op := catalog.GenAIOp(rec); op != "" {
+			row.genaiOp = catalog.GenAIOpShort(op)
+			row.tokens = catalog.GenAITokens(rec)
+			// The prompt or tool call is the span's story — the raw span
+			// name ("anthropic.chat") says nothing an op badge doesn't.
+			if detail := catalog.GenAIDetail(rec); detail != "" {
+				row.label = detail
+			}
+		}
+		rows = append(rows, row)
 		kids := children[catalog.Str(rec, "span.id")]
 		for i, child := range kids {
 			walk(child, childPrefix, i == len(kids)-1, false)
@@ -324,8 +340,15 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 	if r.failed {
 		label = "✗ " + label
 	}
+	if r.tokens != "" {
+		label += " ⟨" + r.tokens + "⟩"
+	}
+	kindText := r.kind
+	if r.genaiOp != "" {
+		kindText = genaiGlyph(r.genaiOp) + " " + r.genaiOp
+	}
 	tree := pad(r.guide+label, treeW)
-	kind := pad(r.kind, kindW)
+	kind := pad(kindText, kindW)
 	svc := pad(r.svc, svcW)
 
 	// Proportional bar on the trace's time axis. Clamp both ends — a span
@@ -369,7 +392,22 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 	if r.svc != "" {
 		svc = barStyle.Render("●") + " " + pad(r.svc, max(svcW-2, 0))
 	}
-	return ansi.Truncate(" "+tree+" "+theme.Dim.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
+	kindStyle := theme.Dim
+	if r.genaiOp != "" {
+		kindStyle = theme.GenAI
+	}
+	return ansi.Truncate(" "+tree+" "+kindStyle.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
+}
+
+// genaiGlyph marks a GenAI operation in the waterfall's kind column.
+func genaiGlyph(op string) string {
+	switch op {
+	case "tool":
+		return "⚙"
+	case "agent":
+		return "◈"
+	}
+	return "✦" // chat, embeddings, …
 }
 
 func shortID(id string) string {

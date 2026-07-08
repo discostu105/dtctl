@@ -21,7 +21,7 @@ var syntheticSpec = &Spec{
 	Kind:    KindEntity,
 	Desc:    "Synthetic monitors (browser + HTTP) — enter shows executions",
 	Query: func(s Scope) string {
-		switch syntheticLensAt(s.Lens).Name {
+		switch lensAt(syntheticLenses, s.Lens).Name {
 		case "browser":
 			return `fetch dt.entity.synthetic_test
 | fieldsAdd lifetime, tags
@@ -79,13 +79,6 @@ var syntheticLenses = []Lens{
 	{Name: "http", Desc: "HTTP monitors only"},
 }
 
-func syntheticLensAt(i int) Lens {
-	if i < 0 || i >= len(syntheticLenses) {
-		i = 0
-	}
-	return syntheticLenses[i]
-}
-
 var executionsSpec = &Spec{
 	Name:    "executions",
 	Aliases: []string{"exec", "runs"},
@@ -97,7 +90,7 @@ var executionsSpec = &Spec{
 		if s.Arg != "" {
 			fmt.Fprintf(&b, "\n| filter dt.synthetic.monitor.id == %q", s.Arg)
 		}
-		if l := executionLensAt(s.Lens); l.Filter != "" {
+		if l := lensAt(executionLenses, s.Lens); l.Filter != "" {
 			fmt.Fprintf(&b, "\n| filter %s", l.Filter)
 		}
 		b.WriteString("\n| sort timestamp desc\n| limit 300")
@@ -131,13 +124,6 @@ var executionLenses = []Lens{
 		Filter: `event.type == "browser_monitor_step_execution" or event.type == "http_step_execution"`},
 	{Name: "failed", Desc: "executions that did not succeed",
 		Filter: `isNotNull(result.state) and result.state != "SUCCESS"`},
-}
-
-func executionLensAt(i int) Lens {
-	if i < 0 || i >= len(executionLenses) {
-		i = 0
-	}
-	return executionLenses[i]
 }
 
 func classExecutionState(val string) string {

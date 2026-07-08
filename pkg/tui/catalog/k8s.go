@@ -124,12 +124,18 @@ func classPodPhase(val string) string {
 	return ""
 }
 
-func classNonzeroWarn(val string) string {
-	if val == "" || val == "0" {
-		return "dim"
+// classNonzero builds a Class func that highlights non-zero counts with the
+// given severity (restarts warn, RUM session errors error) and dims zeros.
+func classNonzero(severity string) func(string) string {
+	return func(val string) string {
+		if val == "" || val == "0" {
+			return "dim"
+		}
+		return severity
 	}
-	return "warn"
 }
+
+var classNonzeroWarn = classNonzero("warn")
 
 var workloadsSpec = &Spec{
 	Name:         "workloads",

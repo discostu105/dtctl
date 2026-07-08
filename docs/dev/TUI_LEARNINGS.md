@@ -360,9 +360,111 @@ stays HTTP-free. Rules learned:
   ~12s cap) and merges the first criteria's result; evaluation failures
   degrade to blank cells, never errors.
 - The drill into patterns is view-level, not row-level: 'a' needs no
-  selection and inherits the view's scope **and** its server
-  searches/facets (`pushViewMsg.searches/.facets`) — patterns describe the
-  list you are looking at. ('g' was unavailable: it is go-to-top.)
+  selection and inherits the view's FULL scope (entity, trace, pattern)
+  **and** its server searches/facets (`pushViewMsg.searches/.facets`) —
+  patterns describe the list you are looking at. ('g' was unavailable: it
+  is go-to-top.)
+- **Projection order matters for injected facets.** The analyzer's schema
+  demands the logQuery project `timestamp` and `content` — but a
+  `| fields` stage inside `Spec.Query` sits BEFORE the facet stages
+  `InjectStages` adds at the tail, so every inherited facet would filter a
+  projected-away (null) field and feed the analyzer zero records (found in
+  review). The projection is therefore appended by the source, after
+  composition (`catalog.LogPatternInput`); a trailing
+  `… | filter toString(loglevel) == "ERROR" | limit 300 | fields
+  timestamp, content` validates live (SUCCESSFUL).
+- Interactive facets stay disabled on API views even when they carry a
+  Query: the fetched records (patterns) are not the query's rows (logs),
+  so a record-attribute facet would inject a filter on a field the
+  pipeline never carries. Facets *inherited from the source list* apply
+  fine — they came from that pipeline.
+
+### 1.14 GenAI spans — prompts, tool calls, and the dot namespace
+
+Validated live (box tenant, agent workloads):
+
+- **`gen_ai.operation.name`** discriminates `chat`, `execute_tool`, and
+  `invoke_agent` (semconv also defines `embeddings`/`text_completion`).
+- **Chat spans carry the whole exchange**: `gen_ai.input.messages`,
+  `gen_ai.output.messages`, and `gen_ai.system_instructions` are JSON
+  *strings* of `[{role, parts}]`; part types seen live: `text`,
+  `reasoning`, `tool_call` (`{id, name, arguments}`), and
+  `tool_call_response`. Roles: user / assistant / tool. Parse cost is real
+  (100 KB+ prompts) — per-row derivations must memoize (the genai lens
+  caches under a `__genai.*` record key; column Value funcs run every
+  render frame).
+- **Tool spans**: `gen_ai.tool.name` / `gen_ai.tool.call.arguments` /
+  `gen_ai.tool.call.result`. **Agent spans**: `gen_ai.agent.name`,
+  `gen_ai.conversation.id`.
+- **Token usage**: `gen_ai.usage.input_tokens` / `.output_tokens` plus
+  `gen_ai.usage.cache_read.input_tokens` / `.cache_creation.input_tokens`
+  — cache reads dwarf fresh input on agent workloads (fold them into the
+  "in" figure or it looks absurdly small).
+- **The Smartscape linkage breaks the lowercased-type rule**: GENAI_MODEL
+  entities stamp spans as `dt.smartscape.gen_ai.model` (likewise
+  `.provider`, `.service`, `.agent`) — a dot namespace, NOT
+  `dt.smartscape.genai_model`. `smartscapeField()` special-cases the
+  `GENAI_` prefix and `SpanScopable` includes it. The ids appear on spans
+  even when `smartscapeNodes "GENAI_*"` returns no nodes (observed live).
+- **A second convention exists and dominates some tenants** (demo's
+  LangChain/Azure agents): NO `gen_ai.operation.name` — the discriminator
+  is `llm.request.type` (chat/completion/embeddings) — and the exchange
+  lives in flat numbered attributes: `gen_ai.prompt.N.role/.content`,
+  `gen_ai.prompt.N.tool_calls.M.name/.arguments`,
+  `gen_ai.completion.N.*`, with cache tokens under
+  `gen_ai.usage.cache_read_input_tokens` (underscore, not
+  `.cache_read.input_tokens`). The genai lens filter ORs both
+  discriminators; `GenAIInput/GenAIOutput` parse either shape into the
+  same message model (`FlatGenAIMessages`). These spans still carry the
+  `dt.smartscape.gen_ai.*` ids.
+- **GenAI spans rarely include trace roots** — a GENAI-scoped traces view
+  on the default roots lens is silently empty (found live: 225 matching
+  spans, 0 roots). `DefaultSpanLens` opens GENAI drills/tabs on the genai
+  lens instead.
+
+### 1.15 The session timeline (RUM waterfall)
+
+- One busy session held **16k request events vs 65 user actions / 61 view
+  summaries / 76 errors** — a session timeline must default to the journey
+  skeleton (`view_summary`, `user_action`, `navigation`, `error`) and keep
+  requests one lens away, or the story drowns in XHR noise.
+- **Nesting is time containment, not ids**: `dt.rum.view.id` and
+  `user_action.id` were null on the probe tenant. A `view_summary`'s
+  `start_time` is the view's *start* (its window spans the whole view), so
+  sorting `start_time asc` and nesting each event under the latest
+  view/action window that contains its start emits parents directly
+  before their children (`catalog.BuildSessionTimeline`).
+- **`trace.id` on request events is a plain 32-hex string** (nullable) —
+  it drops straight into the trace waterfall. That one field is the whole
+  frontend→backend bridge.
+
+### 1.16 Log-pattern expressions carry named exports
+
+`LogPatternExtractor` names every variable matcher in its
+`patternExpression` — `'LISTEN ' DQS:f_1`, `'SELECT ' DATA:f_1` — so the
+same expression works as **both** the `matchesPattern(content, P)`
+predicate and a `| parse content, P` stage (validated live: `f_1` comes
+back as a real field, DQS with the quotes already stripped). Detecting
+exports requires stripping single-quoted literals first — a literal
+`'FOO:bar'` is not an export (`catalog.PatternExports`). Pure-literal
+patterns extract nothing and keep the standard log columns. Search
+injection stays legal (it lands before the parse stage) and facet filters
+compose after it, so parsed fields are facetable.
+
+### 1.17 OAuth expiry in a long-running TUI
+
+The executor's `OnUnauthorized` hook only guarded the **poll loop** — the
+initial `query:execute` had no 401 handling, so a TUI idling past the
+access token's lifetime failed its next query with "JWT token expired".
+The fix sits one layer down, in `pkg/client`: a resty retry condition
+that, on 401, re-resolves the token through the OAuth manager (forcing a
+refresh when the local cache still looks valid — clock skew, compact
+keyring storage), swaps it in, and retries once. Unchanged tokens (static
+API tokens, dead credentials) surface the original 401 with no retry, and
+a token refreshed seconds ago that is rejected again stops the loop.
+Every consumer of the shared resty client — DQL execute + poll, the SLO
+evaluation fan-out, Settings, the analyzer — inherits the fix
+(`Client.EnableTokenRefresh`, wired in `NewFromConfig`).
 
 ---
 

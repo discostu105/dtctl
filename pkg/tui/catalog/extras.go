@@ -97,7 +97,10 @@ var genaiSpec = &Spec{
 		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
 	},
 	Entity: nodeEntity(""),
-	Drills: map[string]string{"p": "problems", "v": "events"},
+	// 's' lands on the traces view scoped via dt.smartscape.gen_ai.* (the
+	// spans of this agent/model/provider — the genai lens slices them); 'm'
+	// opens the metric explorer through the same dimensions.
+	Drills: map[string]string{"s": "traces", "m": "metrics", "p": "problems", "v": "events"},
 }
 
 var vulnsSpec = &Spec{
@@ -108,10 +111,7 @@ var vulnsSpec = &Spec{
 	Query: func(s Scope) string {
 		// State reports are periodic snapshots — a short window would hide
 		// open vulnerabilities, so the lookback is floored at 24h.
-		tf := s.Timeframe.DQL()
-		if s.Timeframe.Dur < 24*time.Hour {
-			tf = "now() - 24h"
-		}
+		tf := floorTimeframe(s.Timeframe, 24*time.Hour, "24h")
 		return fmt.Sprintf(`fetch security.events, from:%s
 | filter event.type == "VULNERABILITY_STATE_REPORT_EVENT"
 | sort timestamp asc

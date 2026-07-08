@@ -47,12 +47,26 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 		v.tabs = append(v.tabs, detailTab{name: "metrics", view: newTableView(ds, spec, scope)})
 	}
 	signalTabs := []string{"logs", "events", "problems"}
-	if catalog.SpanScopable(entity.Type) {
+	switch {
+	case entity.Type == "FRONTEND":
+		// A frontend's terrain is RUM: its user sessions and events replace
+		// logs/traces (frontends emit no log records, spans carry no
+		// frontend scope field) — the frontend page connects straight into
+		// the session story.
+		signalTabs = []string{"sessions", "userevents", "events", "problems"}
+	case catalog.SpanScopable(entity.Type):
 		signalTabs = []string{"logs", "traces", "events", "problems"}
 	}
 	for _, name := range signalTabs {
 		if spec := catalog.Lookup(name); spec != nil {
-			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, scope)})
+			tabScope := scope
+			if name == "traces" {
+				// GenAI entities open on the genai lens: their chat/tool
+				// spans nest deep, so the default roots lens is silently
+				// empty (and the genai columns are the point).
+				tabScope.Lens = catalog.DefaultSpanLens(entity.Type)
+			}
+			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, tabScope)})
 		}
 	}
 	return v
@@ -120,7 +134,13 @@ func (v *detailView) Crumb() string { return entityName(v.entity) }
 func (v *detailView) Echo() string  { return v.tabs[v.active].view.Echo() }
 
 func (v *detailView) Hints() []keyHint {
-	hints := []keyHint{{fmt.Sprintf("tab/1-%d", len(v.tabs)), "tabs"}}
+	// While the active tab shows its own lens strip, digits belong to it —
+	// the page tabs stay reachable via tab/shift+tab.
+	label := fmt.Sprintf("tab/1-%d", len(v.tabs))
+	if v.lensedInner() != nil {
+		label = "tab"
+	}
+	hints := []keyHint{{label, "tabs"}}
 	return append(hints, v.tabs[v.active].view.Hints()...)
 }
 
@@ -165,17 +185,58 @@ func (v *detailView) Update(msg tea.Msg) tea.Cmd {
 	return v.tabs[v.active].view.Update(msg)
 }
 
+// lensedInner returns the active tab's table when it carries a lens strip —
+// nested "tabs" that digits and brackets should drive while it is visible.
+func (v *detailView) lensedInner() *tableView {
+	if tv, ok := v.tabs[v.active].view.(*tableView); ok && len(tv.spec.Lenses) > 0 {
+		return tv
+	}
+	return nil
+}
+
+// claimsDigit reports whether the page consumes a digit key (the app's
+// global hotkeys must stand back): the active tab's lens strip when it has
+// one, else the page tabs.
+func (v *detailView) claimsDigit(d byte) bool {
+	if d < '1' {
+		return false
+	}
+	if inner := v.lensedInner(); inner != nil {
+		return d < byte('1'+len(inner.spec.Lenses))
+	}
+	return d < byte('1'+len(v.tabs))
+}
+
 // tabKey handles tab-switching keys; drill keys and everything else fall
-// through to the active tab's view.
+// through to the active tab's view. When the active tab shows its own lens
+// strip (traces, sessions), the digits and brackets drive THAT strip — it is
+// the numbered thing on screen — and tab/shift+tab keep cycling the page
+// tabs (the tab bar drops its digit labels then, see View).
 func (v *detailView) tabKey(key string) (tea.Cmd, bool) {
+	inner := v.lensedInner()
 	switch key {
-	case "tab", "]":
+	case "tab":
 		return v.setActive((v.active + 1) % len(v.tabs)), true
-	case "shift+tab", "[":
+	case "shift+tab":
+		return v.setActive((v.active + len(v.tabs) - 1) % len(v.tabs)), true
+	case "]":
+		if inner != nil {
+			return nil, false // the inner view cycles its lens
+		}
+		return v.setActive((v.active + 1) % len(v.tabs)), true
+	case "[":
+		if inner != nil {
+			return nil, false
+		}
 		return v.setActive((v.active + len(v.tabs) - 1) % len(v.tabs)), true
 	}
-	if len(key) == 1 && key[0] >= '1' && key[0] < byte('1'+len(v.tabs)) {
-		return v.setActive(int(key[0] - '1')), true
+	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+		if inner != nil {
+			return nil, false // digits pick a lens on the visible strip
+		}
+		if key[0] < byte('1'+len(v.tabs)) {
+			return v.setActive(int(key[0] - '1')), true
+		}
 	}
 	return nil, false
 }
@@ -204,9 +265,16 @@ func (v *detailView) View(width, height int) string {
 	identity := " " + theme.OverlayTitle.Render(entityName(v.entity)) +
 		"  " + theme.Badge.Render(v.entity.Type) +
 		theme.Dim.Render("  "+v.entity.ID)
+	// When the active tab renders its own numbered lens strip, the page tab
+	// bar drops its digit labels — two competing number rows would lie about
+	// what the digits do.
+	digits := v.lensedInner() == nil
 	labels := make([]string, len(v.tabs))
 	for i, t := range v.tabs {
-		label := fmt.Sprintf("%d · %s", i+1, t.name)
+		label := t.name
+		if digits {
+			label = fmt.Sprintf("%d · %s", i+1, t.name)
+		}
 		if i == v.active {
 			labels[i] = theme.TabActive.Render(label)
 		} else {

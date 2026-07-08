@@ -57,6 +57,13 @@ type waterfallMsg struct {
 	traceID string
 }
 
+// timelineMsg opens the session timeline (the RUM waterfall) for one
+// session; rec is the sessions-list row for the header (nil = unknown).
+type timelineMsg struct {
+	sessionID string
+	rec       map[string]any
+}
+
 // relationsMsg opens the Smartscape relations panel for an entity.
 type relationsMsg struct {
 	entity catalog.Entity

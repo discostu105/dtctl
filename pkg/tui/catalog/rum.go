@@ -15,15 +15,6 @@ import (
 // "-0" split suffix. Frontend linkage differs by table: dt.smartscape.frontend
 // is a SCALAR on events and an ARRAY on sessions.
 
-// floorTimeframe widens a window to at least min — sparse tables (sessions,
-// bizevents) look empty over the default 2h.
-func floorTimeframe(tf Timeframe, min time.Duration, label string) string {
-	if tf.Dur < min {
-		return "now() - " + label
-	}
-	return tf.DQL()
-}
-
 // rumEventFilter scopes user.events to a frontend (scalar field).
 func rumEventFilter(e Entity) string {
 	if e.Type != "FRONTEND" {
@@ -57,7 +48,7 @@ var sessionsSpec = &Spec{
 				fmt.Fprintf(&b, "\n| filter %s", f)
 			}
 		}
-		if l := sessionLensAt(s.Lens); l.Filter != "" {
+		if l := lensAt(sessionLenses, s.Lens); l.Filter != "" {
 			fmt.Fprintf(&b, "\n| filter %s", l.Filter)
 		}
 		b.WriteString("\n| sort start_time desc\n| limit 300")
@@ -81,11 +72,12 @@ var sessionsSpec = &Spec{
 		{Title: "GEO", Field: "geo.country.iso_code", Width: 3},
 		{Title: "END", Field: "end_reason", Width: 10},
 	},
-	Entity:      sessionFrontendEntity,
-	EnterTarget: "userevents",
-	EnterArg:    func(rec map[string]any) string { return Str(rec, "dt.rum.session.id") },
+	Entity: sessionFrontendEntity,
+	// Enter opens the session timeline — the RUM waterfall (views > actions >
+	// requests/errors on the session's time axis, 's' there jumps into a
+	// request's backend trace); 'e' keeps the frontend's flat events table.
+	EnterTarget: "session-timeline",
 	Drills:      map[string]string{"m": "metrics", "p": "problems", "e": "userevents"},
-	Scopable:    func(e Entity) bool { return e.Type == "FRONTEND" },
 }
 
 var sessionLenses = []Lens{
@@ -94,19 +86,7 @@ var sessionLenses = []Lens{
 	{Name: "bounced", Desc: "single-view sessions", Filter: "characteristics.is_bounce == true"},
 }
 
-func sessionLensAt(i int) Lens {
-	if i < 0 || i >= len(sessionLenses) {
-		i = 0
-	}
-	return sessionLenses[i]
-}
-
-func classNonzeroError(val string) string {
-	if val != "" && val != "0" {
-		return "error"
-	}
-	return "dim"
-}
+var classNonzeroError = classNonzero("error")
 
 // sessionFrontendEntity extracts the session's frontend (array fields — the
 // first element stands for the session's app).
@@ -125,20 +105,27 @@ var userEventsSpec = &Spec{
 	Desc:    "RUM user events by lens: errors, actions, page views, requests",
 	Query: func(s Scope) string {
 		var b strings.Builder
-		fmt.Fprintf(&b, "fetch user.events, from:%s", s.Timeframe.DQL())
 		if s.Arg != "" {
 			// A session timeline (enter on a session row): its events, oldest
-			// first, every classifier included.
+			// first, every classifier included. The window floors at 24h to
+			// match the sessions list — a session picked from that list may
+			// have started before the global window, and a 2h timeline would
+			// silently clip its earliest events (found on a live drive).
+			fmt.Fprintf(&b, "fetch user.events, from:%s", floorTimeframe(s.Timeframe, 24*time.Hour, "24h"))
 			fmt.Fprintf(&b, "\n| filter dt.rum.session.id == %q", s.Arg)
+			if l := lensAt(userEventLenses, s.Lens); l.Filter != "" {
+				fmt.Fprintf(&b, "\n| filter %s", l.Filter)
+			}
 			b.WriteString("\n| sort start_time asc\n| limit 500")
 			return b.String()
 		}
+		fmt.Fprintf(&b, "fetch user.events, from:%s", s.Timeframe.DQL())
 		if s.Entity != nil {
 			if f := rumEventFilter(*s.Entity); f != "" {
 				fmt.Fprintf(&b, "\n| filter %s", f)
 			}
 		}
-		if l := userEventLensAt(s.Lens); l.Filter != "" {
+		if l := lensAt(userEventLenses, s.Lens); l.Filter != "" {
 			fmt.Fprintf(&b, "\n| filter %s", l.Filter)
 		}
 		b.WriteString("\n| sort start_time desc\n| limit 300")
@@ -164,9 +151,11 @@ var userEventsSpec = &Spec{
 		}
 		return &Entity{ID: id, Name: Str(rec, "frontend.name"), Type: "FRONTEND"}
 	},
-	Trace:    func(rec map[string]any) string { return Str(rec, "trace.id") },
-	Drills:   map[string]string{"s": "trace", "p": "problems"},
-	Scopable: func(e Entity) bool { return e.Type == "FRONTEND" },
+	Trace: func(rec map[string]any) string { return Str(rec, "trace.id") },
+	// 's' follows a request event into its backend trace; 'u' opens the
+	// timeline of the session the event belongs to — events and sessions
+	// stay two keystrokes apart in both directions.
+	Drills: map[string]string{"s": "trace", "u": "session", "p": "problems"},
 }
 
 var rumTimeColumn = Column{
@@ -191,13 +180,6 @@ var userEventLenses = []Lens{
 		Filter: `characteristics.classifier == "view_summary"`, Columns: rumViewColumns},
 	{Name: "requests", Desc: "XHR/fetch requests with status and timing",
 		Filter: `characteristics.classifier == "request"`, Columns: rumRequestColumns},
-}
-
-func userEventLensAt(i int) Lens {
-	if i < 0 || i >= len(userEventLenses) {
-		i = 0
-	}
-	return userEventLenses[i]
 }
 
 // userEventDetail labels a mixed-classifier row with its most telling field.

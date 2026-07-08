@@ -1,6 +1,10 @@
 package catalog
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
 
 // Management assets backed by REST APIs rather than DQL: SLOs (platform SLO
 // API) and anomaly detectors (Settings API). Their records are flattened
@@ -73,9 +77,7 @@ func formatPercent(v any) string {
 }
 
 func parsePercent(val string) (float64, error) {
-	var f float64
-	_, err := fmt.Sscanf(val, "%f%%", &f)
-	return f, err
+	return strconv.ParseFloat(strings.TrimSuffix(val, "%"), 64)
 }
 
 var detectorsSpec = &Spec{

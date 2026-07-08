@@ -96,15 +96,212 @@ func TestSessionEnterOpensTimeline(t *testing.T) {
 		"start_time":        "2026-07-07T10:00:00Z",
 	}})
 	press(a, key("enter"))
-	tv, ok := a.top().(*tableView)
-	if !ok || tv.spec.Name != "userevents" {
+	tl, ok := a.top().(*timelineView)
+	if !ok {
 		t.Fatalf("enter on a session → %s", a.top().Crumb())
 	}
-	if tv.scope.Arg != "ABCD-0" {
-		t.Errorf("session arg = %q", tv.scope.Arg)
+	if tl.sessionID != "ABCD-0" {
+		t.Errorf("session id = %q", tl.sessionID)
 	}
-	if !strings.Contains(tv.dql, `dt.rum.session.id == "ABCD-0"`) {
-		t.Errorf("timeline query:\n%s", tv.dql)
+	if !strings.Contains(tl.dql, `dt.rum.session.id == "ABCD-0"`) {
+		t.Errorf("timeline query:\n%s", tl.dql)
+	}
+	// The default lens shows the journey skeleton, not the request firehose.
+	if !strings.Contains(tl.dql, "view_summary") || strings.Contains(tl.dql, `"request"`) {
+		t.Errorf("journey lens must skip requests:\n%s", tl.dql)
+	}
+	// 'e' drops into the session's flat, sortable events table.
+	press(a, key("e"))
+	tv, ok := a.top().(*tableView)
+	if !ok || tv.spec.Name != "userevents" || tv.scope.Arg != "ABCD-0" {
+		t.Fatalf("e on the timeline → %s", a.top().Crumb())
+	}
+}
+
+func TestTimelineTraceJumpAndUserEventsDrill(t *testing.T) {
+	a := testApp(t, "userevents")
+	seedRows(t, a, []map[string]any{{
+		"characteristics.classifier": "request",
+		"dt.rum.session.id":          "SESS-0",
+		"trace.id":                   "3c6d1553ae49e57bda57f9455899d471",
+		"start_time":                 "2026-07-07T10:00:00Z",
+	}})
+	// 'u' on any RUM event opens the timeline of its session.
+	press(a, key("u"))
+	tl, ok := a.top().(*timelineView)
+	if !ok || tl.sessionID != "SESS-0" {
+		t.Fatalf("u on a RUM event → %s", a.top().Crumb())
+	}
+	// Seed the timeline with a request event carrying a trace — 's' jumps
+	// into the backend trace waterfall.
+	tl.Update(dataMsg{owner: tl, seq: tl.seq, records: []map[string]any{{
+		"characteristics.classifier": "request",
+		"start_time":                 "2026-07-07T10:00:01Z",
+		"duration":                   "100000000",
+		"trace.id":                   "3c6d1553ae49e57bda57f9455899d471",
+		"url.path":                   "/v1/workspaces",
+	}}})
+	press(a, key("s"))
+	wf, ok := a.top().(*waterfallView)
+	if !ok || wf.traceID != "3c6d1553ae49e57bda57f9455899d471" {
+		t.Fatalf("s on a request row → %s", a.top().Crumb())
+	}
+}
+
+// TestFrontendDetailConnectsRUM: a frontend's detail page carries its user
+// sessions and events as tabs — the frontend is wired into the RUM story.
+func TestFrontendDetailConnectsRUM(t *testing.T) {
+	a := testApp(t, "frontends")
+	seedRows(t, a, []map[string]any{{"id": "FRONTEND-1", "name": "shop", "type": "FRONTEND"}})
+	press(a, key("enter"))
+	dv, ok := a.top().(*detailView)
+	if !ok {
+		t.Fatalf("enter on a frontend → %s", a.top().Crumb())
+	}
+	names := make([]string, len(dv.tabs))
+	for i, tab := range dv.tabs {
+		names[i] = tab.name
+	}
+	joined := strings.Join(names, " ")
+	for _, want := range []string{"sessions", "userevents", "events", "problems"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("frontend tabs = %v, want %s", names, want)
+		}
+	}
+	// Frontends emit no log records and spans carry no frontend field —
+	// those tabs would be silently empty.
+	if strings.Contains(joined, "logs") || strings.Contains(joined, "traces") {
+		t.Errorf("frontend tabs must not include logs/traces: %v", names)
+	}
+}
+
+// TestNestedLensDigitsOnDetailPage: when a detail tab shows its own lens
+// strip, the digits drive THAT strip (the numbered thing on screen); the
+// page tabs stay reachable via tab. GenAI entities open traces on the genai
+// lens — their spans rarely include roots.
+func TestNestedLensDigitsOnDetailPage(t *testing.T) {
+	a := testApp(t, "genai")
+	seedRows(t, a, []map[string]any{{"id": "GENAI_MODEL-1", "name": "claude", "type": "GENAI_MODEL"}})
+	press(a, key("enter"))
+	dv, ok := a.top().(*detailView)
+	if !ok {
+		t.Fatalf("enter on a genai entity → %s", a.top().Crumb())
+	}
+	traceIdx := -1
+	for i, tab := range dv.tabs {
+		if tab.name == "traces" {
+			traceIdx = i
+		}
+	}
+	if traceIdx < 0 {
+		t.Fatalf("genai detail page has no traces tab (tabs %v)", dv.tabs)
+	}
+	// Digits switch page tabs while the details tab (no lenses) is active.
+	press(a, key(string(rune('1'+traceIdx))))
+	if dv.active != traceIdx {
+		t.Fatalf("digit must switch to the traces tab, active = %d", dv.active)
+	}
+	inner, ok := dv.tabs[traceIdx].view.(*tableView)
+	if !ok || inner.spec.Name != "traces" {
+		t.Fatalf("traces tab view = %T", dv.tabs[traceIdx].view)
+	}
+	if got := inner.spec.LensAt(inner.scope.Lens).Name; got != "genai" {
+		t.Errorf("genai entity's traces tab must open on the genai lens, got %s", got)
+	}
+	if !strings.Contains(inner.dql, "dt.smartscape.gen_ai.model") {
+		t.Errorf("traces tab must scope via the gen_ai dot namespace:\n%s", inner.dql)
+	}
+	// Now the lens strip owns the digits: 1 picks the roots lens, the page
+	// tab must NOT change (and no global hotkey may fire).
+	press(a, key("1"))
+	if _, still := a.top().(*detailView); !still {
+		t.Fatalf("digit on a lensed tab must not leave the page, top = %s", a.top().Crumb())
+	}
+	if dv.active != traceIdx {
+		t.Errorf("digit must not switch page tabs while a lens strip is visible")
+	}
+	if got := inner.spec.LensAt(inner.scope.Lens).Name; got != "roots" {
+		t.Errorf("digit must pick the inner lens, got %s", got)
+	}
+	// tab still cycles the page tabs.
+	press(a, key("tab"))
+	if dv.active == traceIdx {
+		t.Error("tab must still cycle the page tabs")
+	}
+}
+
+// TestGenAITracesDrill: 's' on a GenAI entity lands on the traces view with
+// the genai lens and the dot-namespace scope filter.
+func TestGenAITracesDrill(t *testing.T) {
+	a := testApp(t, "genai")
+	seedRows(t, a, []map[string]any{{"id": "GENAI_AGENT-1", "name": "sre-agent", "type": "GENAI_AGENT"}})
+	press(a, key("s"))
+	tv, ok := a.top().(*tableView)
+	if !ok || tv.spec.Name != "traces" {
+		t.Fatalf("s on a genai entity → %s", a.top().Crumb())
+	}
+	if got := tv.spec.LensAt(tv.scope.Lens).Name; got != "genai" {
+		t.Errorf("genai traces drill must open the genai lens, got %s", got)
+	}
+	if !strings.Contains(tv.dql, `dt.smartscape.gen_ai.agent == toSmartscapeId("GENAI_AGENT-1")`) {
+		t.Errorf("traces must scope via dt.smartscape.gen_ai.agent:\n%s", tv.dql)
+	}
+}
+
+// TestDictionaryModelDrill: the dictionary is one lensed view — enter on a
+// model opens its fields (fields lens, Arg = model); enter on a field opens
+// the full definition.
+func TestDictionaryModelDrill(t *testing.T) {
+	a := testApp(t, "dictionary")
+	tv, ok := a.top().(*tableView)
+	if !ok || tv.spec.LensAt(tv.scope.Lens).Name != "models" {
+		t.Fatalf("dictionary must open on the models lens, top = %s", a.top().Crumb())
+	}
+	seedRows(t, a, []map[string]any{{"name": "span", "fields": []any{"span.id"}, "title": "Span"}})
+	press(a, key("enter"))
+	fieldsView, ok := a.top().(*tableView)
+	if !ok || fieldsView.spec.Name != "dictionary" {
+		t.Fatalf("enter on a model → %s", a.top().Crumb())
+	}
+	if fieldsView.scope.Arg != "span" || fieldsView.scope.Lens != catalog.DictFieldsLens {
+		t.Errorf("model drill scope = %+v", fieldsView.scope)
+	}
+	if !strings.Contains(fieldsView.dql, "| expand fields") {
+		t.Errorf("model drill must expand the model's declared fields:\n%s", fieldsView.dql)
+	}
+	seedRows(t, a, []map[string]any{{"field_name": "span.id", "type": "string", "stability": "stable"}})
+	press(a, key("enter"))
+	if _, ok := a.top().(*inspectorView); !ok {
+		t.Fatalf("enter on a field → %s", a.top().Crumb())
+	}
+}
+
+// TestTimelineSessionRecord: 'd' on the timeline opens the session's own
+// record — the user-event → session navigation.
+func TestTimelineSessionRecord(t *testing.T) {
+	a := testApp(t, "userevents")
+	seedRows(t, a, []map[string]any{{
+		"characteristics.classifier": "request",
+		"dt.rum.session.id":          "SESS-1",
+		"start_time":                 "2026-07-07T10:00:00Z",
+	}})
+	press(a, key("u"))
+	tl, ok := a.top().(*timelineView)
+	if !ok {
+		t.Fatalf("u on a RUM event → %s", a.top().Crumb())
+	}
+	// Entered from an event drill there is no sessions-list row — the
+	// record arrives via the lazy fetch.
+	tl.Update(dataMsg{owner: sessOwner{tl}, records: []map[string]any{{
+		"dt.rum.session.id": "SESS-1", "browser.name": "Chrome", "end_reason": "timeout",
+	}}})
+	press(a, key("d"))
+	iv, ok := a.top().(*inspectorView)
+	if !ok {
+		t.Fatalf("d on the timeline → %s", a.top().Crumb())
+	}
+	if catalog.Str(iv.rec, "browser.name") != "Chrome" {
+		t.Errorf("session record = %v", iv.rec)
 	}
 }
 

@@ -2,7 +2,6 @@ package catalog
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -18,10 +17,8 @@ var bizeventsSpec = &Spec{
 	Kind:    KindSignal,
 	Desc:    "Business events — facet by type and provider",
 	Query: func(s Scope) string {
-		var b strings.Builder
-		fmt.Fprintf(&b, "fetch bizevents, from:%s", floorTimeframe(s.Timeframe, 24*time.Hour, "24h"))
-		b.WriteString("\n| sort timestamp desc\n| limit 300")
-		return b.String()
+		return fmt.Sprintf("fetch bizevents, from:%s\n| sort timestamp desc\n| limit 300",
+			floorTimeframe(s.Timeframe, 24*time.Hour, "24h"))
 	},
 	Columns: []Column{
 		{Title: "TIME", Width: 12, Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) },

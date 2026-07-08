@@ -26,6 +26,32 @@ type dataSource struct {
 	sources map[string]Source
 	// runFn replaces the executor in tests; nil in production.
 	runFn func(dql string) ([]map[string]any, error)
+
+	// dict caches the semantic dictionary's field definitions for the whole
+	// session (fetched once, on the first inspector). Reads and writes both
+	// happen on bubbletea's single update goroutine — no locking needed.
+	dict          map[string]catalog.FieldDoc
+	dictRequested bool
+}
+
+// dictOwner tags the one-shot dictionary fetch; the app routes its result
+// into the shared cache instead of a view.
+type dictOwner struct{}
+
+// ensureDict fires the session's dictionary fetch on first use.
+func (d *dataSource) ensureDict() tea.Cmd {
+	if d.dictRequested {
+		return nil
+	}
+	d.dictRequested = true
+	return d.queryCapped(dictOwner{}, 0, catalog.FieldDocsQuery(), catalog.FieldDocLimit)
+}
+
+// fieldDoc explains a record key from the semantic dictionary ("" zero value
+// when unknown or not yet loaded).
+func (d *dataSource) fieldDoc(key string) (catalog.FieldDoc, bool) {
+	doc, ok := d.dict[key]
+	return doc, ok
 }
 
 // dataMsg is the result of an async query. owner identifies the view that
@@ -61,6 +87,12 @@ func (d *dataSource) call(owner any, seq int, name string, scope catalog.Scope, 
 // which would corrupt the alternate screen); stale results are dropped via
 // seq instead.
 func (d *dataSource) query(owner any, seq int, dql string) tea.Cmd {
+	return d.queryCapped(owner, seq, dql, 1000)
+}
+
+// queryCapped is query with an explicit result-record cap (the dictionary
+// fetch needs more than the default view page).
+func (d *dataSource) queryCapped(owner any, seq int, dql string, maxRecords int64) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
 		if d.runFn != nil {
@@ -68,7 +100,7 @@ func (d *dataSource) query(owner any, seq int, dql string) tea.Cmd {
 			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
 		}
 		resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, exec.DQLExecuteOptions{
-			MaxResultRecords:    1000,
+			MaxResultRecords:    maxRecords,
 			FetchTimeoutSeconds: 60,
 			// ShowProgress stays false: the progress bar draws on stderr and
 			// would tear the TUI's alternate screen.

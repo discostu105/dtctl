@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-resty/resty/v2"
@@ -27,8 +28,13 @@ import (
 type Client struct {
 	http    *resty.Client
 	baseURL string
-	token   string
 	logger  *logrus.Logger
+
+	// tokenMu guards token and lastRefresh: the 401 retry hook and SetToken
+	// can run from concurrent request goroutines (e.g. parallel TUI queries).
+	tokenMu     sync.Mutex
+	token       string
+	lastRefresh time.Time
 }
 
 // NewFromConfig creates a new client from config with OAuth support
@@ -44,7 +50,18 @@ func NewFromConfig(cfg *config.Config) (*Client, error) {
 		return nil, err
 	}
 
-	return New(ctx.Environment, token)
+	c, err := New(ctx.Environment, token)
+	if err != nil {
+		return nil, err
+	}
+	// OAuth access tokens are short-lived JWTs; a long-running invocation
+	// (tui, watch, workflow polling) outlives them. Re-resolve on 401 so the
+	// session survives token expiry instead of surfacing "JWT token expired".
+	environment, tokenRef := ctx.Environment, ctx.TokenRef
+	c.EnableTokenRefresh(func(rejected string) (string, error) {
+		return RefreshedTokenForContext(cfg, environment, tokenRef, rejected)
+	})
+	return c, nil
 }
 
 // NewForTesting creates a client with retries disabled, suitable for unit tests
@@ -129,8 +146,59 @@ func (c *Client) HTTP() *resty.Client {
 // SetToken updates the bearer token used for all subsequent HTTP requests.
 // This is used to inject a freshly refreshed OAuth token without recreating the client.
 func (c *Client) SetToken(token string) {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
 	c.token = token
 	c.http.SetAuthToken(token)
+}
+
+// Token returns the bearer token currently used for requests.
+func (c *Client) Token() string {
+	c.tokenMu.Lock()
+	defer c.tokenMu.Unlock()
+	return c.token
+}
+
+// refreshWindow rate-limits 401-triggered token refreshes: if a token that
+// was refreshed moments ago is rejected again, the credentials are dead and
+// retrying would only hammer the SSO endpoint.
+const refreshWindow = 10 * time.Second
+
+// EnableTokenRefresh registers a retry-on-401 hook: resolve is called with
+// the rejected token and must return a fresh one (typically by refreshing an
+// expired OAuth access token). The request is retried only when a genuinely
+// new token was obtained; static tokens and failed refreshes surface the
+// original 401. Safe for concurrent requests — one refresh serves them all.
+func (c *Client) EnableTokenRefresh(resolve func(rejected string) (string, error)) {
+	c.http.AddRetryCondition(func(r *resty.Response, err error) bool {
+		if err != nil || r == nil || r.StatusCode() != http.StatusUnauthorized {
+			return false
+		}
+		c.tokenMu.Lock()
+		defer c.tokenMu.Unlock()
+		if time.Since(c.lastRefresh) < refreshWindow {
+			// A concurrent request already swapped the token in — retry with
+			// it; a fresh token rejected again means dead credentials — give up.
+			return c.token != bearerOf(r.Request)
+		}
+		rejected := c.token
+		token, resolveErr := resolve(rejected)
+		if resolveErr != nil || token == "" || token == rejected {
+			return false
+		}
+		c.lastRefresh = time.Now()
+		c.token = token
+		c.http.SetAuthToken(token)
+		return true
+	})
+}
+
+// bearerOf extracts the bearer token a request was sent with.
+func bearerOf(req *resty.Request) string {
+	if req == nil || req.RawRequest == nil {
+		return ""
+	}
+	return strings.TrimPrefix(req.RawRequest.Header.Get("Authorization"), "Bearer ")
 }
 
 // sensitiveHeaders lists headers that should always be redacted in debug output
@@ -308,7 +376,8 @@ func (c *Client) CurrentUserID() (string, error) {
 	// Platform tokens are not JWTs, so the JWT fallback below would parse
 	// garbage and fail with a confusing decode error (see issue #210). Surface
 	// an actionable message instead.
-	if IsPlatformToken(c.token) {
+	token := c.Token()
+	if IsPlatformToken(token) {
 		if err == nil {
 			err = fmt.Errorf("metadata API returned no user ID")
 		}
@@ -317,7 +386,7 @@ func (c *Client) CurrentUserID() (string, error) {
 	}
 
 	// Fallback to JWT decoding
-	return ExtractUserIDFromToken(c.token)
+	return ExtractUserIDFromToken(token)
 }
 
 // platformTokenPrefix identifies Dynatrace platform tokens — opaque bearer

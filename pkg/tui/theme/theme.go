@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"strconv"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -48,7 +49,6 @@ var (
 
 var (
 	// Chrome
-	Logo      = lipgloss.NewStyle().Bold(true).Background(Accent).Foreground(Ink).Padding(0, 1)
 	HeaderKey = lipgloss.NewStyle().Foreground(Faint)
 	HeaderVal = lipgloss.NewStyle().Bold(true).Foreground(Text)
 	HeaderSep = lipgloss.NewStyle().Foreground(Border)
@@ -98,6 +98,7 @@ var (
 	Spinner    = lipgloss.NewStyle().Foreground(Peach)
 	Pin        = lipgloss.NewStyle().Bold(true).Foreground(Peach)
 	Badge      = lipgloss.NewStyle().Foreground(Mauve).Background(ChipBg).Padding(0, 1)
+	GenAI      = lipgloss.NewStyle().Foreground(Mauve)
 	ArrowOut   = lipgloss.NewStyle().Foreground(Green)
 	ArrowIn    = lipgloss.NewStyle().Foreground(Peach)
 
@@ -115,6 +116,59 @@ var (
 	JSONStr   = lipgloss.NewStyle().Foreground(Green)
 	JSONPunct = lipgloss.NewStyle().Foreground(Faint)
 )
+
+// brandStops are the Dynatrace logo gradient colors, lime → green → teal →
+// blue → purple — the header wordmark runs through them.
+var brandStops = []string{"#B4DC00", "#73BE28", "#00B9B4", "#1496FF", "#6F2DA8"}
+
+// brandAt interpolates the brand gradient at f ∈ [0,1] as an adaptive color;
+// non-truecolor tiers keep the flat accent (downsampled blends pick mud).
+func brandAt(f float64) lipgloss.CompleteAdaptiveColor {
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	pos := f * float64(len(brandStops)-1)
+	i := int(pos)
+	if i >= len(brandStops)-1 {
+		i = len(brandStops) - 2
+	}
+	hex := blendHex(brandStops[i], brandStops[i+1], pos-float64(i))
+	return lipgloss.CompleteAdaptiveColor{
+		Dark:  lipgloss.CompleteColor{TrueColor: hex, ANSI256: "111", ANSI: "12"},
+		Light: lipgloss.CompleteColor{TrueColor: hex, ANSI256: "33", ANSI: "4"},
+	}
+}
+
+// BrandGradient renders s with a per-rune foreground sweep through the
+// Dynatrace logo gradient.
+func BrandGradient(s string, bold bool) string {
+	runes := []rune(s)
+	if len(runes) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for i, r := range runes {
+		f := 0.0
+		if len(runes) > 1 {
+			f = float64(i) / float64(len(runes)-1)
+		}
+		style := lipgloss.NewStyle().Foreground(brandAt(f))
+		if bold {
+			style = style.Bold(true)
+		}
+		b.WriteString(style.Render(string(r)))
+	}
+	return b.String()
+}
+
+// Wordmark is the header brand: the Dynatrace slant mark and the product
+// name, both swept through the logo gradient.
+func Wordmark() string {
+	return BrandGradient("▛▞▟", true) + " " + BrandGradient("dtctl", true)
+}
 
 // Series is the color cycle for multi-series charts and per-key coloring
 // (waterfall bars by service, metric charts by series index).

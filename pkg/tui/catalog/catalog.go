@@ -134,6 +134,10 @@ type Spec struct {
 	// sampler browses arbitrary tables); Columns is the empty-result
 	// fallback.
 	Dynamic bool
+	// ScopeColumns derives a scope-specific column set (the logs pattern
+	// drill shows the pattern's extracted fields); nil result falls back to
+	// the lens/static columns.
+	ScopeColumns func(s Scope) []Column
 	// Lenses are the view's quick subset selections (nil = none). The
 	// spec's Query is responsible for composing the scoped lens' Filter.
 	Lenses []Lens
@@ -174,13 +178,30 @@ func (s *Spec) UsesScope() bool { return s.Kind == KindSignal || s.EntityScoped 
 // lens when i is out of range — stale history entries must survive catalog
 // reorderings. Zero value for views without lenses.
 func (s *Spec) LensAt(i int) Lens {
-	if len(s.Lenses) == 0 {
+	return lensAt(s.Lenses, i)
+}
+
+// lensAt is the clamp behind LensAt, callable from Query closures — a spec's
+// Query cannot reference its own Spec var (initialization cycle), but it can
+// reference the lens slice.
+func lensAt(lenses []Lens, i int) Lens {
+	if len(lenses) == 0 {
 		return Lens{}
 	}
-	if i < 0 || i >= len(s.Lenses) {
+	if i < 0 || i >= len(lenses) {
 		i = 0
 	}
-	return s.Lenses[i]
+	return lenses[i]
+}
+
+// floorTimeframe widens a query window to at least min — sparse tables
+// (sessions, bizevents, vulnerability state reports) look deceptively empty
+// over the default 2h.
+func floorTimeframe(tf Timeframe, min time.Duration, label string) string {
+	if tf.Dur < min {
+		return "now() - " + label
+	}
+	return tf.DQL()
 }
 
 // CanScope reports whether pinning entity e meaningfully narrows this view.
@@ -231,7 +252,7 @@ var specs = []*Spec{
 	sessionsSpec, userEventsSpec, bizeventsSpec,
 	patternsSpec, slosSpec, detectorsSpec,
 	syntheticSpec, executionsSpec,
-	modelsSpec, fieldsSpec,
+	dictionarySpec,
 	tablesSpec, bucketsSpec, filesSpec, recordsSpec,
 }
 
@@ -308,10 +329,16 @@ func isSubsequence(needle, hay string) bool {
 // smartscapeField returns the dt.smartscape.* field signal records carry for
 // an entity type. Validated live for HOST/SERVICE/PROCESS/K8S_*/CONTAINER/
 // FRONTEND/DB_*_POSTGRES/AWS_*: the field name is always the lowercased type.
-// A nonexistent field in an or-chain compares as null (false) — harmless.
+// GenAI is the exception: GENAI_MODEL nodes stamp spans as
+// dt.smartscape.gen_ai.model (dot namespace, not genai_model — validated
+// live on chat/invoke_agent spans). A nonexistent field in an or-chain
+// compares as null (false) — harmless.
 func smartscapeField(entityType string) string {
 	if entityType == "" {
 		return ""
+	}
+	if kind, ok := strings.CutPrefix(entityType, "GENAI_"); ok {
+		return "dt.smartscape.gen_ai." + strings.ToLower(kind)
 	}
 	return "dt.smartscape." + strings.ToLower(entityType)
 }
@@ -390,11 +417,12 @@ func SpanFilter(e Entity) string {
 
 // SpanScopable reports whether spans can be filtered to this entity type —
 // the 's' drill is only offered where the scope field actually exists on
-// span records (validated live; HOST notably carries none).
+// span records (validated live; HOST notably carries none). GenAI spans
+// carry dt.smartscape.gen_ai.* ids for agent/model/provider/service.
 func SpanScopable(entityType string) bool {
 	switch entityType {
 	case "SERVICE", "CONTAINER":
 		return true
 	}
-	return strings.HasPrefix(entityType, "K8S_")
+	return strings.HasPrefix(entityType, "K8S_") || strings.HasPrefix(entityType, "GENAI_")
 }

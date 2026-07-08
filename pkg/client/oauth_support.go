@@ -51,6 +51,34 @@ func GetTokenForContext(cfg *config.Config, environmentURL, tokenRef string) (st
 	return cfg.GetToken(tokenRef)
 }
 
+// RefreshedTokenForContext re-resolves the context's bearer token after a
+// request was rejected with HTTP 401. GetTokenForContext already refreshes
+// tokens that are near expiry locally; when the cached token still looks
+// valid but the server rejected it anyway (clock skew, stale ExpiresAt in
+// compact keyring storage), the OAuth refresh is forced so the retry never
+// re-sends the token the server just bounced. Static API tokens come back
+// unchanged — the caller sees rejected == fresh and gives up.
+func RefreshedTokenForContext(cfg *config.Config, environmentURL, tokenRef, rejected string) (string, error) {
+	token, err := GetTokenForContext(cfg, environmentURL, tokenRef)
+	if err != nil || token != rejected {
+		return token, err
+	}
+	if !config.IsOAuthStorageAvailable() || environmentURL == "" {
+		return token, nil
+	}
+	tokenManager, err := auth.NewTokenManager(auth.OAuthConfigFromEnvironmentURL(environmentURL))
+	if err != nil {
+		return "", err
+	}
+	refreshed, err := tokenManager.RefreshToken(tokenRef)
+	if err != nil {
+		// Not an OAuth entry (plain API token) or the session is revoked —
+		// nothing fresher exists; the caller surfaces the original 401.
+		return token, nil
+	}
+	return refreshed.AccessToken, nil
+}
+
 // NewFromConfigWithOAuth creates a new client from config with OAuth support.
 //
 // Deprecated: Use NewFromConfig instead, which now supports OAuth tokens automatically.

@@ -188,7 +188,7 @@ sense. Learn it once, use it on anything:
 | `x` | related entities | host, callers, callees | workload, node, ns | affected entities | source entity |
 | `u` | SLOs | SLOs targeting it | — | related SLOs | — |
 | `d` | describe (YAML pager) | ✓ | ✓ | ✓ | ✓ |
-| `o` | open in browser (deep link) | ✓ | ✓ | ✓ | ✓ |
+| `o` | open in browser — "open with" picker when several targets apply | ✓ | ✓ | ✓ | ✓ |
 
 All of `l s m p v u` open the target view **pre-scoped to the selection and the
 active timeframe** — this is how the "never run an unscoped query" rule becomes
@@ -784,10 +784,13 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   `u`/`e` drills into both. Home gained a "frontend errors (24h)" panel.
 - **Business events**: `:bizevents` (24h floor, type/provider facets, a
   best-effort content column — producers name payloads inconsistently).
-- **Semantic dictionary**: `:models` → enter → `:fields (model)` via the
-  expand + leftOuter-join pipeline (fields.model_id is dead — see
-  TUI_LEARNINGS); `:fields` standalone with stability lenses; enter opens
-  the full definition (examples, enums) in the inspector.
+- **Semantic dictionary**: one `:dictionary` view (aliases `models`,
+  `fields`, `dict`) whose lens strip carries models · fields · stable ·
+  experimental · deprecated — the same tabs every other lensed view has.
+  Enter on a model opens its fields (fields lens, `Arg` = model, via the
+  expand + leftOuter-join pipeline — fields.model_id is dead, see
+  TUI_LEARNINGS); enter on a field opens the full definition (examples,
+  enums) in the inspector.
 - **Data explorer**: `:tables` (19 tables / 344 views, fieldsSnapshot-only
   objects refuse entry), `:buckets` (records/size/retention; enter samples
   the bucket via `dt.system.bucket ==`), `:files` (Grail lookup data;
@@ -806,6 +809,68 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   `:slos` (definitions + parallel per-SLO live evaluation for
   status/SLI/error-budget columns) and `:detectors` (Settings API), with
   facets/server-search honestly disabled where no DQL exists.
+
+### Phase 3.6 — Connection & polish ✅ implemented
+
+- **Session timeline (the RUM waterfall)**: enter on a session renders its
+  events proportionally on the session's time axis, nested by time
+  containment (views → user actions → requests/errors), colored by kind,
+  with journey · requests · errors · all lenses (a busy session is 16k
+  requests vs ~65 actions — the journey skeleton is the default). `s` on a
+  request row jumps into its backend trace waterfall; `u` on any RUM event
+  row jumps back to its session's timeline; `e` keeps the flat sortable
+  events table. Sessions ↔ events ↔ traces are two keystrokes apart in
+  every direction.
+- **GenAI is about prompts and tool calls**: the traces genai lens leads
+  with the operation (chat · tool · agent), the last user prompt or the
+  tool call (name + arguments), model, and token usage (cache-read tokens
+  folded into "in"). The waterfall badges GenAI spans (✦ chat, ⚙ tool,
+  ◈ agent) and swaps their labels for the prompt/tool text plus a
+  `⟨in→out⟩` token annotation. The span inspector renders the whole
+  exchange as a first-class **conversation** section — system prompt,
+  every turn role-colored, reasoning marked, tool calls/results — instead
+  of opaque JSON. GenAI entities scope traces/logs/metrics through the
+  `dt.smartscape.gen_ai.*` fields (dot namespace — see TUI_LEARNINGS).
+- **Pattern drill parses**: enter on a log pattern now also applies the
+  extractor's DPL expression via `| parse content, "<pattern>"` — the
+  pattern's named tokens (`f_1`, `f_2`, …) become real table columns
+  (and facet/sort targets), so a pattern's variables are analyzable, not
+  just visible.
+- **Open-with picker**: `o` gathers every browser target the selection
+  supports — the record's native app, URLs the record itself carries
+  (`vulnerability.url` fixed the dead vulnerability page), the trace, the
+  entity's app, the Smartscape topology, the query as a notebook — opening
+  directly when there is one and raising a numbered picker when several
+  apply (`y` yanks the URL instead).
+- **Semantic dictionary everywhere**: one session-cached fetch of
+  `dt.semantic_dictionary.fields` powers an `ⓘ` footer in every record
+  inspector describing the field under the cursor (description · unit ·
+  stability) — the data model explains itself in place.
+- **Auth that survives the session**: OAuth access tokens expire under a
+  long-running TUI; `pkg/client` now retries a 401 once with a re-resolved
+  (force-refreshed) token, covering the initial query execute (the SDK's
+  `OnUnauthorized` only guarded the poll loop) and every REST-backed
+  source.
+- **Brand header**: the Dynatrace-gradient wordmark (`▛▞▟ dtctl`, lime →
+  teal → blue → purple) plus the environment host next to the context
+  name.
+- **Frontends wired into RUM**: a frontend's detail page carries sessions
+  and userevents tabs (replacing logs/traces, which frontends never
+  match); enter on a session row inside the tab drills straight into the
+  session timeline, and `d` there opens the session's own record — the
+  event → session navigation.
+- **Nested lens strips own the digits**: when a detail tab shows its own
+  lens strip (traces, sessions), the digits and `[`/`]` drive that strip —
+  it is the numbered thing on screen — while tab/shift+tab keep cycling
+  the page tabs (whose bar drops its digit labels to avoid two competing
+  number rows).
+- **Both GenAI instrumentation eras**: the genai lens, badges, detail
+  column, tokens, and the conversation section understand the semconv
+  convention (`gen_ai.operation.name`, JSON message blobs) *and* the
+  traceloop/LangChain one (`llm.request.type`, flat numbered
+  `gen_ai.prompt.N.*` / `gen_ai.completion.N.*` attributes) — and a GenAI
+  entity's traces tab/drill opens on the genai lens, since agent spans
+  rarely include trace roots.
 
 ### Phase 4 — Assets & mutations
 

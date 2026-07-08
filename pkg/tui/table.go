@@ -119,10 +119,16 @@ func newTableView(ds *dataSource, spec *catalog.Spec, scope catalog.Scope) *tabl
 
 func (v *tableView) Init() tea.Cmd { return v.Refresh() }
 
-// columns returns the active column set: the lens' override when the active
-// lens curates its own (db → statement, genai → tokens), the derived set for
-// dynamic specs, else the spec's.
+// columns returns the active column set: the scope-derived override (the
+// logs pattern drill shows extracted fields), the lens' override when the
+// active lens curates its own (db → statement, genai → tokens), the derived
+// set for dynamic specs, else the spec's.
 func (v *tableView) columns() []catalog.Column {
+	if v.spec.ScopeColumns != nil {
+		if cols := v.spec.ScopeColumns(v.scope); cols != nil {
+			return cols
+		}
+	}
 	if len(v.spec.Lenses) > 0 {
 		if cols := v.spec.LensAt(v.scope.Lens).Columns; cols != nil {
 			return cols
@@ -270,6 +276,14 @@ func (v *tableView) Hints() []keyHint {
 	switch {
 	case v.spec.EnterTarget == "pattern-logs":
 		hints = append(hints, keyHint{"enter", "matching logs"})
+	case v.spec.EnterTarget == "session-timeline":
+		hints = append(hints, keyHint{"enter", "session timeline"})
+	case v.spec.EnterTarget == "model-fields":
+		if v.spec.LensAt(v.scope.Lens).Name == "models" {
+			hints = append(hints, keyHint{"enter", "model fields"})
+		} else {
+			hints = append(hints, keyHint{"enter", "definition"})
+		}
 	case v.spec.EnterTarget != "":
 		hints = append(hints, keyHint{"enter", v.spec.EnterTarget})
 		if v.spec.EnterArg == nil && v.spec.Kind == catalog.KindEntity {
@@ -332,7 +346,12 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 			v.all = msg.records
 			v.elapsed = catalog.FormatDuration(msg.elapsed)
 			if v.spec.Dynamic {
-				v.dynCols = deriveColumns(msg.records)
+				// nil on empty keeps the spec's declared fallback columns —
+				// deriveColumns would pin a "(no rows)" placeholder.
+				v.dynCols = nil
+				if len(msg.records) > 0 {
+					v.dynCols = deriveColumns(msg.records)
+				}
 			}
 			if v.onData != nil {
 				v.onData(msg.records)
@@ -533,12 +552,31 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			scope := catalog.Scope{Timeframe: v.scope.Timeframe, Entity: v.scope.Entity, Pattern: pattern}
 			return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 		}
+		if v.spec.EnterTarget == "session-timeline" {
+			return v.openSession(rec)
+		}
+		if v.spec.EnterTarget == "model-fields" {
+			// The dictionary's models lens drills into the model's fields —
+			// the same view, fields lens, scoped by Arg; on the field lenses
+			// enter opens the full definition (examples, enums).
+			if v.spec.LensAt(v.scope.Lens).Name == "models" {
+				name := catalog.Str(rec, "name")
+				if name == "" {
+					return statusErr("row carries no model name")
+				}
+				spec, scope := v.spec, v.scope
+				scope.Arg = name
+				scope.Lens = catalog.DictFieldsLens
+				return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
+			}
+			return v.inspect(rec)
+		}
 		if v.spec.EnterTarget != "" {
 			if target := catalog.Lookup(v.spec.EnterTarget); target != nil {
 				scope := catalog.Scope{Timeframe: v.scope.Timeframe}
 				if v.spec.EnterArg != nil {
 					if scope.Arg = v.spec.EnterArg(rec); scope.Arg == "" {
-						return statusErr("row is not enterable (no fetchable target)")
+						return statusErr("row is not enterable — this data object cannot be fetched")
 					}
 				} else if e := v.entityOf(rec); e != nil {
 					scope.Entity = e
@@ -588,8 +626,12 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 // attribute candidates from the fetched records' keys.
 func (v *tableView) openFacets() tea.Cmd {
 	if v.spec.API != "" {
-		// Facet exploration needs fieldsSummary over a DQL pipeline; API
-		// sources have none. '/' still filters client-side.
+		// Facet exploration pairs the fetched records' attributes with
+		// fieldsSummary over the view's query — on an API view the records
+		// are NOT the query's rows (patterns are analyzer output over a
+		// logs pipeline), so interactive faceting would filter on fields
+		// the pipeline never carries. Facets inherited from the source
+		// list (the 'a' drill) still apply; '/' filters client-side.
 		return statusErr("facets need a DQL-backed view — / filters " + v.spec.Name + " client-side")
 	}
 	v.facetFields = v.facetCandidates()
@@ -989,11 +1031,20 @@ func (v *tableView) renderFacetList(b *strings.Builder, n, sel int, row func(i i
 	}
 }
 
-// inspect opens the raw record inspector for a row.
+// inspect opens the raw record inspector for a row, titled by the most
+// specific identity the record offers (a "detectors › detectors" crumb says
+// nothing).
 func (v *tableView) inspect(rec map[string]any) tea.Cmd {
 	title := v.spec.Name
 	if e := v.entityOf(rec); e != nil && e.Name != "" {
 		title = e.Name
+	} else {
+		for _, key := range []string{"title", "name", "display_id"} {
+			if t := catalog.Str(rec, key); t != "" {
+				title = t
+				break
+			}
+		}
 	}
 	return func() tea.Msg { return inspectMsg{title: title, rec: rec} }
 }
@@ -1004,10 +1055,11 @@ func (v *tableView) inspect(rec map[string]any) tea.Cmd {
 func (v *tableView) drill(target string) tea.Cmd {
 	if target == "patterns" {
 		// Pattern extraction describes the list being looked at, not one
-		// row: it inherits the view's scope AND its server-side narrowing,
-		// and needs no selection.
+		// row: it inherits the view's FULL scope (entity, trace, pattern)
+		// and its server-side narrowing, and needs no selection.
 		spec := catalog.Lookup("patterns")
-		scope := catalog.Scope{Entity: v.scope.Entity, Timeframe: v.scope.Timeframe}
+		scope := catalog.Scope{Entity: v.scope.Entity, Timeframe: v.scope.Timeframe,
+			TraceID: v.scope.TraceID, Pattern: v.scope.Pattern}
 		return func() tea.Msg {
 			return pushViewMsg{spec: spec, scope: scope, searches: v.searches, facets: v.facets}
 		}
@@ -1018,6 +1070,9 @@ func (v *tableView) drill(target string) tea.Cmd {
 	}
 	if target == "trace" {
 		return v.openTrace(rec)
+	}
+	if target == "session" {
+		return v.openSession(rec)
 	}
 	if target == "trace-logs" {
 		if v.spec.Trace == nil {
@@ -1053,6 +1108,11 @@ func (v *tableView) drill(target string) tea.Cmd {
 		return statusErr(fmt.Sprintf("unknown view %q", target))
 	}
 	scope := catalog.Scope{Entity: entity, Timeframe: v.scope.Timeframe}
+	if target == "traces" {
+		// GenAI entities land on the genai lens — their spans rarely
+		// include roots, and prompts/tool calls are what the drill is for.
+		scope.Lens = catalog.DefaultSpanLens(entity.Type)
+	}
 	return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 }
 
@@ -1066,6 +1126,23 @@ func (v *tableView) openTrace(rec map[string]any) tea.Cmd {
 		return statusErr("record carries no trace id")
 	}
 	return func() tea.Msg { return waterfallMsg{traceID: id} }
+}
+
+// openSession jumps to the session timeline of the selected row (a sessions
+// row via enter, or any RUM event row via the 'u' drill).
+func (v *tableView) openSession(rec map[string]any) tea.Cmd {
+	id := catalog.Str(rec, "dt.rum.session.id")
+	if id == "" {
+		return statusErr("record carries no session id")
+	}
+	// Only a sessions-list row IS the session's record; a RUM event row (the
+	// 'u' drill — it carries a classifier) merely names the session, and the
+	// timeline fetches the record itself.
+	session := rec
+	if catalog.Str(rec, "characteristics.classifier") != "" {
+		session = nil
+	}
+	return func() tea.Msg { return timelineMsg{sessionID: id, rec: session} }
 }
 
 func (v *tableView) entityOf(rec map[string]any) *catalog.Entity {
@@ -1368,8 +1445,12 @@ func (v *tableView) View(width, height int) string {
 		} else {
 			empty := "∅ no data in timeframe (last " + v.scope.Timeframe.Label + ")"
 			if len(v.spec.Lenses) > 0 {
+				what := v.spec.LensAt(v.scope.Lens).Name
+				if what == "all" {
+					what = "data" // "no all in timeframe" reads broken
+				}
 				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — tab switches lens",
-					v.spec.LensAt(v.scope.Lens).Name, v.scope.Timeframe.Label)
+					what, v.scope.Timeframe.Label)
 			}
 			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))
 		}

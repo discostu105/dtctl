@@ -30,18 +30,12 @@ var spanLenses = []Lens{
 		Filter: `span.kind == "client"`},
 	{Name: "db", Desc: "database statements",
 		Filter: "isNotNull(db.system.name)", Columns: dbSpanColumns},
+	// Both GenAI instrumentation eras: semconv spans carry
+	// gen_ai.operation.name, traceloop/LangChain spans llm.request.type
+	// (validated live — the demo tenant's agents emit only the latter).
 	{Name: "genai", Desc: "LLM / GenAI operations",
-		Filter: "isNotNull(gen_ai.operation.name)", Columns: genaiSpanColumns},
+		Filter: "isNotNull(gen_ai.operation.name) or isNotNull(llm.request.type)", Columns: genaiSpanColumns},
 	{Name: "all", Desc: "every span, unfiltered"},
-}
-
-// spanLensAt clamps a lens index to the registry (referenced from the Query
-// closure, where Spec.LensAt would be an initialization cycle).
-func spanLensAt(i int) Lens {
-	if i < 0 || i >= len(spanLenses) {
-		i = 0
-	}
-	return spanLenses[i]
 }
 
 var tracesSpec = &Spec{
@@ -55,7 +49,7 @@ var tracesSpec = &Spec{
 		if s.Entity != nil {
 			fmt.Fprintf(&b, "\n| filter %s", SpanFilter(*s.Entity))
 		}
-		if l := spanLensAt(s.Lens); l.Filter != "" {
+		if l := lensAt(spanLenses, s.Lens); l.Filter != "" {
 			fmt.Fprintf(&b, "\n| filter %s", l.Filter)
 		}
 		b.WriteString("\n| sort start_time desc\n| limit 200")
@@ -106,20 +100,35 @@ var dbSpanColumns = []Column{
 	spanDurationColumn,
 }
 
-// genaiSpanColumns surface model and token usage (genai lens).
+// genaiSpanColumns are about prompts and tool calls (genai lens): the
+// operation, the telling text (tool name + arguments, or the last user
+// prompt of a chat), the model, and token usage.
 var genaiSpanColumns = []Column{
 	spanStartColumn,
-	{Title: "OPERATION", Value: spanLabel},
-	{Title: "MODEL", Width: 24, Value: func(rec map[string]any) string {
-		if m := Str(rec, "gen_ai.request.model"); m != "" {
-			return m
+	{Title: "OP", Width: 6, Value: func(rec map[string]any) string { return GenAIOpShort(GenAIOp(rec)) },
+		Class: classGenAIOp},
+	{Title: "PROMPT / TOOL CALL", Value: func(rec map[string]any) string {
+		if d := GenAIDetail(rec); d != "" {
+			return d
 		}
-		return Str(rec, "gen_ai.response.model")
+		return spanLabel(rec)
 	}},
-	{Title: "TOK IN", Width: 7, Right: true, Field: "gen_ai.usage.input_tokens"},
-	{Title: "TOK OUT", Width: 7, Right: true, Field: "gen_ai.usage.output_tokens"},
-	{Title: "SERVICE", Field: "service.name", Width: 20},
+	{Title: "MODEL", Width: 22, Value: GenAIModel},
+	{Title: "TOKENS", Width: 11, Right: true, Value: GenAITokens,
+		Sort: func(rec map[string]any) any { return rec["gen_ai.usage.input_tokens"] }},
+	{Title: "STATUS", Width: 6, Value: spanStatus, Class: classSpanStatus},
 	spanDurationColumn,
+}
+
+// classGenAIOp colors the operation badge: chats stand out from tool calls.
+func classGenAIOp(val string) string {
+	switch val {
+	case "chat", "text":
+		return "ok"
+	case "agent":
+		return "warn"
+	}
+	return ""
 }
 
 // spanLabel prefers the detected endpoint over the raw span name.
@@ -147,6 +156,22 @@ func classSpanStatus(val string) string {
 		return "dim"
 	}
 	return ""
+}
+
+// DefaultSpanLens picks the lens a traces view scoped to an entity should
+// open on. GenAI entities land on the genai lens: their chat/tool spans
+// nest deep inside agent traces, so the default roots lens
+// (isNull(span.parent_id)) is silently empty for them — and the genai
+// columns (prompts, tool calls, tokens) are what the drill is for.
+func DefaultSpanLens(entityType string) int {
+	if strings.HasPrefix(entityType, "GENAI_") {
+		for i, l := range spanLenses {
+			if l.Name == "genai" {
+				return i
+			}
+		}
+	}
+	return 0
 }
 
 // WaterfallQuery fetches every span of one trace, in start order, with the

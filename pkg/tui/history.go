@@ -245,6 +245,8 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 		return pageRef{Kind: "relations", Crumb: v.Crumb(), Entity: &e}, true
 	case *waterfallView:
 		return pageRef{Kind: "waterfall", Crumb: v.Crumb(), TraceID: v.traceID}, true
+	case *timelineView:
+		return pageRef{Kind: "timeline", Crumb: v.Crumb(), Arg: v.sessionID, Lens: v.lens}, true
 	case *inspectorView:
 		return pageRef{Kind: "inspector", Crumb: v.Crumb(), Title: v.title, Rec: v.rec}, true
 	}
@@ -303,6 +305,12 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 		return newRelationsView(a.ds, *ref.Entity, tf), nil
 	case "waterfall":
 		return newWaterfallView(a.ds, ref.TraceID, tf), nil
+	case "timeline":
+		v := newTimelineView(a.ds, ref.Arg, nil, tf)
+		if ref.Lens > 0 && ref.Lens < len(catalog.SessionTimelineLenses) {
+			v.lens = ref.Lens
+		}
+		return v, nil
 	case "inspector":
 		return newInspectorView(a.ds, ref.Title, ref.Rec), nil
 	}

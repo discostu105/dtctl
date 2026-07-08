@@ -137,8 +137,13 @@ func (v *inspectorView) Init() tea.Cmd {
 	// Entity mode always fetches the full Smartscape node: the list row
 	// renders instantly, but summarized rows (pods, workloads) carry only
 	// their table fields — the fetch upgrades them in place. Entity ids in
-	// the record resolve to display names in a second batched query.
-	return tea.Batch(v.Refresh(), v.resolveNames())
+	// the record resolve to display names in a second batched query, and the
+	// session's one-shot dictionary fetch powers the field-doc footer.
+	cmds := []tea.Cmd{v.Refresh(), v.resolveNames()}
+	if v.ds != nil {
+		cmds = append(cmds, v.ds.ensureDict())
+	}
+	return tea.Batch(cmds...)
 }
 
 func (v *inspectorView) Refresh() tea.Cmd {
@@ -490,7 +495,10 @@ func (v *inspectorView) clearSearch() {
 func (v *inspectorView) searchActive() bool { return v.searching || v.search != "" }
 
 func (v *inspectorView) resize(width, height int) {
-	bodyH := height
+	// One line stays reserved for the field-doc footer (the semantic
+	// dictionary's description of the field under the cursor) — reserving it
+	// unconditionally keeps the viewport height stable as the cursor moves.
+	bodyH := height - 1
 	if v.searchActive() {
 		bodyH--
 	}
@@ -557,7 +565,29 @@ func (v *inspectorView) View(width, height int) string {
 	if v.searchActive() {
 		out = " " + v.searchInput.View() + "\n" + out
 	}
-	return out
+	return out + "\n" + v.docFooter()
+}
+
+// docFooter explains the field under the cursor from the semantic dictionary
+// — the data model teaching itself ("" while unknown; the line stays
+// reserved so the layout never jumps).
+func (v *inspectorView) docFooter() string {
+	row := v.selectedRow()
+	if row == nil || v.ds == nil {
+		return ""
+	}
+	doc, ok := v.ds.fieldDoc(row.key)
+	if !ok || doc.Description == "" {
+		return ""
+	}
+	text := doc.Description
+	if doc.Unit != "" {
+		text += " · unit: " + doc.Unit
+	}
+	if doc.Stability != "" && doc.Stability != "stable" {
+		text += " · " + doc.Stability
+	}
+	return ansi.Truncate(" "+theme.Label.Render("ⓘ ")+theme.Dim.Render(text), v.vp.Width, "…")
 }
 
 // rebuild renders the record into content lines and selectable rows: the
@@ -584,6 +614,13 @@ func (v *inspectorView) rebuild() {
 	needle := strings.ToLower(strings.TrimSpace(v.search))
 	rendered := map[string]bool{}
 
+	// A GenAI span's exchange renders as a first-class conversation section;
+	// the raw message fields (JSON blobs or flat numbered attributes) are
+	// consumed by it.
+	if v.addConversation(needle) {
+		markConversationConsumed(v.rec, rendered)
+	}
+
 	var prio []string
 	for _, key := range priorityFields {
 		val, ok := v.rec[key]
@@ -607,6 +644,11 @@ func (v *inspectorView) rebuild() {
 	groups := map[string][]string{}
 	for key, val := range v.rec {
 		if rendered[key] || !fieldMatches(needle, key, val) {
+			continue
+		}
+		// Synthetic internals (enrichment series, memoized derivations) are
+		// not record data.
+		if strings.HasPrefix(key, "__") {
 			continue
 		}
 		group := ""

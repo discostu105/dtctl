@@ -97,6 +97,11 @@ type app struct {
 	histSel    int
 	histList   []historyEntry // snapshot shown by the open picker
 
+	// "open with" picker ('o' with several browser targets).
+	openActive bool
+	openSel    int
+	openList   []linkOption
+
 	hist *historyStore
 
 	status    string
@@ -201,6 +206,14 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return a.handleKey(msg)
 
 	case dataMsg:
+		// The one-shot semantic-dictionary fetch fills the shared cache — no
+		// view owns it; every inspector reads it at render time.
+		if _, ok := msg.owner.(dictOwner); ok {
+			if msg.err == nil {
+				a.ds.dict = catalog.ParseFieldDocs(msg.records)
+			}
+			return nil
+		}
 		// Deliver to every view on either stack (deduped — the stacks share
 		// views), so a parent still loading below a drill-down completes and
 		// detail pages can forward results to their tabs. Views drop results
@@ -247,6 +260,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 
 	case waterfallMsg:
 		return a.navigate(newWaterfallView(a.ds, msg.traceID, a.tf), false)
+
+	case timelineMsg:
+		return a.navigate(newTimelineView(a.ds, msg.sessionID, msg.rec, a.tf), false)
 
 	case relationsMsg:
 		return a.navigate(newRelationsView(a.ds, msg.entity, a.tf), false)
@@ -337,6 +353,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if a.histActive {
 		return a.updateHistPicker(msg)
 	}
+	if a.openActive {
+		return a.updateOpenPicker(msg)
+	}
 	if a.helpActive {
 		a.helpActive = false
 		return nil
@@ -352,10 +371,15 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
 			claimedByTab := false
 			if dv, isDetail := top.(*detailView); isDetail {
-				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(dv.tabs))
+				// The page tabs — or the active tab's own lens strip, which
+				// takes the digits over while it is visible.
+				claimedByTab = dv.claimsDigit(key[0])
 			}
 			if tv, isTable := top.(*tableView); isTable {
 				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(tv.spec.Lenses))
+			}
+			if _, isTimeline := top.(*timelineView); isTimeline {
+				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(catalog.SessionTimelineLenses))
 			}
 			if !claimedByTab {
 				if name, ok := hotkeys[key]; ok {
@@ -480,6 +504,12 @@ func (a *app) applyFacetBelow(field, value string) tea.Cmd {
 		if tv == nil {
 			continue
 		}
+		if tv.spec.API != "" {
+			// API-backed lists can't take a record-attribute facet: either
+			// no DQL exists (slos), or the records aren't the query's rows
+			// (patterns) and the filter would null out on the pipeline.
+			return statusErr(fmt.Sprintf("%s is API-backed — facets don't apply", tv.spec.Name))
+		}
 		if !tv.hasField(field) {
 			return statusErr(fmt.Sprintf("%s rows carry no %s field", tv.spec.Name, field))
 		}
@@ -539,28 +569,94 @@ func (a *app) yankSelection() tea.Cmd {
 	return statusErr("nothing to copy here")
 }
 
-// openSelection deep-links the selection into the Dynatrace UI: problems and
-// traces open their native apps, entities their type's app, and plain query
-// views open as a notebook query.
+// openSelection deep-links the selection into the Dynatrace UI. One target
+// opens directly; several open the "open with" picker (record app, carried
+// URLs, trace, entity app, topology, query as notebook).
 func (a *app) openSelection() tea.Cmd {
 	rec, entity := a.selection()
 	traceID := ""
 	if tp, ok := a.top().(traceProvider); ok {
 		traceID = tp.TraceID()
 	}
-	link := linkFor(a.opts.Environment, rec, entity, traceID)
-	if link == "" {
-		if p, ok := a.top().(dqlProvider); ok {
-			link = queryLink(a.opts.Environment, p.DQL())
-		}
+	dql := ""
+	if p, ok := a.top().(dqlProvider); ok {
+		dql = p.DQL()
 	}
-	if link == "" {
+	opts := linkOptionsFor(a.opts.Environment, rec, entity, traceID, dql)
+	if len(opts) == 0 {
 		return statusErr("nothing to open here")
 	}
-	if err := openBrowser(link); err != nil {
+	if len(opts) == 1 {
+		return a.openLink(opts[0])
+	}
+	a.openList = opts
+	a.openSel = 0
+	a.openActive = true
+	return nil
+}
+
+// openLink launches the browser on one picker target.
+func (a *app) openLink(o linkOption) tea.Cmd {
+	if err := openBrowser(o.URL); err != nil {
 		return statusErr("browser: " + err.Error())
 	}
-	return status("opened in browser")
+	return status("opened " + o.Label)
+}
+
+// updateOpenPicker drives the "open with" overlay.
+func (a *app) updateOpenPicker(msg tea.KeyMsg) tea.Cmd {
+	switch msg.String() {
+	case "esc", "o":
+		a.openActive = false
+		return nil
+	case "up", "k":
+		if a.openSel > 0 {
+			a.openSel--
+		}
+		return nil
+	case "down", "j", "tab":
+		if a.openSel < len(a.openList)-1 {
+			a.openSel++
+		}
+		return nil
+	case "y":
+		if a.openSel < len(a.openList) {
+			yank(a.openList[a.openSel].URL)
+			a.openActive = false
+			return status("copied url — " + a.openList[a.openSel].Label)
+		}
+		return nil
+	case "enter":
+		a.openActive = false
+		if a.openSel < len(a.openList) {
+			return a.openLink(a.openList[a.openSel])
+		}
+		return nil
+	}
+	if len(msg.String()) == 1 {
+		if idx := int(msg.String()[0] - '1'); idx >= 0 && idx < len(a.openList) {
+			a.openActive = false
+			return a.openLink(a.openList[idx])
+		}
+	}
+	return nil
+}
+
+// renderOpenPicker renders the "open with" overlay.
+func (a *app) renderOpenPicker() string {
+	var b strings.Builder
+	b.WriteString(theme.OverlayTitle.Render("open with") + "\n\n")
+	for i, o := range a.openList {
+		label := fmt.Sprintf("%d · %s", i+1, o.Label)
+		if i == a.openSel {
+			b.WriteString(theme.Selected.Render(pad(" "+label, 44)))
+		} else {
+			b.WriteString(" " + theme.HeaderVal.Render(pad(label, 43)))
+		}
+		b.WriteString("\n")
+	}
+	b.WriteString("\n" + theme.Dim.Render("enter/1-9 open · y yank url · esc cancel"))
+	return b.String()
 }
 
 // quit records the final stack — "where I left off" for the next session —
@@ -725,9 +821,13 @@ func (a *app) View() string {
 
 func (a *app) renderHeader() string {
 	sep := theme.HeaderSep.Render("  ·  ")
+	ctx := theme.HeaderKey.Render("ctx:") + theme.HeaderVal.Render(a.opts.ContextName)
+	if host := envHost(a.opts.Environment); host != "" {
+		ctx += theme.HeaderKey.Render(" @ " + host)
+	}
 	left := []string{
-		" " + theme.Logo.Render("dtctl"),
-		theme.HeaderKey.Render("ctx:") + theme.HeaderVal.Render(a.opts.ContextName),
+		" " + theme.Wordmark(),
+		ctx,
 		theme.Safety(a.opts.SafetyLevel).Render("● " + a.opts.SafetyLevel),
 	}
 	if a.pin != nil {
@@ -813,6 +913,9 @@ func (a *app) renderBody() string {
 	if a.histActive {
 		return overlay(a.width, bodyH, a.renderHistory())
 	}
+	if a.openActive {
+		return overlay(a.width, bodyH, a.renderOpenPicker())
+	}
 	if a.cmdActive {
 		return lipgloss.Place(a.width, bodyH, lipgloss.Center, lipgloss.Position(0.2),
 			theme.OverlayBox.Render(a.renderCmdPalette()))
@@ -828,6 +931,8 @@ func (a *app) renderFooter() string {
 		hints = []keyHint{{"enter", "open"}, {"tab", "next match"}, {"esc", "cancel"}}
 	case a.histActive:
 		hints = []keyHint{{"enter", "restore"}, {"j/k", "move"}, {"esc", "close"}}
+	case a.openActive:
+		hints = []keyHint{{"enter", "open"}, {"y", "yank url"}, {"esc", "cancel"}}
 	case a.top().InputActive():
 		// A view's text input (filter, search, query editor) is focused — the
 		// global keys would just type characters, so show only the view's own
@@ -866,7 +971,7 @@ func (a *app) renderHelp() string {
 	}{
 		{"Navigation", []keyHint{
 			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
-			{"enter", "detail / drill into children / follow entity link / expand value / waterfall"},
+			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
 			{"tab / 1-N", "switch tab (detail pages) or lens (traces: roots · errors · server · client · db · genai · all)"},
@@ -883,8 +988,9 @@ func (a *app) renderHelp() string {
 			{"m", "metrics — canned charts, or the metric explorer for other types"},
 			{"p", "problems"},
 			{"v", "events"},
-			{"a", "log patterns — Davis clustering of the current logs (enter: matching records)"},
-			{"u / e", "user sessions / user events of a frontend"},
+			{"a", "log patterns — Davis clustering of the current logs (enter: records with the pattern's fields parsed out)"},
+			{"u", "sessions of a frontend / session timeline of a RUM event"},
+			{"e", "user events of a frontend / of a session"},
 			{"x", "relations — walk the Smartscape topology"},
 			{"d", "describe / details"},
 		}},
@@ -892,7 +998,7 @@ func (a *app) renderHelp() string {
 			{".", "pin selection as global scope (ctrl+x unpins)"},
 			{"t", "timeframe picker"},
 			{"ctrl+q", "reveal query — this view's DQL in the editor"},
-			{"o", "open selection in the Dynatrace UI"},
+			{"o", "open in the Dynatrace UI — a picker appears when several targets apply"},
 			{"y / c", "yank id / copy CLI command"},
 		}},
 		{"Global", []keyHint{
@@ -934,6 +1040,13 @@ func (a *app) renderTfPicker() string {
 func overlay(width, height int, content string) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center,
 		theme.OverlayBox.Render(content))
+}
+
+// envHost extracts the environment's hostname for the header — the
+// recognizable "…apps.dynatrace.com" identity next to the context name.
+func envHost(env string) string {
+	host := strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(env, "https://"), "http://"), "/")
+	return host
 }
 
 func max(a, b int) int {

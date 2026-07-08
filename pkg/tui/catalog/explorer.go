@@ -25,7 +25,7 @@ var tablesSpec = &Spec{
 	Query: func(s Scope) string {
 		var b strings.Builder
 		b.WriteString("fetch dt.system.data_objects")
-		if l := tableLensAt(s.Lens); l.Filter != "" {
+		if l := lensAt(tableLenses, s.Lens); l.Filter != "" {
 			fmt.Fprintf(&b, "\n| filter %s", l.Filter)
 		}
 		b.WriteString("\n| sort name asc\n| limit 500")
@@ -66,13 +66,6 @@ var tableLenses = []Lens{
 	{Name: "views", Desc: "views only", Filter: `type == "view"`},
 }
 
-func tableLensAt(i int) Lens {
-	if i < 0 || i >= len(tableLenses) {
-		i = 0
-	}
-	return tableLenses[i]
-}
-
 var bucketsSpec = &Spec{
 	Name:    "buckets",
 	Aliases: []string{"bucket", "bkt"},
@@ -87,7 +80,7 @@ var bucketsSpec = &Spec{
 		{Title: "NAME", Width: 34, Field: "name"},
 		{Title: "TABLE", Width: 18, Field: "dt.system.table"},
 		{Title: "CLASS", Width: 6, Field: "dt.bucket.class"},
-		{Title: "RECORDS", Width: 12, Right: true, Value: func(rec map[string]any) string {
+		{Title: "RECORDS", Width: 15, Right: true, Value: func(rec map[string]any) string {
 			return FormatCount(rec["records"])
 		}, Sort: func(rec map[string]any) any { return rec["records"] }},
 		{Title: "SIZE", Width: 9, Right: true, Value: func(rec map[string]any) string {
@@ -104,7 +97,9 @@ var bucketsSpec = &Spec{
 	EnterTarget: "records",
 	EnterArg: func(rec map[string]any) string {
 		table, bucket := Str(rec, "dt.system.table"), Str(rec, "name")
-		if table == "" || bucket == "" {
+		if table == "" || bucket == "" || table == "metrics" {
+			// The metrics data object is fieldsSnapshot-only — fetch would
+			// hard-fail (same refusal the tables view gives).
 			return ""
 		}
 		return table + "@" + bucket
@@ -201,6 +196,11 @@ func FormatCount(v any) string {
 	n := int64(f)
 	s := fmt.Sprintf("%d", n)
 	if n < 1000 {
+		// Also keeps the sign out of the grouping loop below (counts are
+		// never negative, but a bad value must not render "-,123").
+		return s
+	}
+	if n < 0 {
 		return s
 	}
 	var parts []string

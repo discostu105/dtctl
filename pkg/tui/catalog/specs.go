@@ -185,24 +185,39 @@ var logsSpec = &Spec{
 		if s.Pattern != "" {
 			// The DPL predicate keeps only records matching the extracted
 			// pattern (validated live; an invalid pattern is a hard error,
-			// not a silent empty).
+			// not a silent empty). The parse stage then extracts the
+			// pattern's named tokens (f_1, f_2, …) as real fields — the
+			// extractor names every variable matcher (validated live) — so
+			// the drill shows the pattern's variables as columns.
 			fmt.Fprintf(&b, "\n| filter matchesPattern(content, %q)", s.Pattern)
+			if len(PatternExports(s.Pattern)) > 0 {
+				fmt.Fprintf(&b, "\n| parse content, %q", s.Pattern)
+			}
 		}
 		b.WriteString("\n| sort timestamp desc\n| limit 300")
 		return b.String()
 	},
 	Columns: []Column{
-		{Title: "TIME", Width: 12, Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) },
-			Sort: func(rec map[string]any) any { return Str(rec, "timestamp") }},
-		{Title: "LEVEL", Width: 5, Value: logLevel, Class: classLogLevel},
+		logTimeColumn,
+		logLevelColumn,
 		{Title: "SOURCE", Width: 24, Value: logSource},
 		{Title: "CONTENT", Field: "content"},
 	},
-	Entity: signalSourceEntity,
-	Trace:  func(rec map[string]any) string { return Str(rec, "trace_id") },
+	// A pattern drill swaps in columns for the pattern's extracted fields.
+	ScopeColumns: func(s Scope) []Column { return PatternColumns(s.Pattern) },
+	Entity:       signalSourceEntity,
+	Trace:        func(rec map[string]any) string { return Str(rec, "trace_id") },
 	// 'a' analyzes the current logs into Davis patterns ('g' is go-to-top).
 	Drills: map[string]string{"p": "problems", "s": "trace", "a": "patterns"},
 }
+
+var logTimeColumn = Column{
+	Title: "TIME", Width: 12,
+	Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) },
+	Sort:  func(rec map[string]any) any { return Str(rec, "timestamp") },
+}
+
+var logLevelColumn = Column{Title: "LEVEL", Width: 5, Value: logLevel, Class: classLogLevel}
 
 // logLevel prefers loglevel over the coarser status field.
 func logLevel(rec map[string]any) string {
@@ -266,7 +281,9 @@ var eventsSpec = &Spec{
 		{Title: "NAME", Field: "event.name"},
 	},
 	Entity: signalSourceEntity,
-	Drills: map[string]string{"p": "problems"},
+	// Events carry their source entity — logs and metrics of the thing that
+	// emitted the event are one keystroke away, mirroring the logs view.
+	Drills: map[string]string{"l": "logs", "m": "metrics", "p": "problems"},
 }
 
 // --- canned metrics (the 'm' drill) ------------------------------------------

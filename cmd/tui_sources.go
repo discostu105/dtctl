@@ -46,6 +46,11 @@ func sloSource(h *slo.Handler) tui.Source {
 		if err != nil {
 			return nil, err
 		}
+		// One shared budget bounds the whole evaluation fan-out — on a
+		// large tenant the list must not hide behind minutes of stragglers;
+		// SLOs past the budget just show blank status cells.
+		ctx, cancel := context.WithTimeout(ctx, 2*sloEvalTimeout)
+		defer cancel()
 		records := make([]map[string]any, len(list.SLOs))
 		var wg sync.WaitGroup
 		sem := make(chan struct{}, sloEvalConcurrency)
@@ -91,18 +96,28 @@ func mergeSLOEvaluation(ctx context.Context, h *slo.Handler, rec map[string]any,
 	if err != nil {
 		return
 	}
+	// Poll state stays in a local: responses may rotate the token, and
+	// mutating the response to carry it forward would smuggle loop state
+	// into server data.
+	token := resp.EvaluationToken
 	deadline := time.Now().Add(sloEvalTimeout)
 	for len(resp.EvaluationResults) == 0 {
-		if resp.EvaluationToken == "" || time.Now().After(deadline) || ctx.Err() != nil {
+		// The poll is a server-side long-poll — clamp it to the remaining
+		// budget or a poll issued just before the deadline overshoots it.
+		remaining := time.Until(deadline)
+		if token == "" || remaining <= 0 || ctx.Err() != nil {
 			return
 		}
-		next, err := h.PollEvaluation(resp.EvaluationToken, 5000)
+		pollMs := int(remaining / time.Millisecond)
+		if pollMs > 5000 {
+			pollMs = 5000
+		}
+		next, err := h.PollEvaluation(token, pollMs)
 		if err != nil {
 			return
 		}
-		// Poll responses may rotate the token; keep the freshest non-empty one.
-		if next.EvaluationToken == "" {
-			next.EvaluationToken = resp.EvaluationToken
+		if next.EvaluationToken != "" {
+			token = next.EvaluationToken
 		}
 		resp = next
 	}
@@ -156,7 +171,10 @@ func logPatternSource(h *analyzer.Handler) tui.Source {
 			return nil, fmt.Errorf("log-pattern extraction needs a logs query")
 		}
 		input := map[string]any{
-			"logQuery":         strings.ReplaceAll(dql, "\n", " "),
+			// LogPatternInput appends the timestamp/content projection the
+			// analyzer schema requires — after the composed pipeline, so
+			// injected facet stages still see the full record.
+			"logQuery":         catalog.LogPatternInput(dql),
 			"numberOfExamples": catalog.LogPatternExamples,
 			"generalParameters": map[string]any{
 				// The logQuery carries its own from:, but the analyzer's
@@ -192,10 +210,10 @@ func logPatternSource(h *analyzer.Handler) tui.Source {
 }
 
 func patternMatches(rec map[string]any) float64 {
-	if f, ok := rec["numberOfMatches"].(float64); ok {
-		return f
-	}
-	return 0
+	// FloatValue coerces both JSON numbers and Grail's stringified longs —
+	// a string-serialized count must not silently sort as 0.
+	f, _ := catalog.FloatValue(rec["numberOfMatches"])
+	return f
 }
 
 func anySlice(in []string) []any {

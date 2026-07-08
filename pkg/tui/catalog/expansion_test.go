@@ -47,6 +47,12 @@ func TestUserEventsSessionTimeline(t *testing.T) {
 	if !strings.Contains(dql, "sort start_time asc") {
 		t.Errorf("a session timeline reads oldest-first:\n%s", dql)
 	}
+	// The timeline window floors at 24h like the sessions list — a session
+	// picked there may predate the global 2h window, and a clipped timeline
+	// silently loses its earliest events (found on a live drive).
+	if !strings.Contains(dql, "from:now() - 24h") {
+		t.Errorf("session timeline must floor the window at 24h:\n%s", dql)
+	}
 }
 
 func TestUserEventsFrontendScopeAndLens(t *testing.T) {
@@ -72,8 +78,14 @@ func TestBizeventsFloorsTimeframe(t *testing.T) {
 	}
 }
 
-func TestFieldsQueryJoinsModel(t *testing.T) {
-	dql := fieldsSpec.Query(Scope{Timeframe: DefaultTimeframe, Arg: "span"})
+func TestDictionaryLenses(t *testing.T) {
+	// One view, lensed: models first, field definitions behind the other
+	// lenses — the same tab strip as traces/sessions.
+	models := dictionarySpec.Query(Scope{Timeframe: DefaultTimeframe})
+	if !strings.Contains(models, "dt.semantic_dictionary.models") || strings.Contains(models, "| expand") {
+		t.Errorf("default lens must list models:\n%s", models)
+	}
+	dql := dictionarySpec.Query(Scope{Timeframe: DefaultTimeframe, Arg: "span", Lens: DictFieldsLens})
 	for _, want := range []string{
 		`| filter name == "span"`,
 		"| expand fields",
@@ -83,9 +95,21 @@ func TestFieldsQueryJoinsModel(t *testing.T) {
 			t.Errorf("fields(model) query must contain %q:\n%s", want, dql)
 		}
 	}
-	flat := fieldsSpec.Query(Scope{Timeframe: DefaultTimeframe, Lens: 3})
+	flat := dictionarySpec.Query(Scope{Timeframe: DefaultTimeframe, Lens: 4})
 	if !strings.Contains(flat, `stability == "deprecated"`) {
 		t.Errorf("stability lens must filter:\n%s", flat)
+	}
+	// A stale Arg on the models lens narrows to that model — the crumb must
+	// never claim a scope the query dropped.
+	one := dictionarySpec.Query(Scope{Timeframe: DefaultTimeframe, Arg: "span"})
+	if !strings.Contains(one, `| filter name == "span"`) {
+		t.Errorf("models lens must apply a lingering Arg:\n%s", one)
+	}
+	// The old view names keep resolving (aliases; stale history entries).
+	for _, name := range []string{"models", "fields", "dict", "semdict"} {
+		if Lookup(name) != dictionarySpec {
+			t.Errorf("Lookup(%q) must resolve to the dictionary", name)
+		}
 	}
 }
 
@@ -169,17 +193,38 @@ func TestExecutionsScopedByMonitor(t *testing.T) {
 
 func TestPatternsQueryShape(t *testing.T) {
 	pod := Entity{ID: "K8S_POD-1", Name: "checkout-1", Type: "K8S_POD"}
-	dql := patternsSpec.Query(Scope{Timeframe: DefaultTimeframe, Entity: &pod})
-	// The analyzer's logQuery must project exactly what the schema demands.
-	if !strings.Contains(dql, "| fields timestamp, content") {
-		t.Errorf("patterns logQuery must project timestamp and content:\n%s", dql)
-	}
+	dql := patternsSpec.Query(Scope{Timeframe: DefaultTimeframe, Entity: &pod,
+		TraceID: "abc123", Pattern: `'x' DQS:f_1`})
 	if !strings.Contains(dql, `k8s.pod.name == "checkout-1"`) {
 		t.Errorf("patterns must compose the entity scope:\n%s", dql)
+	}
+	// The full list scope carries over — trace- and pattern-narrowed logs
+	// views must analyze their own subset, not the whole tenant.
+	if !strings.Contains(dql, `trace_id == "abc123"`) || !strings.Contains(dql, "matchesPattern(content,") {
+		t.Errorf("patterns must compose trace and pattern scope:\n%s", dql)
+	}
+	// The projection the analyzer schema demands is appended by the source
+	// AFTER facet injection — a projection inside Query would null every
+	// faceted field (found in review). LogPatternInput adds it last.
+	if strings.Contains(dql, "| fields timestamp, content") {
+		t.Errorf("patterns Query must not project (facets inject before the tail):\n%s", dql)
+	}
+	input := LogPatternInput(catalog_injectFacet(dql))
+	if !strings.HasSuffix(input, "| fields timestamp, content") {
+		t.Errorf("LogPatternInput must append the schema projection last:\n%s", input)
+	}
+	if strings.Contains(input, "\n") {
+		t.Errorf("LogPatternInput must flatten to one line:\n%s", input)
 	}
 	if patternsSpec.API != "log-patterns" {
 		t.Errorf("patterns view must run through the log-patterns source, got %q", patternsSpec.API)
 	}
+}
+
+// catalog_injectFacet simulates the table view's facet injection so the test
+// proves faceted fields survive until the source's appended projection.
+func catalog_injectFacet(dql string) string {
+	return InjectStages(dql, []string{`| filter toString(loglevel) == "ERROR"`})
 }
 
 func TestLogsPatternScope(t *testing.T) {
@@ -206,7 +251,8 @@ func TestAPIViewsHaveNoQueryButEcho(t *testing.T) {
 func TestExpansionAliasesResolve(t *testing.T) {
 	for alias, want := range map[string]string{
 		"se": "sessions", "ue": "userevents", "biz": "bizevents",
-		"dict": "models", "fld": "fields", "tbl": "tables",
+		"dict": "dictionary", "models": "dictionary", "fields": "dictionary",
+		"tbl": "tables",
 		"bkt": "buckets", "lookups": "files", "syn": "synthetic",
 		"slo": "slos", "ad": "detectors", "pat": "patterns", "runs": "executions",
 	} {
