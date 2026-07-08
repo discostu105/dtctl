@@ -108,6 +108,7 @@ func seedRows(t *testing.T, a *app, rows []map[string]any) {
 func problemRow() map[string]any {
 	return map[string]any{
 		"display_id":   "P-100",
+		"event.kind":   "DAVIS_PROBLEM",
 		"event.status": "ACTIVE",
 		"event.name":   "Failure rate increase",
 		"event.start":  time.Now().UTC().Format(time.RFC3339Nano),
@@ -288,11 +289,11 @@ func TestHostDetailRelatedTab(t *testing.T) {
 func TestInspectorSearchFiltersProperties(t *testing.T) {
 	a := testApp(t, "problems")
 	seedRows(t, a, []map[string]any{problemRow()})
-	press(a, key("enter")) // problems are signal rows → raw inspector
+	press(a, key("d")) // 'd' keeps the raw record inspector (enter = problem page)
 
 	insp, ok := a.top().(*inspectorView)
 	if !ok {
-		t.Fatalf("enter on a problem should open the inspector, top = %T", a.top())
+		t.Fatalf("d on a problem should open the inspector, top = %T", a.top())
 	}
 	if body := insp.View(120, 30); !strings.Contains(body, "highlights") {
 		t.Errorf("inspector should render the highlights block:\n%s", body)
@@ -358,13 +359,13 @@ func TestDrillComposesScopeAndEscRestores(t *testing.T) {
 	}
 }
 
-func TestEnterOpensInspector(t *testing.T) {
+func TestDescribeOpensInspector(t *testing.T) {
 	a := testApp(t, "problems")
 	seedRows(t, a, []map[string]any{problemRow()})
 
-	press(a, key("enter"))
+	press(a, key("d"))
 	if _, ok := a.top().(*inspectorView); !ok {
-		t.Fatalf("enter should open inspector, top = %T", a.top())
+		t.Fatalf("d should open inspector, top = %T", a.top())
 	}
 	if a.top().Crumb() != "checkout" {
 		t.Errorf("inspector crumb = %q", a.top().Crumb())
@@ -514,7 +515,7 @@ func TestInspectorFieldCursorTraversesEntityLinks(t *testing.T) {
 	row := problemRow()
 	row["dt.smartscape.host"] = "HOST-0011223344556677"
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 
 	insp, ok := a.top().(*inspectorView)
 	if !ok {
@@ -560,7 +561,7 @@ func TestInspectorEnterOpensTraceWaterfall(t *testing.T) {
 	row := problemRow()
 	row["trace_id"] = trace
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 
 	insp := a.top().(*inspectorView)
 	target := -1
@@ -595,7 +596,7 @@ func TestInspectorBlockDefaultsAndCollapseToggle(t *testing.T) {
 	row["details"] = obj
 	row["long_text"] = strings.Repeat("lorem ipsum ", 30)
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 
 	insp := a.top().(*inspectorView)
 	find := func(key string) *fieldRow {
@@ -674,7 +675,7 @@ func TestInspectorJSONSubRowsSelectableAndYankable(t *testing.T) {
 		"reason": "quota exceeded",
 	}
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 	insp := a.top().(*inspectorView)
 
 	find := func(label string) int {
@@ -726,7 +727,7 @@ func TestInspectorGroupOrderingPutsDtLast(t *testing.T) {
 	row["k8s.cluster.name"] = "prod"
 	row["dt.openpipeline.pipelines"] = "default"
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 	insp := a.top().(*inspectorView)
 
 	sectionAt := func(name string) int {
@@ -755,7 +756,7 @@ func TestInspectorPageJumpsMoveCursor(t *testing.T) {
 		row[fmt.Sprintf("field_%02d", i)] = fmt.Sprintf("value %d", i)
 	}
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 	insp := a.top().(*inspectorView)
 
 	press(a, key("ctrl+d"))
@@ -787,7 +788,7 @@ func TestInspectorResolvesEntityNames(t *testing.T) {
 	row := problemRow()
 	row["dt.smartscape.host"] = "HOST-0011223344556677"
 	seedRows(t, a, []map[string]any{row})
-	press(a, key("enter"))
+	press(a, key("d"))
 	insp := a.top().(*inspectorView)
 
 	// Opening the inspector issues one batched name lookup for the ids.

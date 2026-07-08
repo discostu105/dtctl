@@ -197,6 +197,12 @@ func (v *tableView) InputActive() bool { return v.filtering || v.facetMode != fa
 // Busy reports whether the list query is in flight (animates the spinner).
 func (v *tableView) Busy() bool { return v.loading || v.facetLoading }
 
+// RowCount reports the fetched row count for tab badges — valid only once a
+// fetch has completed cleanly.
+func (v *tableView) RowCount() (int, bool) {
+	return len(v.all), v.seq > 0 && !v.loading && v.err == nil
+}
+
 func (v *tableView) Crumb() string {
 	label := v.spec.Name
 	// The default lens is the view's understood state; only deviations show.
@@ -585,12 +591,16 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 		}
 		// Entity rows open the tabbed detail page; signal rows (logs,
-		// events, problems) open the record inspector.
+		// events) open the record inspector — except Davis problems, which
+		// get the bespoke problem page ('d' keeps the raw record).
 		if v.spec.Kind == catalog.KindEntity {
 			if e := v.entityOf(rec); e != nil {
 				entity := *e
 				return func() tea.Msg { return detailMsg{entity: entity, rec: rec} }
 			}
+		}
+		if catalog.IsProblem(rec) {
+			return func() tea.Msg { return problemMsg{rec: rec} }
 		}
 		return v.inspect(rec)
 	case "d":

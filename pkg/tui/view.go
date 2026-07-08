@@ -86,6 +86,11 @@ type detailMsg struct {
 	rec    map[string]any // selected row's record; nil = fetch on open
 }
 
+// problemMsg opens the tabbed problem page for a Davis problem record.
+type problemMsg struct {
+	rec map[string]any
+}
+
 // metricsMsg opens the canned metrics charts for an entity.
 type metricsMsg struct {
 	entity catalog.Entity

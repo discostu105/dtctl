@@ -340,7 +340,7 @@ func TestInspectorFacetOnArrayElement(t *testing.T) {
 	seedRows(t, a, []map[string]any{rec})
 	tv := a.top().(*tableView)
 
-	press(a, key("enter")) // signal row → inspector
+	press(a, key("d")) // raw record inspector (enter = problem page)
 	insp := a.top().(*inspectorView)
 	for i, row := range insp.rows {
 		if row.key == "affected_entity_ids" {

@@ -27,6 +27,47 @@ func DetailQuery(e Entity) string {
 		e.Type, e.ID)
 }
 
+// PriorityFields returns the highlight fields for a record, most important
+// first — the block the inspector hoists above the namespace groups. The set
+// is per record kind (a problem's essentials are not a log record's); fields
+// the record does not carry are skipped at render time.
+func PriorityFields(rec map[string]any) []string {
+	switch {
+	case Str(rec, "event.kind") == "DAVIS_PROBLEM":
+		return []string{"display_id", "event.name", "event.status", "event.severity",
+			"event.category", "event.description", "event.start", "event.end",
+			"dt.davis.impact_level", "affected_entity_names"}
+	case Str(rec, "event.kind") == "DAVIS_EVENT":
+		return []string{"event.name", "event.type", "event.status", "event.severity",
+			"event.description", "event.start", "event.end",
+			"dt.davis.is_rootcause_relevant", "dt_source_entity_name"}
+	case rec["vulnerability.id"] != nil || Str(rec, "vulnerability.display_id") != "":
+		// The vulns view summarizes into short aliases (title, level, score…);
+		// raw security.events records keep the vulnerability.* names.
+		return []string{"title", "display_id", "level", "score", "status", "tech",
+			"cve", "url", "affected", "vulnerability.title", "vulnerability.risk.level",
+			"vulnerability.risk.score", "vulnerability.resolution.status"}
+	case rec["span.kind"] != nil || Str(rec, "span.name") != "":
+		return []string{"span.name", "endpoint.name", "span.kind", "service.name",
+			"start_time", "duration", "span.status_code", "gen_ai.operation.name"}
+	case rec["user_action_count"] != nil || Str(rec, "end_reason") != "":
+		// RUM session (user.sessions).
+		return []string{"start_time", "duration", "frontend.name", "view_summary_count",
+			"user_action_count", "request_count", "error.count", "browser.name",
+			"os.name", "geo.country.iso_code", "end_reason"}
+	case rec["characteristics.classifier"] != nil:
+		// RUM event (user.events).
+		return []string{"start_time", "characteristics.classifier", "view.name",
+			"user_action.name", "error.display_name", "frontend.name"}
+	case Str(rec, "monitor.name") != "" || rec["result.state"] != nil:
+		// Synthetic execution (dt.synthetic.events).
+		return []string{"timestamp", "monitor.name", "event.type", "result.state",
+			"result.status.message", "step.name"}
+	}
+	return []string{"content", "event.name", "event.description", "display_id",
+		"event.status", "event.category", "timestamp", "loglevel", "status", "host.name"}
+}
+
 // KeyFacts returns the curated most-relevant properties for an entity type.
 // Facts whose value is empty are skipped at render time, so a fact may probe
 // fields that only some records carry.
@@ -85,6 +126,12 @@ func KeyFacts(entityType string) []Fact {
 			Fact{Label: "first seen", Value: lifetimeBound("start")},
 			Fact{Label: "last seen", Value: lifetimeBound("end")},
 		)
+	case "K8S_NAMESPACE":
+		return append(common,
+			Fact{Label: "cluster", Value: factField("k8s.cluster.name")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
 	case "FRONTEND":
 		return append(common,
 			Fact{Label: "type", Value: factField("frontend.type")},
@@ -110,6 +157,16 @@ func KeyFacts(entityType string) []Fact {
 			Fact{Label: "region", Value: factField("aws.region")},
 			Fact{Label: "account", Value: factField("aws.account.id")},
 			Fact{Label: "resource", Value: factField("aws.resource.type")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	}
+	if strings.HasPrefix(entityType, "GENAI_") {
+		// GenAI nodes are sparse (validated live: provider + name + lifetime);
+		// their substance lives on the traces tab's genai lens.
+		return append(common,
+			Fact{Label: "provider", Value: factField("gen_ai.provider.name")},
+			Fact{Label: "type", Value: factField("type")},
 			Fact{Label: "first seen", Value: lifetimeBound("start")},
 			Fact{Label: "last seen", Value: lifetimeBound("end")},
 		)

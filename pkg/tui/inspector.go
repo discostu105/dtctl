@@ -55,6 +55,15 @@ type inspectorView struct {
 	names   map[string]string // entity id → display name (batched lookup)
 	nameReq map[string]bool   // ids already sent to a name query
 
+	// Signals block (entity mode): the page's active problems (injected by
+	// the detail view's pulse query) and the entity's latest change event
+	// (own one-shot query) render as navigable rows between the facts and
+	// the properties.
+	sigProblems []map[string]any
+	sigLoaded   bool
+	change      map[string]any
+	changeLoad  bool
+
 	lines []string // assembled content lines (selection applied at render)
 
 	vp    viewport.Model
@@ -73,13 +82,10 @@ type fieldRow struct {
 	// default; enter toggles the full block.
 	expandable bool
 	expanded   bool
-}
-
-// priorityFields render first as the "highlights" block, in this order,
-// before the namespace groups.
-var priorityFields = []string{
-	"content", "event.name", "event.description", "display_id", "event.status",
-	"event.category", "timestamp", "loglevel", "status", "host.name",
+	// open is the navigation a synthetic row (signals block) fires on enter;
+	// openHint labels it in the footer.
+	open     tea.Msg
+	openHint string
 }
 
 func newInspectorView(ds *dataSource, title string, rec map[string]any) *inspectorView {
@@ -102,6 +108,18 @@ func newEntityInfoView(ds *dataSource, entity catalog.Entity, rec map[string]any
 
 // inspNameOwner tags the batched id→name resolution query.
 type inspNameOwner struct{ v *inspectorView }
+
+// changeOwner tags the entity's latest-change-event query (fired once, on
+// the details tab's Init).
+type changeOwner struct{ v *inspectorView }
+
+// setProblems injects the page's active problems (the detail view's pulse
+// result) into the signals block.
+func (v *inspectorView) setProblems(problems []map[string]any) {
+	v.sigProblems = problems
+	v.sigLoaded = true
+	v.rebuild()
+}
 
 // DQL reveals the detail query in entity mode (ctrl+q).
 func (v *inspectorView) DQL() string { return v.dql }
@@ -142,6 +160,11 @@ func (v *inspectorView) Init() tea.Cmd {
 	cmds := []tea.Cmd{v.Refresh(), v.resolveNames()}
 	if v.ds != nil {
 		cmds = append(cmds, v.ds.ensureDict())
+	}
+	// Entity mode also asks for the latest change-ish event (deploys,
+	// config changes, restarts) — the signals block's "what changed here".
+	if v.ds != nil && v.entity != nil && v.entity.ID != "" {
+		cmds = append(cmds, v.ds.query(changeOwner{v}, 0, catalog.ChangeEventQuery(*v.entity)))
 	}
 	return tea.Batch(cmds...)
 }
@@ -227,6 +250,8 @@ func (v *inspectorView) Hints() []keyHint {
 	hints := []keyHint{{"j/k", "fields"}}
 	if row := v.selectedRow(); row != nil {
 		switch {
+		case row.open != nil:
+			hints = append(hints, keyHint{"enter", row.openHint})
 		case row.val.entity != nil:
 			hints = append(hints, keyHint{"enter", "open " + strings.ToLower(row.val.entity.Type)})
 		case row.val.trace != "":
@@ -255,6 +280,17 @@ func (v *inspectorView) Update(msg tea.Msg) tea.Cmd {
 						v.names[id] = catalog.Str(rec, "name")
 					}
 				}
+				v.rebuild()
+			}
+			return nil
+		}
+		if co, ok := msg.owner.(changeOwner); ok && co.v == v {
+			// Fired once per page; errors degrade to an absent row.
+			if msg.err == nil {
+				if len(msg.records) > 0 {
+					v.change = msg.records[0]
+				}
+				v.changeLoad = true
 				v.rebuild()
 			}
 			return nil
@@ -396,14 +432,17 @@ func (v *inspectorView) facetRow() tea.Cmd {
 	}
 }
 
-// enterRow acts on the selected field: follow an entity/trace link, or
-// toggle a collapsed long value.
+// enterRow acts on the selected field: fire a synthetic row's navigation,
+// follow an entity/trace link, or toggle a collapsed long value.
 func (v *inspectorView) enterRow() tea.Cmd {
 	row := v.selectedRow()
 	if row == nil {
 		return nil
 	}
 	switch {
+	case row.open != nil:
+		open := row.open
+		return func() tea.Msg { return open }
 	case row.val.entity != nil:
 		entity := *row.val.entity
 		return func() tea.Msg { return detailMsg{entity: entity} }
@@ -591,7 +630,8 @@ func (v *inspectorView) docFooter() string {
 }
 
 // rebuild renders the record into content lines and selectable rows: the
-// curated facts panel (entity mode), the priority-field highlights, then
+// curated facts panel (entity mode), the signals block (entity mode), the
+// per-kind priority-field highlights, the links block (record mode), then
 // namespace groups (k8s.*, event.*, …) sorted by name. A search needle
 // narrows fields by key or value.
 func (v *inspectorView) rebuild() {
@@ -601,17 +641,21 @@ func (v *inspectorView) rebuild() {
 	v.lines = nil
 	v.rows = nil
 
+	needle := strings.ToLower(strings.TrimSpace(v.search))
+
 	if len(v.facts) > 0 {
 		for _, f := range v.facts {
 			if text := f.Value(v.rec); text != "" {
 				v.addLine(" " + theme.FactLabel.Render(fmt.Sprintf("%-14s", f.Label)) + "  " + text)
 			}
 		}
+		if needle == "" {
+			v.addSignalRows()
+		}
 		v.addLine("")
 		v.addLine(theme.Section("properties"))
 	}
 
-	needle := strings.ToLower(strings.TrimSpace(v.search))
 	rendered := map[string]bool{}
 
 	// A GenAI span's exchange renders as a first-class conversation section;
@@ -622,7 +666,7 @@ func (v *inspectorView) rebuild() {
 	}
 
 	var prio []string
-	for _, key := range priorityFields {
+	for _, key := range catalog.PriorityFields(v.rec) {
 		val, ok := v.rec[key]
 		if !ok {
 			continue
@@ -639,6 +683,13 @@ func (v *inspectorView) rebuild() {
 		for _, key := range prio {
 			v.addField(key, needle, theme.FactLabel)
 		}
+	}
+
+	// Record mode: hoist the record's exits — entity ids, trace ids, URLs —
+	// into a links block where the eye lands ("ok, what now?" answered with
+	// a jump list). Entity pages have the related tab and facts instead.
+	if len(v.facts) == 0 {
+		v.addLinkRows(needle, rendered)
 	}
 
 	groups := map[string][]string{}
@@ -699,6 +750,128 @@ func (v *inspectorView) rebuild() {
 }
 
 func (v *inspectorView) addLine(line string) { v.lines = append(v.lines, line) }
+
+// addSignalRows renders the entity page's signals block: the active problems
+// (injected by the page's pulse query) and the latest change-ish event, each
+// a navigable row — "what now?" answered with a jump list. Nothing renders
+// while both are empty; the header pulse already tells the quiet story.
+func (v *inspectorView) addSignalRows() {
+	if len(v.sigProblems) == 0 && v.change == nil {
+		return
+	}
+	v.addLine("")
+	v.addLine(theme.Section("signals"))
+	const maxProblems = 3
+	for i, p := range v.sigProblems {
+		if i == maxProblems {
+			v.addLine("   " + theme.Dim.Render(fmt.Sprintf("… %d more on the problems tab", len(v.sigProblems)-maxProblems)))
+			break
+		}
+		id := catalog.Str(p, "display_id")
+		line := " " + theme.Error.Render("⚠ "+id) + "  " + catalog.Str(p, "event.name") +
+			theme.Dim.Render("  "+catalog.Str(p, "event.status")+" · "+catalog.Age(catalog.Str(p, "event.start")))
+		v.addActionRow("__signal.problem", id, line, problemMsg{rec: p}, "open problem", id)
+	}
+	if v.change != nil {
+		name := catalog.Str(v.change, "event.name")
+		if name == "" {
+			name = catalog.Str(v.change, "event.type")
+		}
+		line := " " + theme.Hit.Render("↯ last change") + "  " + name +
+			theme.Dim.Render("  "+catalog.Age(catalog.Str(v.change, "timestamp"))+" ago")
+		v.addActionRow("__signal.change", "last change", line, inspectMsg{title: name, rec: v.change}, "inspect event", name)
+	}
+}
+
+// addActionRow appends one synthetic navigable row (signals block): enter
+// fires its message, y yanks its raw text.
+func (v *inspectorView) addActionRow(key, label, line string, open tea.Msg, hint, raw string) {
+	v.rows = append(v.rows, fieldRow{key: key, label: label,
+		val:  valueView{lines: []string{line}, raw: raw},
+		line: len(v.lines), span: 1, open: open, openHint: hint})
+	v.addLine(line)
+}
+
+// linkMax caps the links block — a record with thirty entity references must
+// not push the highlights off screen (the rest stay in their groups below).
+const linkMax = 8
+
+// addLinkRows hoists the record's traversable references — trace ids, entity
+// ids, URLs — into one links block between the highlights and the namespace
+// groups. Hoisted keys are marked rendered; a key whose rows would overflow
+// the cap stays whole in its namespace group instead.
+func (v *inspectorView) addLinkRows(needle string, rendered map[string]bool) {
+	type linkRow struct {
+		label string
+		val   valueView
+	}
+	type linkGroup struct {
+		key  string
+		rank int // traces first, then entities, then urls
+		rows []linkRow
+	}
+	var groups []linkGroup
+	for key, val := range v.rec {
+		if rendered[key] || strings.HasPrefix(key, "__") || !fieldMatches(needle, key, val) {
+			continue
+		}
+		if ids := entityIDList(val); ids != nil {
+			g := linkGroup{key: key, rank: 1}
+			for i, id := range ids {
+				g.rows = append(g.rows, linkRow{label: fmt.Sprintf("%s[%d]", key, i),
+					val: renderString(key, id, v.vp.Width-6)})
+			}
+			groups = append(groups, g)
+			continue
+		}
+		s, ok := val.(string)
+		if !ok || s == "" {
+			continue
+		}
+		rv := renderString(key, s, v.vp.Width-6)
+		var rank int
+		switch {
+		case rv.trace != "":
+			rank = 0
+		case rv.entity != nil:
+			rank = 1
+		case strings.HasPrefix(s, "https://") || strings.HasPrefix(s, "http://"):
+			rank = 2
+		default:
+			continue
+		}
+		groups = append(groups, linkGroup{key: key, rank: rank, rows: []linkRow{{label: key, val: rv}}})
+	}
+	if len(groups) == 0 {
+		return
+	}
+	sort.Slice(groups, func(i, j int) bool {
+		if groups[i].rank != groups[j].rank {
+			return groups[i].rank < groups[j].rank
+		}
+		return groups[i].key < groups[j].key
+	})
+	total := 0
+	var kept []linkGroup
+	for _, g := range groups {
+		if total+len(g.rows) > linkMax {
+			continue
+		}
+		total += len(g.rows)
+		rendered[g.key] = true
+		kept = append(kept, g)
+	}
+	if len(kept) == 0 {
+		return
+	}
+	v.addLine("")
+	v.addLine(theme.Section("links"))
+	for _, g := range kept {
+		for _, l := range g.rows {
+			v.addRow(g.key, l.label, v.labelStyle(needle, g.key, theme.Label), v.withName(l.val))
+		}
+	}
+}
 
 // addField renders one record field as selectable row(s). Arrays of entity
 // ids explode into one navigable row per id; everything else is one row.

@@ -92,7 +92,12 @@ func (v *relationsView) SetTimeframe(catalog.Timeframe) tea.Cmd { return nil }
 func (v *relationsView) InputActive() bool                      { return false }
 
 // Busy reports whether the edge query is in flight (animates the spinner).
-func (v *relationsView) Busy() bool    { return v.loading }
+func (v *relationsView) Busy() bool { return v.loading }
+
+// RowCount reports the loaded edge count for the detail page's tab badge.
+func (v *relationsView) RowCount() (int, bool) {
+	return len(v.rows), v.seq > 0 && !v.loading && v.err == nil
+}
 func (v *relationsView) Crumb() string { return "relations (" + entityName(v.entity) + ")" }
 func (v *relationsView) DQL() string   { return v.dql }
 

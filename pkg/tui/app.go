@@ -74,6 +74,13 @@ type yankProvider interface {
 	YankText() (text, label string, ok bool)
 }
 
+// digitClaimer is implemented by the tabbed pages (entity detail, problem),
+// whose tab strip — or the active tab's lens strip — takes digit keys over
+// from the global hotkeys.
+type digitClaimer interface {
+	claimsDigit(d byte) bool
+}
+
 type app struct {
 	opts Options
 	ds   *dataSource
@@ -248,6 +255,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	case detailMsg:
 		return a.navigate(newDetailView(a.ds, msg.entity, msg.rec, a.tf), false)
 
+	case problemMsg:
+		return a.navigate(newProblemView(a.ds, msg.rec, time.Now()), false)
+
 	case metricsMsg:
 		return a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
 
@@ -370,10 +380,10 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		// help overlay promises it does.
 		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
 			claimedByTab := false
-			if dv, isDetail := top.(*detailView); isDetail {
+			if dc, isTabbed := top.(digitClaimer); isTabbed {
 				// The page tabs — or the active tab's own lens strip, which
 				// takes the digits over while it is visible.
-				claimedByTab = dv.claimsDigit(key[0])
+				claimedByTab = dc.claimsDigit(key[0])
 			}
 			if tv, isTable := top.(*tableView); isTable {
 				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(tv.spec.Lenses))
@@ -499,6 +509,8 @@ func (a *app) applyFacetBelow(field, value string) tea.Cmd {
 		case *tableView:
 			tv = v
 		case *detailView:
+			tv, _ = v.tabs[v.active].view.(*tableView)
+		case *problemView:
 			tv, _ = v.tabs[v.active].view.(*tableView)
 		}
 		if tv == nil {

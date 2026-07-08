@@ -82,7 +82,7 @@ func (e historyEntry) signature() string {
 		for _, f := range ref.Facets {
 			fmt.Fprintf(&b, "/%s", f.Label())
 		}
-		if ref.Kind == "inspector" {
+		if ref.Kind == "inspector" || ref.Kind == "problem" {
 			fmt.Fprintf(&b, "/%s/%s/%s", ref.Title, catalog.Str(ref.Rec, "timestamp"), catalog.Str(ref.Rec, "display_id"))
 		}
 	}
@@ -247,6 +247,8 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 		return pageRef{Kind: "waterfall", Crumb: v.Crumb(), TraceID: v.traceID}, true
 	case *timelineView:
 		return pageRef{Kind: "timeline", Crumb: v.Crumb(), Arg: v.sessionID, Lens: v.lens}, true
+	case *problemView:
+		return pageRef{Kind: "problem", Crumb: v.Crumb(), Rec: v.rec}, true
 	case *inspectorView:
 		return pageRef{Kind: "inspector", Crumb: v.Crumb(), Title: v.title, Rec: v.rec}, true
 	}
@@ -311,6 +313,11 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 			v.lens = ref.Lens
 		}
 		return v, nil
+	case "problem":
+		if ref.Rec == nil {
+			return nil, fmt.Errorf("problem page without record")
+		}
+		return newProblemView(a.ds, ref.Rec, time.Now()), nil
 	case "inspector":
 		return newInspectorView(a.ds, ref.Title, ref.Rec), nil
 	}

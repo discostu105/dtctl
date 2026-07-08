@@ -19,14 +19,39 @@ type Entity struct {
 	Type string // Smartscape node type, e.g. "HOST", "SERVICE", "K8S_POD"
 }
 
-// Timeframe is the global query window applied to every view.
+// Timeframe is the global query window applied to every view. From/To pin
+// the window absolutely (a problem's lifespan); zero From means the relative
+// Label window.
 type Timeframe struct {
 	Label string // DQL relative duration, e.g. "2h"
 	Dur   time.Duration
+	// From/To bound an absolute window. To may be zero (open-ended: an
+	// ACTIVE problem's window runs to now). Dur should be set to To-From so
+	// interval heuristics keep working.
+	From, To time.Time
 }
 
-// DQL returns the timeframe as a DQL from: expression.
-func (t Timeframe) DQL() string { return "now() - " + t.Label }
+// Absolute reports whether the window is pinned to fixed instants.
+func (t Timeframe) Absolute() bool { return !t.From.IsZero() }
+
+// DQL returns the timeframe as a DQL from: value. An absolute window renders
+// BOTH bounds — `toTimestamp("…"), to:toTimestamp("…")` — through the same
+// `from:%s` slot every query template uses; from:/to: accept toTimestamp
+// literals in every command position the catalog composes (validated live).
+func (t Timeframe) DQL() string {
+	if !t.Absolute() {
+		return "now() - " + t.Label
+	}
+	out := dqlTimestamp(t.From)
+	if !t.To.IsZero() {
+		out += ", to:" + dqlTimestamp(t.To)
+	}
+	return out
+}
+
+func dqlTimestamp(t time.Time) string {
+	return fmt.Sprintf("toTimestamp(%q)", t.UTC().Format("2006-01-02T15:04:05.000Z"))
+}
 
 // Timeframes are the picker choices, ordered short to long.
 var Timeframes = []Timeframe{
@@ -45,6 +70,10 @@ var DefaultTimeframe = Timeframes[1]
 type Scope struct {
 	Entity    *Entity
 	Timeframe Timeframe
+	// Entities scopes a signal view to several entities at once (a problem's
+	// affected set). When set it wins over Entity; specs compose it via
+	// ScopeSignalFilter / ScopeSpanFilter.
+	Entities []Entity
 	// Arg is a view-specific argument: the node type for the generic entity
 	// browser ("AWS_EC2_INSTANCE"), the table/bucket/file for the record
 	// sampler, the model for the dictionary fields view, or the monitor id
@@ -196,9 +225,9 @@ func lensAt(lenses []Lens, i int) Lens {
 
 // floorTimeframe widens a query window to at least min — sparse tables
 // (sessions, bizevents, vulnerability state reports) look deceptively empty
-// over the default 2h.
+// over the default 2h. Absolute windows are deliberate and never widened.
 func floorTimeframe(tf Timeframe, min time.Duration, label string) string {
-	if tf.Dur < min {
+	if !tf.Absolute() && tf.Dur < min {
 		return "now() - " + label
 	}
 	return tf.DQL()
@@ -375,6 +404,58 @@ func SignalFilter(e Entity) string {
 		parts = append(parts, f)
 	}
 	parts = append(parts, fmt.Sprintf("dt.smartscape_source.id == toSmartscapeId(%q)", e.ID))
+	return strings.Join(parts, " or ")
+}
+
+// entityList returns the scope's entity set: Entities when set, else the
+// singleton Entity, else none.
+func (s Scope) entityList() []Entity {
+	if len(s.Entities) > 0 {
+		return s.Entities
+	}
+	if s.Entity != nil {
+		return []Entity{*s.Entity}
+	}
+	return nil
+}
+
+// ScopeSignalFilter renders the logs/events filter for the scope's entity or
+// entity set ("" when unscoped). A single entity composes exactly like
+// SignalFilter; several or-join, each parenthesized.
+func ScopeSignalFilter(s Scope) string {
+	ents := s.entityList()
+	switch len(ents) {
+	case 0:
+		return ""
+	case 1:
+		return SignalFilter(ents[0])
+	}
+	parts := make([]string, len(ents))
+	for i, e := range ents {
+		parts[i] = "(" + SignalFilter(e) + ")"
+	}
+	return strings.Join(parts, " or ")
+}
+
+// ScopeSpanFilter renders the spans filter for the scope's entity set,
+// keeping only span-scopable types — a filter on a type spans never carry
+// would silently match nothing. "" when unscoped or nothing is scopable.
+func ScopeSpanFilter(s Scope) string {
+	var parts []string
+	for _, e := range s.entityList() {
+		if SpanScopable(e.Type) {
+			parts = append(parts, SpanFilter(e))
+		}
+	}
+	switch len(parts) {
+	case 0:
+		return ""
+	case 1:
+		return parts[0]
+	}
+	for i, p := range parts {
+		parts[i] = "(" + p + ")"
+	}
 	return strings.Join(parts, " or ")
 }
 

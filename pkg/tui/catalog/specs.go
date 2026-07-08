@@ -174,8 +174,8 @@ var logsSpec = &Spec{
 	Query: func(s Scope) string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "fetch logs, from:%s", s.Timeframe.DQL())
-		if s.Entity != nil {
-			fmt.Fprintf(&b, "\n| filter %s", SignalFilter(*s.Entity))
+		if f := ScopeSignalFilter(s); f != "" {
+			fmt.Fprintf(&b, "\n| filter %s", f)
 		}
 		if s.TraceID != "" {
 			// Log trace_id is a plain string field (validated live) — no
@@ -268,8 +268,8 @@ var eventsSpec = &Spec{
 	Query: func(s Scope) string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "fetch events, from:%s", s.Timeframe.DQL())
-		if s.Entity != nil {
-			fmt.Fprintf(&b, "\n| filter %s", SignalFilter(*s.Entity))
+		if f := ScopeSignalFilter(s); f != "" {
+			fmt.Fprintf(&b, "\n| filter %s", f)
 		}
 		b.WriteString("\n| sort timestamp desc\n| limit 300")
 		return b.String()

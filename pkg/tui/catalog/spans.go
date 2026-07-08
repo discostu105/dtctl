@@ -63,8 +63,8 @@ var tracesSpec = &Spec{
 	Query: func(s Scope) string {
 		var b strings.Builder
 		fmt.Fprintf(&b, "fetch spans, from:%s", s.Timeframe.DQL())
-		if s.Entity != nil {
-			fmt.Fprintf(&b, "\n| filter %s", SpanFilter(*s.Entity))
+		if f := ScopeSpanFilter(s); f != "" {
+			fmt.Fprintf(&b, "\n| filter %s", f)
 		}
 		if l := lensAt(spanLenses, s.Lens); l.Filter != "" {
 			fmt.Fprintf(&b, "\n| filter %s", l.Filter)

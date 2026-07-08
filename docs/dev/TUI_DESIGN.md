@@ -881,6 +881,52 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   entity's traces tab/drill opens on the genai lens, since agent spans
   rarely include trace roots.
 
+### Phase 3.7 — Actionable detail pages ✅ implemented
+
+- **Pulse header on entity pages**: the identity header gained a second line
+  answering "is this thing on fire?" on every tab — active-problem count
+  (one `dt.davis.problems` query per page open, lookback floored at 24h,
+  update-records deduped by `display_id`), the list row's enrichment
+  sparklines re-rendered for free (`__enrich.*` already rode in on the
+  record), and the entity's age. Tab labels badge their row count once a
+  tab has loaded (`logs (312)`, `evidence (4)`) — no speculative count
+  queries.
+- **Signals block on the details tab**: between the key facts and the
+  properties, navigable rows for the entity's active problems (enter → the
+  problem page) and its latest change-ish event (deployments, config
+  changes, restarts, SDLC events, and the CUSTOM_INFO-typed "Deployment
+  spec change" K8s workload events — validated live on both tenants; fixed
+  7d lookback), enter → the event record. Quiet entities show nothing —
+  the pulse line already tells that story.
+- **The problem page**: enter on a Davis problem opens a bespoke tabbed
+  page instead of the flat inspector ('d' keeps the raw record; the full
+  record also stays one tab away on "details"). Overview = curated facts,
+  the affected entities as navigable rows, and `event.description` wrapped
+  ("Davis says"). Evidence = the constituent `dt.davis.events` fetched by
+  `dt.davis.event_ids` (update-records collapsed per event id, root-cause
+  relevance marked ✱). Logs/traces/events tabs are pre-scoped to **all**
+  affected entities and the problem's own window (`event.start` →
+  `event.end`/now, ±5m context pad) — the global timeframe picker
+  deliberately does not reach into the page. Catalog got two extensions
+  for this: `Scope.Entities` (or-joined signal/span filters; span filter
+  keeps only span-scopable types and the traces tab is omitted when none
+  qualify) and absolute `Timeframe.From/To` windows rendered as
+  `toTimestamp("…"), to:toTimestamp("…")` through the same `from:%s` slot
+  every query template uses (validated live).
+- **Per-kind record highlights**: the inspector's priority block is now
+  `catalog.PriorityFields(rec)` — problems, Davis events, vulnerabilities
+  (both the summarized aliases and raw `vulnerability.*` names), spans,
+  RUM sessions/events, and synthetic executions each hoist their own
+  essentials; log-shaped records keep the original list.
+- **Links block in record inspectors**: the record's exits — trace ids,
+  entity ids (arrays exploded), URLs — hoist into one `▍ links` section
+  between the highlights and the namespace groups, ranked traces →
+  entities → URLs, capped at 8 rows (an overflowing key stays whole in its
+  group), names resolved by the existing batched lookup. Entity pages keep
+  facts + related instead.
+- **KeyFacts gaps**: GENAI_* (provider — the nodes are otherwise bare) and
+  K8S_NAMESPACE (cluster) gained curated facts.
+
 ### Phase 4 — Assets & mutations
 
 - Management resource browser for the full existing CRUD surface; workflow
