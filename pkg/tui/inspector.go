@@ -510,6 +510,13 @@ func (v *inspectorView) ensureVisible() {
 		return
 	}
 	first, last := row.line, row.line+row.span-1
+	// The first row drags the un-selectable lines above it (facts, the
+	// signals block's header, section titles) into view when they fit —
+	// scrolling up at the top row must reach the actual top of the page,
+	// not stall at the row's own line.
+	if v.cursor == 0 && last < v.vp.Height {
+		first = 0
+	}
 	switch {
 	case first < v.vp.YOffset:
 		v.vp.SetYOffset(first)

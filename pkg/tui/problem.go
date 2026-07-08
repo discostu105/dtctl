@@ -286,8 +286,14 @@ func (v *problemOverview) ensureVisible() {
 		return
 	}
 	line := v.rows[v.cursor]
-	if line < v.offset {
-		v.offset = line
+	// The first impact row drags the facts above it into view when they
+	// fit — scrolling up at the top row reaches the actual top.
+	top := line
+	if v.cursor == 0 && line < v.height {
+		top = 0
+	}
+	if top < v.offset {
+		v.offset = top
 	}
 	if line >= v.offset+v.height {
 		v.offset = line - v.height + 1

@@ -280,6 +280,46 @@ func TestInspectorLinksBlockHoistsReferences(t *testing.T) {
 	}
 }
 
+func TestInspectorScrollUpRevealsLinesAboveFirstRow(t *testing.T) {
+	a := testApp(t, "hosts")
+	row := hostRow()
+	for i := 0; i < 60; i++ {
+		row[strings.Repeat("z", 2)+string(rune('a'+i%26))+string(rune('a'+i/26))] = "v"
+	}
+	seedRows(t, a, []map[string]any{row})
+	press(a, key("enter"))
+	dv := a.top().(*detailView)
+	// A signals block sits between the facts and the properties.
+	a.Update(dataMsg{owner: pulseOwner{v: dv}, seq: dv.pulseSeq,
+		records: []map[string]any{richProblemRow()}})
+	insp := dv.tabs[0].view.(*inspectorView)
+
+	// Scroll deep into the properties, then walk back to the first row.
+	press(a, key("ctrl+d"))
+	press(a, key("ctrl+d"))
+	if insp.vp.YOffset == 0 {
+		t.Fatal("test premise broken: the viewport never scrolled")
+	}
+	for insp.cursor > 0 {
+		press(a, key("k"))
+	}
+	// The facts above the signal row must be back on screen.
+	if insp.vp.YOffset != 0 {
+		t.Errorf("scrolling up to the first row should reveal the facts above it, YOffset = %d", insp.vp.YOffset)
+	}
+}
+
+func TestProblemOverviewScrollUpRevealsFacts(t *testing.T) {
+	ov := newProblemOverview(richProblemRow(), catalog.ProblemAffectedEntities(richProblemRow()))
+	ov.Update(bodySizeMsg{width: 120, height: 20})
+	ov.offset = 9 // as if scrolled: the facts above the impact rows are hidden
+	ov.cursor = 0
+	ov.ensureVisible()
+	if ov.offset != 0 {
+		t.Errorf("first impact row should drag the facts into view, offset = %d", ov.offset)
+	}
+}
+
 func TestProblemPageDigitsSwitchTabs(t *testing.T) {
 	a := testApp(t, "problems")
 	seedRows(t, a, []map[string]any{richProblemRow()})
