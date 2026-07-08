@@ -24,8 +24,11 @@ logs with Davis log-pattern clustering, events, AWS inventory, frontends
 and RUM (user sessions and events with Core Web Vitals), business
 events, synthetic monitors, databases, GenAI entities, security
 vulnerabilities, SLOs with live evaluation, anomaly detectors, the
-semantic dictionary (models and fields), and a Grail data explorer
-(tables, buckets, lookup files with record sampling).
+semantic dictionary (models and fields), a Grail data explorer
+(tables, buckets, lookup files with record sampling), and the
+smartscape navigator (:nav) — a topology explorer with a type census
+and relationship schema, per-type entity browsing, and an ego-centric
+walk mode with a breadcrumb trail (X walks from any selected entity).
 
 Views are opened from the command bar (:) by name or alias — arguments
 narrow the jump (:pods checkout, :trace <id>). Every drill-down key
@@ -67,8 +70,8 @@ mode, with --plain, or when stdout is not a terminal.`,
 		if len(args) == 1 {
 			view = args[0]
 		}
-		if view != "home" && view != "query" && view != "dql" && catalog.Lookup(view) == nil {
-			return fmt.Errorf("unknown view %q (available: home, query, %s)", view, strings.Join(catalog.Names(), ", "))
+		if !isBespokeTuiView(view) && catalog.Lookup(view) == nil {
+			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", view, strings.Join(catalog.Names(), ", "))
 		}
 
 		cfg, c, err := SetupClient()
@@ -92,11 +95,21 @@ mode, with --plain, or when stdout is not a terminal.`,
 	},
 }
 
+// isBespokeTuiView reports whether the name is one of the TUI's bespoke
+// (non-catalog) screens.
+func isBespokeTuiView(name string) bool {
+	switch name {
+	case "home", "query", "dql", "nav", "smartscape", "navigator":
+		return true
+	}
+	return false
+}
+
 func tuiViewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	if len(args) > 0 {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
-	return append([]string{"home", "query"}, catalog.Names()...), cobra.ShellCompDirectiveNoFileComp
+	return append([]string{"home", "query", "nav"}, catalog.Names()...), cobra.ShellCompDirectiveNoFileComp
 }
 
 func init() {

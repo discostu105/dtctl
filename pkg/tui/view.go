@@ -69,6 +69,15 @@ type relationsMsg struct {
 	entity catalog.Entity
 }
 
+// navMsg opens the smartscape navigator: the overview (zero value), the type
+// browser (typ), or walk mode rooted at an entity (root; wins over typ).
+// replace resets the stack (command-bar jumps).
+type navMsg struct {
+	typ     string
+	root    *catalog.Entity
+	replace bool
+}
+
 // queryMsg opens the DQL escape hatch, optionally pre-filled (reveal query).
 type queryMsg struct {
 	dql string

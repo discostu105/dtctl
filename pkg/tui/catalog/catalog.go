@@ -315,13 +315,17 @@ func Lookup(name string) *Spec {
 
 // Match returns specs whose name or alias fuzzy-matches the input, for the
 // command bar. Prefix matches rank before subsequence matches.
-func Match(input string) []*Spec {
+func Match(input string) []*Spec { return MatchSpecs(specs, input) }
+
+// MatchSpecs is Match over an explicit candidate list — the command bar
+// matches its bespoke screens (home, query, nav) together with the registry.
+func MatchSpecs(candidates []*Spec, input string) []*Spec {
 	input = strings.ToLower(strings.TrimSpace(input))
 	if input == "" {
-		return specs
+		return candidates
 	}
 	var prefix, sub []*Spec
-	for _, s := range specs {
+	for _, s := range candidates {
 		names := append([]string{s.Name}, s.Aliases...)
 		matched := 0 // 0 = no, 1 = subsequence, 2 = prefix
 		for _, n := range names {

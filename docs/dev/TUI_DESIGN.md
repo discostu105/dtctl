@@ -927,6 +927,42 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 - **KeyFacts gaps**: GENAI_* (provider — the nodes are otherwise bare) and
   K8S_NAMESPACE (cluster) gained curated facts.
 
+### Phase 3.8 — Smartscape navigator ✅ implemented
+
+Full design: `docs/dev/TUI_SMARTSCAPE_NAVIGATOR.md`.
+
+- **`:nav`** (aliases `smartscape`, `navigator`): a dedicated topology app in
+  three stacked levels — overview (type census + type-level relationship
+  schema from one `smartscapeEdges` summarize, lazy `source_type`/
+  `target_type` materialized via `fieldsAdd`, validated live on box),
+  type browser (instances with health dots), and **walk mode**: an
+  ego-centric neighbor tree grouped by (direction, verb), structure ranked
+  before mesh, per-group render cap with explicit `+N more`, and a
+  breadcrumb **trail** — hops re-root in place (← backtracks), so a
+  15-hop walk is one stack entry and esc keeps its page-back meaning.
+- **Global `X`**: walk the topology from any selected entity — the capital
+  sibling of `x` (quick one-hop panel). `:nav <TYPE>` browses a type,
+  `:nav <entity-id>` walks from it.
+- **Health overlay**: one tenant-wide `dt.davis.problems` query per refresh
+  (24h floor), deduped and intersected client-side against visible nodes in
+  **both id eras** — problem dots on every node, per-type counts on the
+  census, never a per-node query.
+- **Preview pane**: cursor-following (debounced 250 ms, session-cached
+  `DetailQuery`) identity + health + curated `KeyFacts`; `tab` toggles,
+  auto-hidden under 100 columns. Nodeless edge endpoints (`K8S_SECRET` et
+  al.) render dimmed raw ids and preview as "no node record".
+- **Session topo cache**: edges and details cache per navigator instance —
+  backtracks and re-visits are zero-query; `r` clears and refetches.
+- The shared query builders (`EdgesQuery`, `NamesQuery`, `BuildEdges`,
+  `EdgeRank`) moved from `relations.go` into `catalog/smartscape.go`;
+  the relations panel consumes them unchanged. Live-observed verbs beyond
+  the documented four — `belongs_to`, `uses` — group generically and rank
+  as structure.
+- Deliberate key deviations from the design doc: the mesh toggle is `M`
+  (`t` is the global timeframe picker) and `g`/`G` stay cursor home/end
+  (overview is esc or `:nav` away) — consistency with the app vocabulary
+  beat the draft bindings.
+
 ### Phase 4 — Assets & mutations
 
 - Management resource browser for the full existing CRUD surface; workflow
@@ -958,8 +994,11 @@ triage".
 5. **Windows terminal support**: bubbletea handles Windows, but alternate
    screen + `$EDITOR` suspend needs explicit testing (existing
    `console_windows.go` VT enablement must run before bubbletea init).
-6. **Smartscape topology *visualization*** (graph drawing) — deferred; the
-   relations panel covers navigation without a graph-layout problem.
+6. **Smartscape topology *visualization*** (graph drawing) — resolved by
+   Phase 3.8: don't draw, navigate. The smartscape navigator (`:nav`,
+   `docs/dev/TUI_SMARTSCAPE_NAVIGATOR.md`) covers overview, browsing, and
+   walking; graph *drawing* stays rejected (hairball + lipgloss compositing
+   limits).
 
 ## References
 

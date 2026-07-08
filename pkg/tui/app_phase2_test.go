@@ -241,21 +241,9 @@ func TestRelationsKeyOpensPanel(t *testing.T) {
 	}
 }
 
-func TestBuildRelationsSplitsDirections(t *testing.T) {
-	rows := buildRelations("K8S_POD-1", []map[string]any{
-		{"source_id": "K8S_POD-1", "target_id": "K8S_NODE-1", "type": "runs_on", "target_type": "K8S_NODE"},
-		{"source_id": "K8S_SERVICE-1", "target_id": "K8S_POD-1", "type": "routes_to", "source_type": "K8S_SERVICE"},
-	})
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d", len(rows))
-	}
-	if !rows[0].outgoing || rows[0].otherID != "K8S_NODE-1" || rows[0].otherType != "K8S_NODE" {
-		t.Errorf("outgoing row = %+v", rows[0])
-	}
-	if rows[1].outgoing || rows[1].otherID != "K8S_SERVICE-1" {
-		t.Errorf("incoming row = %+v", rows[1])
-	}
-}
+// Direction splitting of edge records is covered in
+// pkg/tui/catalog/smartscape_test.go (BuildEdges moved into the catalog for
+// the smartscape navigator).
 
 func TestBuildWaterfallTreeAndOrphans(t *testing.T) {
 	rows := buildWaterfall([]map[string]any{

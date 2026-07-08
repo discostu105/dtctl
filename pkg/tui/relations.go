@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,7 +23,7 @@ type relationsView struct {
 	entity catalog.Entity
 	tf     catalog.Timeframe
 
-	rows   []relRow
+	rows   []catalog.Edge
 	names  map[string]string // id → display name (second query)
 	cursor int
 	offset int
@@ -37,13 +36,6 @@ type relationsView struct {
 	dql     string
 
 	width, height int
-}
-
-type relRow struct {
-	outgoing  bool
-	edgeType  string
-	otherID   string
-	otherType string
 }
 
 func newRelationsView(ds *dataSource, entity catalog.Entity, tf catalog.Timeframe) *relationsView {
@@ -60,31 +52,13 @@ func newEmbeddedRelationsView(ds *dataSource, entity catalog.Entity, tf catalog.
 // nameOwner tags the second (name-resolution) query.
 type nameOwner struct{ v *relationsView }
 
-// edgesQuery fetches both edge directions in one query (validated live —
-// source-only misses incoming routes_to / is_part_of edges).
-func edgesQuery(id string) string {
-	return fmt.Sprintf(`smartscapeEdges "*"
-| filter source_id == toSmartscapeId(%[1]q) or target_id == toSmartscapeId(%[1]q)
-| fields source_id, source_type, type, target_id, target_type
-| limit 200`, id)
-}
-
-func namesQuery(ids []string) string {
-	quoted := make([]string, len(ids))
-	for i, id := range ids {
-		quoted[i] = fmt.Sprintf("toSmartscapeId(%q)", id)
-	}
-	return fmt.Sprintf("smartscapeNodes \"*\"\n| filter in(id, {%s})\n| fields id, name, type\n| limit 200",
-		strings.Join(quoted, ", "))
-}
-
 func (v *relationsView) Init() tea.Cmd { return v.Refresh() }
 
 func (v *relationsView) Refresh() tea.Cmd {
 	v.seq++
 	v.loading = true
 	v.err = nil
-	v.dql = edgesQuery(v.entity.ID)
+	v.dql = catalog.EdgesQuery(v.entity.ID)
 	return v.ds.query(v, v.seq, v.dql)
 }
 
@@ -118,7 +92,7 @@ func (v *relationsView) Selection() (map[string]any, *catalog.Entity) {
 		return nil, nil
 	}
 	row := v.rows[v.cursor]
-	return nil, &catalog.Entity{ID: row.otherID, Name: v.names[row.otherID], Type: row.otherType}
+	return nil, &catalog.Entity{ID: row.OtherID, Name: v.names[row.OtherID], Type: row.OtherType}
 }
 
 func (v *relationsView) Update(msg tea.Msg) tea.Cmd {
@@ -146,7 +120,7 @@ func (v *relationsView) Update(msg tea.Msg) tea.Cmd {
 		if msg.err != nil {
 			return nil
 		}
-		v.rows = buildRelations(v.entity.ID, msg.records)
+		v.rows = catalog.BuildEdges(v.entity.ID, msg.records)
 		if v.cursor >= len(v.rows) {
 			v.cursor, v.offset = 0, 0
 		}
@@ -163,60 +137,15 @@ func (v *relationsView) resolveNames() tea.Cmd {
 	seen := map[string]bool{}
 	var ids []string
 	for _, row := range v.rows {
-		if !seen[row.otherID] {
-			seen[row.otherID] = true
-			ids = append(ids, row.otherID)
+		if !seen[row.OtherID] {
+			seen[row.OtherID] = true
+			ids = append(ids, row.OtherID)
 		}
 	}
 	if len(ids) == 0 {
 		return nil
 	}
-	return v.ds.query(nameOwner{v}, v.seq, namesQuery(ids))
-}
-
-// edgeRank orders relation rows for reading: structure (what this thing runs
-// on, owns, is part of — a host's processes, containers, K8s node) before the
-// communication mesh (calls, routes_to), which on a busy host is a hundred
-// host→host rows that would bury the structure.
-func edgeRank(edgeType string) int {
-	switch edgeType {
-	case "calls", "routes_to":
-		return 1
-	}
-	return 0
-}
-
-// buildRelations turns edge records into direction-aware rows: structural
-// edges first, outgoing before incoming, grouped by edge type.
-func buildRelations(selfID string, records []map[string]any) []relRow {
-	var rows []relRow
-	for _, rec := range records {
-		src, dst := catalog.Str(rec, "source_id"), catalog.Str(rec, "target_id")
-		row := relRow{edgeType: catalog.Str(rec, "type")}
-		if src == selfID {
-			row.outgoing = true
-			row.otherID, row.otherType = dst, catalog.Str(rec, "target_type")
-		} else {
-			row.otherID, row.otherType = src, catalog.Str(rec, "source_type")
-		}
-		if row.otherID == "" || row.otherID == selfID {
-			continue
-		}
-		rows = append(rows, row)
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		if a, b := edgeRank(rows[i].edgeType), edgeRank(rows[j].edgeType); a != b {
-			return a < b
-		}
-		if rows[i].outgoing != rows[j].outgoing {
-			return rows[i].outgoing
-		}
-		if rows[i].edgeType != rows[j].edgeType {
-			return rows[i].edgeType < rows[j].edgeType
-		}
-		return rows[i].otherType < rows[j].otherType
-	})
-	return rows
+	return v.ds.query(nameOwner{v}, v.seq, catalog.NamesQuery(ids))
 }
 
 func (v *relationsView) handleKey(msg tea.KeyMsg) tea.Cmd {
@@ -259,18 +188,18 @@ func (v *relationsView) move(delta int) {
 // neighbor) vs "PROCESS ← runs on" (the neighbor does it to us). The styled
 // form colors the verb by direction and dims the type; the plain form feeds
 // width math and the selected row, whose row style paints the whole line.
-func relationLabel(r relRow, styled bool) string {
-	verb := strings.ReplaceAll(r.edgeType, "_", " ")
+func relationLabel(r catalog.Edge, styled bool) string {
+	verb := strings.ReplaceAll(r.Verb, "_", " ")
 	if !styled {
-		if r.outgoing {
-			return verb + " → " + r.otherType
+		if r.Outgoing {
+			return verb + " → " + r.OtherType
 		}
-		return r.otherType + " ← " + verb
+		return r.OtherType + " ← " + verb
 	}
-	if r.outgoing {
-		return theme.ArrowOut.Render(verb+" →") + " " + theme.Dim.Render(r.otherType)
+	if r.Outgoing {
+		return theme.ArrowOut.Render(verb+" →") + " " + theme.Dim.Render(r.OtherType)
 	}
-	return theme.Dim.Render(r.otherType) + " " + theme.ArrowIn.Render("← "+verb)
+	return theme.Dim.Render(r.OtherType) + " " + theme.ArrowIn.Render("← "+verb)
 }
 
 func (v *relationsView) View(width, height int) string {
@@ -316,9 +245,9 @@ func (v *relationsView) View(width, height int) string {
 	}
 	for i := v.offset; i < end; i++ {
 		row := v.rows[i]
-		name := v.names[row.otherID]
+		name := v.names[row.OtherID]
 		if name == "" {
-			name = row.otherID
+			name = row.OtherID
 		}
 		if i == v.cursor {
 			line := pad(relationLabel(row, false), relW) + " " + pad(name, nameW)

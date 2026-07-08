@@ -206,7 +206,7 @@ func (v *inspectorView) resolveNames() tea.Cmd {
 	for _, id := range ids {
 		v.nameReq[id] = true
 	}
-	return v.ds.query(inspNameOwner{v}, v.seq, namesQuery(ids))
+	return v.ds.query(inspNameOwner{v}, v.seq, catalog.NamesQuery(ids))
 }
 
 // withName appends the resolved Smartscape name next to an entity-id value

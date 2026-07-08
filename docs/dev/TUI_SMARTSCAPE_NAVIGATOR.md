@@ -1,8 +1,17 @@
 # Smartscape Navigator — TUI Concept
 
-**Status:** Concept — not yet scheduled
-**Created:** 2026-07-08
+**Status:** Implemented (Phases 1 & 2) — Phase 3 (lookahead & polish) open
+**Created:** 2026-07-08 · **Implemented:** 2026-07-08 (verified live on the box tenant)
 **Author:** dtctl team
+
+> Implementation deviations from the draft below: the mesh toggle is **`M`**,
+> not `t` (`t` is the global timeframe picker and never reaches views), and
+> `g`/`G` stay cursor home/end — the overview is `esc` or `:nav` away.
+> Live verification surfaced verbs beyond the documented four (`belongs_to`,
+> `uses`); they group generically and rank as structure. The schema query's
+> lazy-projection + summarize combination is now **validated live**. A full
+> edge page renders as "N+ relations (edge limit)" so truncation never reads
+> as completeness. Code: `pkg/tui/navigator.go`, `pkg/tui/catalog/smartscape.go`.
 
 ## Summary
 
@@ -169,9 +178,8 @@ instead of vim-purist `h/l` (which would collide with `l` = logs).
 | `d` | full detail page for highlighted node (existing `detailMsg`) |
 | `l` `m` `s` `v` | logs/metrics/traces/events scoped to highlighted node |
 | `i` | cycle direction filter: both → outgoing → incoming |
-| `t` | toggle mesh edges (`calls`, `routes_to`) — structure-only view |
+| `M` | toggle mesh edges (`calls`, `routes_to`) — structure-only view |
 | `/` | filter neighbors by name |
-| `g` | jump to overview |
 | `x` `.` `o` `y` `ctrl+q` | global: quick relations, pin scope, open browser, yank, reveal DQL |
 | `esc` | leave navigator (normal page-back) |
 
@@ -220,9 +228,9 @@ smartscapeEdges "*"
 | sort count desc
 ```
 
-> ⚠ Verify live before building: `summarize by:{}` over the lazy
-> `source_type`/`target_type` projections is unproven; the tmux live-check
-> workflow applies (TUI_LEARNINGS §5).
+> ✅ Validated live (box tenant, 2026-07-08): the summarize over the
+> `fieldsAdd`-materialized lazy projections works; counts serialize as
+> strings (handled by `catalog.IntValue`).
 
 **Type instances** (browser):
 
@@ -310,15 +318,16 @@ DQL works.
 
 ## Phasing
 
-**Phase 1 — Walk mode MVP** (the value core)
-Walk view only: grouped ego list, trail, basic preview (name/id/type +
-cached facts), `enter` re-root, `←` backtrack, `d` detail, drills via
-selection, global `X`, `:nav <id|name>`, shared queries in catalog, history.
+**Phase 1 — Walk mode MVP** ✅ shipped
+Walk view: grouped ego list, trail, preview (identity + health + cached
+facts), `enter` re-root, `←` backtrack, `d` detail, drills via selection,
+global `X`, `:nav <id|TYPE>`, shared queries in `catalog/smartscape.go`,
+history (trail survives restore).
 
-**Phase 2 — Overview & health**
+**Phase 2 — Overview & health** ✅ shipped
 Census + schema overview, type browser, session-wide active-problem overlay
 (dual-era matching), debounced preview facts, collapsible groups, fan-out
-caps, `i`/`t` filters.
+caps with explicit `+N more`, `i`/`M` filters.
 
 **Phase 3 — Lookahead & polish**
 Expand-in-place (`space` on a neighbor shows *its* neighbors inline, depth
@@ -332,8 +341,6 @@ the actual edge list).
   cache amortizes it, but a pathological walk across 50 unvisited high-degree
   nodes is 100 queries. The 60 s fetch timeout and seq-based staleness
   (owner/seq convention) already handle slow tenants.
-- **The schema query is unverified** — Phase 2 gate: live-verify the lazy
-  projection + summarize combination first.
 - **Preview churn** — cursor-follows-preview needs debounce discipline or it
   spams the query API; the (owner, seq) drop-stale pattern covers
   correctness, the debounce covers cost.

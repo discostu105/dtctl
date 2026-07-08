@@ -535,8 +535,10 @@ Key design points learned:
 
 ### Bespoke screens (not table-driven)
 
-`home`, `query` (DQL escape hatch), `waterfall`, `relations`, `detail`,
-`inspector`, `metrics` each implement the `viewModel` interface directly.
+`home`, `query` (DQL escape hatch), `nav` (smartscape navigator — overview /
+type browser / walk, see TUI_SMARTSCAPE_NAVIGATOR.md), `waterfall`,
+`relations`, `detail`, `inspector`, `metrics` each implement the `viewModel`
+interface directly.
 Optional capability interfaces let the app treat them uniformly:
 `selectionProvider` (pin/relations/yank/open), `dqlProvider` (ctrl+q reveal),
 `traceProvider` (waterfall's trace id).

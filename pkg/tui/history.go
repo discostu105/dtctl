@@ -40,6 +40,7 @@ type pageRef struct {
 	TraceID  string          `json:"traceId,omitempty"`  // waterfall / trace-scoped tables
 	DQL      string          `json:"dql,omitempty"`      // query editor content
 	Entity   *catalog.Entity `json:"entity,omitempty"`   // detail/metrics/relations/table scope
+	Trail    []catalog.Entity `json:"trail,omitempty"`   // navigator walk path
 	Title    string          `json:"title,omitempty"`    // inspector title
 	Rec      map[string]any  `json:"rec,omitempty"`      // inspector record, kept verbatim
 }
@@ -243,6 +244,14 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 	case *relationsView:
 		e := v.entity
 		return pageRef{Kind: "relations", Crumb: v.Crumb(), Entity: &e}, true
+	case *navView:
+		ref := pageRef{Kind: "nav", Crumb: v.Crumb(), View: navModeName(v.mode), Arg: v.typ}
+		if v.mode == navWalk {
+			e := v.root
+			ref.Entity = &e
+			ref.Trail = append([]catalog.Entity{}, v.trail...)
+		}
+		return ref, true
 	case *waterfallView:
 		return pageRef{Kind: "waterfall", Crumb: v.Crumb(), TraceID: v.traceID}, true
 	case *timelineView:
@@ -305,6 +314,23 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 			return nil, fmt.Errorf("relations page without entity")
 		}
 		return newRelationsView(a.ds, *ref.Entity, tf), nil
+	case "nav":
+		switch ref.View {
+		case "walk":
+			if ref.Entity == nil {
+				return nil, fmt.Errorf("walk page without entity")
+			}
+			v := newNavWalkView(a.ds, *ref.Entity, tf)
+			v.trail = append([]catalog.Entity{}, ref.Trail...)
+			return v, nil
+		case "types":
+			if ref.Arg == "" {
+				return nil, fmt.Errorf("type browser without a type")
+			}
+			return newNavBrowserView(a.ds, ref.Arg, tf), nil
+		default:
+			return newNavView(a.ds, tf), nil
+		}
 	case "waterfall":
 		return newWaterfallView(a.ds, ref.TraceID, tf), nil
 	case "timeline":

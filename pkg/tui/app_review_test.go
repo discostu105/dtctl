@@ -153,15 +153,16 @@ func TestHomePanelDropsStaleResults(t *testing.T) {
 func TestCommandBarEmptyEnterOpensHighlighted(t *testing.T) {
 	a := testApp(t, "problems")
 	press(a, key(":"))
-	// Cycle to the second suggestion, then enter with no text typed.
+	// Cycle to the second suggestion, then enter with no text typed. The
+	// palette lists the bespoke screens first (home, query, nav), so index 1
+	// is "query" — the crumb, not the view type, carries the assertion.
 	press(a, tea.KeyMsg{Type: tea.KeyTab})
 	want := a.cmdMatches[a.cmdSel].Name
 	press(a, key("enter"))
 	if a.cmdActive {
 		t.Fatal("enter should close the command bar")
 	}
-	tv, ok := a.top().(*tableView)
-	if !ok || tv.spec.Name != want {
+	if a.top().Crumb() != want {
 		t.Fatalf("empty enter should open highlighted %q, got %v", want, a.top().Crumb())
 	}
 }

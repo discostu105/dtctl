@@ -160,10 +160,12 @@ func (a *app) viewFor(name string) (viewModel, error) {
 		return newHomeView(a.ds, a.tf), nil
 	case "query", "dql":
 		return newQueryView(a.ds, "", a.tf), nil
+	case "nav", "smartscape", "navigator":
+		return newNavView(a.ds, a.tf), nil
 	}
 	spec := catalog.Lookup(name)
 	if spec == nil {
-		return nil, fmt.Errorf("unknown view %q (available: home, query, %s)", name, strings.Join(catalog.Names(), ", "))
+		return nil, fmt.Errorf("unknown view %q (available: home, query, nav, %s)", name, strings.Join(catalog.Names(), ", "))
 	}
 	scope := catalog.Scope{Timeframe: a.tf}
 	// Only hand the pin to a view whose query actually composes it, so the
@@ -276,6 +278,16 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 
 	case relationsMsg:
 		return a.navigate(newRelationsView(a.ds, msg.entity, a.tf), false)
+
+	case navMsg:
+		switch {
+		case msg.root != nil:
+			return a.navigate(newNavWalkView(a.ds, *msg.root, a.tf), msg.replace)
+		case msg.typ != "":
+			return a.navigate(newNavBrowserView(a.ds, msg.typ, a.tf), msg.replace)
+		default:
+			return a.navigate(newNavView(a.ds, a.tf), msg.replace)
+		}
 
 	case queryMsg:
 		return a.navigate(newQueryView(a.ds, msg.dql, a.tf), false)
@@ -420,6 +432,13 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 				return func() tea.Msg { return relationsMsg{entity: e} }
 			}
 			return statusErr("selection carries no entity for relations")
+		case "X":
+			// The capital sibling of x: the full navigator, rooted here.
+			if _, entity := a.selection(); entity != nil {
+				e := *entity
+				return func() tea.Msg { return navMsg{root: &e} }
+			}
+			return statusErr("selection carries no entity to walk")
 		case ".":
 			return a.togglePin()
 		case "ctrl+x":
@@ -495,6 +514,24 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 		return tea.Batch(nav, statusErr(fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)))
 	}
 	return nav
+}
+
+// openNav routes a command-bar navigator jump: no argument opens the
+// overview, an entity id walks from it, anything else browses it as a type
+// (case-insensitive — Smartscape types are upper snake case).
+func (a *app) openNav(arg string) tea.Cmd {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		return a.jumpTo("nav", "")
+	}
+	if entityIDRe.MatchString(arg) {
+		root := entityFromID(arg)
+		return func() tea.Msg { return navMsg{root: root, replace: true} }
+	}
+	if typ := strings.ToUpper(arg); navTypeRe.MatchString(typ) {
+		return func() tea.Msg { return navMsg{typ: typ, replace: true} }
+	}
+	return statusErr("usage: nav [<TYPE> | <entity-id>]")
 }
 
 // applyFacetBelow routes an inspector's facet request to the nearest list
@@ -736,6 +773,8 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 			return a.openHistory()
 		case "home", "query", "dql":
 			return a.jumpTo(input[0], "")
+		case "nav", "smartscape", "navigator":
+			return a.openNav(arg)
 		case "trace":
 			if arg == "" {
 				return statusErr("usage: trace <trace-id>")
@@ -749,6 +788,14 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 		if spec == nil {
 			return statusErr(fmt.Sprintf("unknown view %q", input[0]))
 		}
+		// A highlighted bespoke entry (partial input like ":na") routes like
+		// its exact-name special above — never into newTableView.
+		switch spec.Name {
+		case "home", "query":
+			return a.jumpTo(spec.Name, "")
+		case "nav":
+			return a.openNav(arg)
+		}
 		// Arguments narrow the jump (":pods checkout" pre-fills the filter).
 		return a.jumpTo(spec.Name, arg)
 	}
@@ -758,12 +805,23 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
+// bespokeSpecs are the command palette's entries for the non-catalog screens,
+// so :nav and friends are discoverable by scanning or typing. Display-only
+// stubs — deliberately NOT in the catalog registry (Lookup must never hand
+// them to newTableView; the enter path routes them by name).
+var bespokeSpecs = []*catalog.Spec{
+	{Name: "home", Desc: "Triage landing page"},
+	{Name: "query", Aliases: []string{"dql"}, Desc: "DQL escape hatch"},
+	{Name: "nav", Aliases: []string{"smartscape", "navigator"}, Desc: "Smartscape topology navigator"},
+}
+
 func (a *app) updateCmdMatches() {
 	first := ""
 	if fields := strings.Fields(a.cmdInput.Value()); len(fields) > 0 {
 		first = fields[0]
 	}
-	a.cmdMatches = catalog.Match(first)
+	candidates := append(append([]*catalog.Spec{}, bespokeSpecs...), catalog.All()...)
+	a.cmdMatches = catalog.MatchSpecs(candidates, first)
 	a.cmdSel = 0
 }
 
@@ -910,7 +968,7 @@ func (a *app) renderCmdPalette() string {
 	if rest := len(a.cmdMatches) - limit; rest > 0 {
 		b.WriteString(theme.Dim.Render(fmt.Sprintf(" … %d more", rest)) + "\n")
 	}
-	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :home :query :history :trace <id>"))
+	b.WriteString("\n" + theme.Dim.Render("tab next · enter open · also :history :trace <id>"))
 	return b.String()
 }
 
@@ -1003,7 +1061,8 @@ func (a *app) renderHelp() string {
 			{"a", "log patterns — Davis clustering of the current logs (enter: records with the pattern's fields parsed out)"},
 			{"u", "sessions of a frontend / session timeline of a RUM event"},
 			{"e", "user events of a frontend / of a session"},
-			{"x", "relations — walk the Smartscape topology"},
+			{"x", "relations — one hop of Smartscape topology"},
+			{"X", "smartscape navigator — walk the topology from the selection (:nav)"},
 			{"d", "describe / details"},
 		}},
 		{"Scope & actions", []keyHint{
@@ -1028,7 +1087,7 @@ func (a *app) renderHelp() string {
 				theme.KeyHint.Render(fmt.Sprintf("%-12s", h.Key)), h.Desc))
 		}
 	}
-	b.WriteString("\n" + theme.Dim.Render(wrap("views: home · query · "+strings.Join(catalog.Names(), " · "), 76)))
+	b.WriteString("\n" + theme.Dim.Render(wrap("views: home · query · nav · "+strings.Join(catalog.Names(), " · "), 76)))
 	return b.String()
 }
 
