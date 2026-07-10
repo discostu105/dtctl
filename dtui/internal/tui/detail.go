@@ -286,13 +286,39 @@ type detailView struct {
 	pulseSeq    int
 	pulse       []map[string]any // active problems, latest record each
 	pulseLoaded bool
+
+	// Vitals: the details tab's utilization block (the Vital-marked subset
+	// of the type's canned metrics), fetched page-level like the pulse.
+	vitalsSeq  int
+	vitalsSpec *catalog.MetricsSpec // nil = type has no vitals
 }
 
 // pulseOwner tags the page's active-problem query.
 type pulseOwner struct{ v *detailView }
 
+// vitalsProbeOwner and vitalsOwner tag the vitals block's two query phases
+// (availability probe, then the timeseries over the available subset).
+type vitalsProbeOwner struct{ v *detailView }
+type vitalsOwner struct{ v *detailView }
+
+// containmentTab names each type's most relevant next entity — the
+// opinionated first hop (a host's processes, a pod's containers) served as a
+// pre-scoped table on the first tab after the details. The related tab keeps
+// the full unranked edge list for everything else.
+var containmentTab = map[string]string{
+	"HOST":            "processes",
+	"K8S_POD":         "containers",
+	"K8S_NODE":        "pods",
+	"K8S_DEPLOYMENT":  "pods",
+	"K8S_STATEFULSET": "pods",
+	"K8S_DAEMONSET":   "pods",
+	"K8S_NAMESPACE":   "workloads",
+	"K8S_CLUSTER":     "nodes",
+}
+
 func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf catalog.Timeframe) *detailView {
-	v := &detailView{entity: entity, rec: rec, ds: ds, tf: tf}
+	v := &detailView{entity: entity, rec: rec, ds: ds, tf: tf,
+		vitalsSpec: catalog.VitalsFor(entity.Type)}
 	// Signal tabs share a pointer to the page entity: when an id-only jump
 	// (an inspector entity link) learns the name from the detail fetch, the
 	// still-unstarted tabs compose it into their scope filters — K8s log
@@ -300,20 +326,21 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 	scope := catalog.Scope{Entity: &v.entity, Timeframe: tf}
 	v.tabs = []detailTab{
 		{name: "details", view: newEntityInfoView(ds, entity, rec)},
-		// Every entity's topology neighbors, one tab away: a host's
-		// processes, containers, and K8s node; a service's callers. enter
-		// navigates to the neighbor, x keeps walking.
-		{name: "related", view: newEmbeddedRelationsView(ds, entity, tf)},
 	}
-	// Containment tab: a K8s node's pods as a pre-scoped pods table — the
-	// same hop the nodes list offers via enter, kept on the node's page. A
-	// host's pods live here too (host → related → its K8S_NODE → pods): pods
-	// edge to the node in Smartscape, not to the host.
-	if entity.Type == "K8S_NODE" {
-		if spec := catalog.Lookup("pods"); spec != nil {
-			v.tabs = append(v.tabs, detailTab{name: "pods", view: newTableView(ds, spec, scope)})
+	// The type's most relevant next entity, first tab after the details: a
+	// host's processes, a pod's containers, a node's pods — pre-scoped real
+	// tables (sparklines, sorting, drills), not raw edges. Note a host's
+	// pods still live one hop out (host → related → its K8S_NODE → pods):
+	// pods edge to the node in Smartscape, not to the host.
+	if name := containmentTab[entity.Type]; name != "" {
+		if spec := catalog.Lookup(name); spec != nil {
+			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, scope)})
 		}
 	}
+	// Every entity's topology neighbors, one tab away: a host's containers
+	// and K8s node, a service's callers. enter navigates to the neighbor, x
+	// keeps walking.
+	v.tabs = append(v.tabs, detailTab{name: "related", view: newEmbeddedRelationsView(ds, entity, tf)})
 	// Every entity gets a metrics tab: the canned charts where a type has
 	// them (enter opens the explorer from there), the scoped metric explorer
 	// where it doesn't.
@@ -368,7 +395,7 @@ func (v *detailView) Selection() (map[string]any, *catalog.Entity) {
 }
 
 func (v *detailView) Init() tea.Cmd {
-	return tea.Batch(v.startFirst(), v.pulseCmd())
+	return tea.Batch(v.startFirst(), v.pulseCmd(), v.vitalsCmd())
 }
 
 // pulseCmd fires the header's active-problem query.
@@ -381,14 +408,42 @@ func (v *detailView) pulseCmd() tea.Cmd {
 	return v.ds.query(pulseOwner{v}, v.pulseSeq, catalog.ProblemPulseQuery(v.entity, v.tf))
 }
 
-func (v *detailView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
-	v.tf = tf
-	return tea.Batch(v.setTimeframeTabs(tf), v.pulseCmd())
+// vitalsCmd fires the details tab's utilization block, availability probe
+// first — a timeseries returns zero records when ANY requested key is
+// entirely absent, so charting the fixed vitals list blindly would blank the
+// block for entities missing one metric.
+func (v *detailView) vitalsCmd() tea.Cmd {
+	if v.ds == nil || v.vitalsSpec == nil {
+		return nil
+	}
+	v.vitalsSeq++
+	return v.ds.query(vitalsProbeOwner{v}, v.vitalsSeq, v.vitalsSpec.AvailabilityQuery(v.entity, v.tf))
 }
 
-// Refresh refetches the visible tab and the header pulse together.
+// vitalStats extracts the vitals rows from the timeseries record: one row
+// per spec series that actually reported (absent keys were never queried,
+// all-null series carry nothing worth a row).
+func (v *detailView) vitalStats(rec map[string]any) []vitalStat {
+	var stats []vitalStat
+	for _, s := range v.vitalsSpec.Series {
+		series := floatSeries(rec[s.Alias])
+		if len(series) == 0 {
+			continue
+		}
+		stats = append(stats, vitalStat{title: s.Title, unit: s.Unit, key: s.Key, series: series})
+	}
+	return stats
+}
+
+func (v *detailView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
+	v.tf = tf
+	return tea.Batch(v.setTimeframeTabs(tf), v.pulseCmd(), v.vitalsCmd())
+}
+
+// Refresh refetches the visible tab and the page-level queries (pulse,
+// vitals) together.
 func (v *detailView) Refresh() tea.Cmd {
-	return tea.Batch(v.tabSet.Refresh(), v.pulseCmd())
+	return tea.Batch(v.tabSet.Refresh(), v.pulseCmd(), v.vitalsCmd())
 }
 
 func (v *detailView) Crumb() string { return entityName(v.entity) }
@@ -399,6 +454,38 @@ func (v *detailView) Update(msg tea.Msg) tea.Cmd {
 		return v.resizeTabs(msg.width, msg.height)
 
 	case dataMsg:
+		if vo, ok := msg.owner.(vitalsProbeOwner); ok {
+			if vo.v != v || msg.seq != v.vitalsSeq {
+				return nil
+			}
+			if msg.err != nil {
+				// Probe failed — chart the full vitals list; a fully absent
+				// key then blanks the block, which is the honest fallback.
+				return v.ds.query(vitalsOwner{v}, v.vitalsSeq, v.vitalsSpec.Query(v.entity, v.tf, nil))
+			}
+			available := map[string]bool{}
+			for _, rec := range msg.records {
+				if k := catalog.Str(rec, "metric.key"); k != "" {
+					available[k] = true
+				}
+			}
+			dql := v.vitalsSpec.Query(v.entity, v.tf, available)
+			if dql == "" {
+				return nil // nothing reports; the block stays absent
+			}
+			return v.ds.query(vitalsOwner{v}, v.vitalsSeq, dql)
+		}
+		if vo, ok := msg.owner.(vitalsOwner); ok {
+			// Errors and empties degrade to an absent block — the vitals
+			// must never noise up the page.
+			if vo.v != v || msg.seq != v.vitalsSeq || msg.err != nil || len(msg.records) == 0 {
+				return nil
+			}
+			if iv, ok := v.tabs[0].view.(*inspectorView); ok {
+				iv.setVitals(v.vitalStats(msg.records[0]), v.tf.Label)
+			}
+			return nil
+		}
 		if po, ok := msg.owner.(pulseOwner); ok {
 			if po.v != v || msg.seq != v.pulseSeq {
 				return nil

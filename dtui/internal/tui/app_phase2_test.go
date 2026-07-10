@@ -87,10 +87,10 @@ func TestHotkeysJumpEverywhereAndLettersJumpTabs(t *testing.T) {
 		t.Fatalf("out-of-range digit must stay on the page, top=%T", a.top())
 	}
 	// On a lens-less tab the tab bar is the numbered strip again: 2 picks
-	// the related tab.
+	// the second tab (a pod's containers).
 	dv.setActive(0) // details — no lens strip
 	press(a, key("2"))
-	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "related" {
+	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "containers" {
 		t.Fatalf("digit on a lens-less tab must pick a page tab (active=%s, top=%T)", dv.tabs[dv.active].name, a.top())
 	}
 	// esc pops out — the digits are global bookmarks again.

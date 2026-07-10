@@ -74,6 +74,13 @@ func MetricScopeFilter(e Entity) string {
 	if e.Type == "SERVICE" && e.Name != "" {
 		parts = append(parts, fmt.Sprintf("service.name == %q", e.Name))
 	}
+	if e.Type == "K8S_NODE" && e.Name != "" {
+		// A node's own utilization lives in dt.host.* series, which carry
+		// host.name but no dt.smartscape.k8s_node (validated live; OneAgent
+		// names the host after the node) — the name arm lets a node scope
+		// find its host's metrics too.
+		parts = append(parts, fmt.Sprintf("host.name == %q", e.Name))
+	}
 	parts = append(parts, fmt.Sprintf("dt.smartscape_source.id == toSmartscapeId(%q)", e.ID))
 	return strings.Join(parts, " or ")
 }

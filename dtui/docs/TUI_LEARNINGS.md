@@ -132,6 +132,27 @@ can actually be filtered by.
   **no record** (treat missing as "no data", not zero). The service timeseries
   also emits a record with a **null by-key** — skip it when building the id→series
   map.
+- **Process/container/infra dimensions** (validated live, box tenant):
+  `dt.process.*` series carry `dt.smartscape.process` AND `dt.smartscape.host`
+  AND `host.name` — one query lists a host's processes ranked by CPU.
+  `dt.process.cpu.usage` / `.memory.usage` are **percent of host**;
+  `.memory.working_set_size` is bytes. `dt.kubernetes.container.*` series
+  carry `dt.smartscape.container` plus `dt.smartscape.k8s_{pod,deployment,
+  statefulset,daemonset,namespace,cluster}` — the workload/namespace/cluster
+  vitals scope by their own smartscape id. `dt.host.*` series carry
+  `host.name`, and a K8s node's name equals its OneAgent host name (EKS) —
+  `MetricScopeFilter` adds a `host.name` arm for `K8S_NODE`, which is how a
+  node page charts real utilization (allocatable-only otherwise).
+- **PROCESS/CONTAINER Smartscape nodes join by plain names**: both carry
+  `host.name`; CONTAINER carries every `k8s.*` name (pod, workload, namespace,
+  cluster) plus `container.image.name/.version`; a process' pod lives in
+  `` process.metadata[`KUBERNETES_FULL_POD_NAME`] `` (backtick map access
+  filters server-side). EC2 has **no `cloud.aws.ec2.*` CloudWatch keys** on
+  box — EC2 utilization lives on the OneAgent HOST entity; CloudWatch coverage
+  is rds/networkelb/eks/ecr.
+- `container.image.name` on CONTAINER nodes **flaps** between the repo path
+  and a bare 12-hex image id (observed live minutes apart) — render whatever
+  is there, don't parse it as a URL.
 
 ### 1.6b The `metrics` command — the explorer substrate
 

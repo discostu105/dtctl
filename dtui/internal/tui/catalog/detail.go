@@ -100,6 +100,27 @@ func KeyFacts(entityType string) []Fact {
 			Fact{Label: "first seen", Value: lifetimeBound("start")},
 			Fact{Label: "last seen", Value: lifetimeBound("end")},
 		)
+	case "PROCESS":
+		return append(common,
+			Fact{Label: "group", Value: factField("dt.process_group.detected_name")},
+			Fact{Label: "tech", Value: processTech},
+			Fact{Label: "command", Value: processCommand},
+			Fact{Label: "host", Value: factField("host.name")},
+			Fact{Label: "pod", Value: processPod},
+			Fact{Label: "ports", Value: factField("port")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
+	case "CONTAINER":
+		return append(common,
+			Fact{Label: "image", Value: containerImage},
+			Fact{Label: "pod", Value: factField("k8s.pod.name")},
+			Fact{Label: "namespace", Value: factField("k8s.namespace.name")},
+			Fact{Label: "node", Value: factField("k8s.node.name")},
+			Fact{Label: "runtime", Value: factField("container.runtime.name")},
+			Fact{Label: "first seen", Value: lifetimeBound("start")},
+			Fact{Label: "last seen", Value: lifetimeBound("end")},
+		)
 	case "K8S_POD":
 		return append(common,
 			Fact{Label: "phase", Value: factField("k8s.pod.phase")},
@@ -189,6 +210,24 @@ func KeyFacts(entityType string) []Fact {
 // podWorkload joins the workload kind and name ("deployment checkout").
 func podWorkload(rec map[string]any) string {
 	return joinNonEmpty(" ", Str(rec, "k8s.workload.kind"), Str(rec, "k8s.workload.name"))
+}
+
+// processCommand reads the detected command line from process.metadata.
+func processCommand(rec map[string]any) string {
+	meta, _ := rec["process.metadata"].(map[string]any)
+	if meta == nil {
+		return ""
+	}
+	return Str(meta, "COMMAND_LINE_ARGS")
+}
+
+// processPod names the pod a containerized process runs in.
+func processPod(rec map[string]any) string {
+	meta, _ := rec["process.metadata"].(map[string]any)
+	if meta == nil {
+		return ""
+	}
+	return Str(meta, "KUBERNETES_FULL_POD_NAME")
 }
 
 // labelTag reads a key from the tags:k8s.labels map field.

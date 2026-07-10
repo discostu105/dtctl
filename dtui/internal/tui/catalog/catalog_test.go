@@ -118,7 +118,7 @@ func TestEntityViewsIgnoreScope(t *testing.T) {
 
 func TestMetricsFor(t *testing.T) {
 	host := MetricsFor("HOST")
-	if host == nil || len(host.Series) != 3 {
+	if host == nil || len(host.Series) != 5 {
 		t.Fatalf("MetricsFor(HOST) = %+v", host)
 	}
 	q := host.Query(Entity{ID: "HOST-9", Type: "HOST"}, Timeframe{Label: "30m"}, nil)
@@ -163,7 +163,7 @@ func TestMetricsSpecAvailabilitySubset(t *testing.T) {
 		"dt.kubernetes.pod.network_transmitted_data": true,
 	}
 	q := pod.Query(e, tf, available)
-	for _, want := range []string{"cpu = avg(", "mem = avg(", "net_rx = avg(", "net_tx = avg("} {
+	for _, want := range []string{"cpu = sum(", "mem = sum(", "net_rx = avg(", "net_tx = avg("} {
 		if !strings.Contains(q, want) {
 			t.Errorf("subset query missing %q:\n%s", want, q)
 		}

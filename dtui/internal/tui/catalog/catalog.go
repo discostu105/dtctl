@@ -275,8 +275,8 @@ func EnrichKey(alias string) string { return "__enrich." + alias }
 
 // specs is the ordered registry; order drives command-bar suggestions.
 var specs = []*Spec{
-	problemsSpec, servicesSpec, hostsSpec, logsSpec, tracesSpec, eventsSpec,
-	podsSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec,
+	problemsSpec, servicesSpec, hostsSpec, processesSpec, logsSpec, tracesSpec, eventsSpec,
+	podsSpec, containersSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec,
 	awsSpec, entitiesSpec, resourcesSpec,
 	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, metricsSpec,
 	sessionsSpec, userEventsSpec, bizeventsSpec,

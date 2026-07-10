@@ -162,20 +162,28 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	// The details tab renders instantly from the list row: tab bar, curated
 	// key facts, and full properties without waiting for a fetch.
 	body := a.top().View(120, 30)
-	for _, want := range []string{"details", "related", "metrics", "logs", "events", "problems",
+	for _, want := range []string{"details", "processes", "related", "metrics", "logs", "events", "problems",
 		"7.6 GiB", "2 logical / 1 physical", "aws us-east-1b", "HOST-AAAABBBBCCCCDDDD"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("details tab missing %q:\n%s", want, body)
 		}
 	}
 
-	// tab switches to the related tab and lazily starts its edge walk — the
-	// host's processes/pods topology is one keypress from the facts.
+	// tab switches to the processes tab — the host's most relevant next
+	// entity, pre-scoped to it by host name.
 	press(a, key("tab"))
 	if dv.active != 1 {
-		t.Fatalf("tab should move to related, active = %d", dv.active)
+		t.Fatalf("tab should move to processes, active = %d", dv.active)
 	}
-	rv, ok := dv.tabs[1].view.(*relationsView)
+	procs, ok := dv.tabs[1].view.(*tableView)
+	if !ok || procs.spec.Name != "processes" ||
+		!strings.Contains(procs.dql, `host.name == "web-01.example.invalid"`) {
+		t.Fatalf("processes tab should be scoped to the host, dql = %q", procs.dql)
+	}
+
+	// Another tab reaches related and lazily starts its edge walk.
+	press(a, key("tab"))
+	rv, ok := dv.tabs[2].view.(*relationsView)
 	if !ok || !strings.Contains(rv.dql, `source_id == toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Fatalf("related tab dql = %q", rv.dql)
 	}
@@ -184,7 +192,7 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	// starts its availability probe (the chart query follows once the probe
 	// returns).
 	press(a, key("m"))
-	mv, ok := dv.tabs[2].view.(*metricsView)
+	mv, ok := dv.tabs[3].view.(*metricsView)
 	if !ok || !strings.Contains(mv.dql, "metrics from:") ||
 		!strings.Contains(mv.dql, `toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Fatalf("metrics tab dql = %q", mv.dql)
@@ -251,10 +259,11 @@ func TestHostDetailRelatedTab(t *testing.T) {
 	press(a, key("enter"))
 	dv := a.top().(*detailView)
 
-	press(a, key("tab"))
+	press(a, key("tab")) // processes (the containment tab)
+	press(a, key("tab")) // related
 	rv, ok := dv.tabs[dv.active].view.(*relationsView)
 	if !ok {
-		t.Fatalf("tab should activate the related tab, view = %T", dv.tabs[dv.active].view)
+		t.Fatalf("tab tab should activate the related tab, view = %T", dv.tabs[dv.active].view)
 	}
 
 	dv.Update(dataMsg{owner: rv, seq: rv.seq, records: []map[string]any{

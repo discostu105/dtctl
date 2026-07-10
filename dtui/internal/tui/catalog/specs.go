@@ -347,6 +347,11 @@ type MetricSeries struct {
 	// Default fills empty buckets (the `default:` parameter) — sparse
 	// counters like deadlocks read better as zero lines than gaps.
 	Default string
+	// Vital marks the series for the details tab's vitals block — the
+	// utilization overview someone triaging reads before anything else
+	// (host CPU/memory/disk, pod CPU/memory/network). The metrics tab
+	// charts every series; vitals render only the marked subset.
+	Vital bool
 }
 
 // Expr renders the series' aggregation expression for a timeseries query.
@@ -404,6 +409,30 @@ func (m *MetricsSpec) Query(e Entity, tf Timeframe, available map[string]bool) s
 	return q
 }
 
+// Vitals returns the spec reduced to its Vital-marked series — the details
+// tab's utilization block. nil when the spec marks none.
+func (m *MetricsSpec) Vitals() *MetricsSpec {
+	var vital []MetricSeries
+	for _, s := range m.Series {
+		if s.Vital {
+			vital = append(vital, s)
+		}
+	}
+	if len(vital) == 0 {
+		return nil
+	}
+	return &MetricsSpec{Series: vital, Filter: m.Filter}
+}
+
+// VitalsFor returns the vitals spec for an entity type, or nil when the type
+// has no curated vitals.
+func VitalsFor(entityType string) *MetricsSpec {
+	if m := MetricsFor(entityType); m != nil {
+		return m.Vitals()
+	}
+	return nil
+}
+
 // smartscapeEq scopes a metrics filter to one entity via its
 // dt.smartscape.* dimension.
 func smartscapeEq(entityType string) func(e Entity) string {
@@ -418,13 +447,45 @@ func smartscapeEq(entityType string) func(e Entity) string {
 func MetricsFor(entityType string) *MetricsSpec {
 	switch entityType {
 	case "HOST":
+		// Disk charts the fullest disk (max), not the average — the average
+		// hides the one volume about to run out. Network sums across NICs.
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "cpu", Title: "CPU usage", Unit: "%", Key: "dt.host.cpu.usage", Agg: "avg"},
-				{Alias: "mem", Title: "Memory usage", Unit: "%", Key: "dt.host.memory.usage", Agg: "avg"},
-				{Alias: "disk", Title: "Disk used", Unit: "%", Key: "dt.host.disk.used.percent", Agg: "avg"},
+				{Alias: "cpu", Title: "CPU usage", Unit: "%", Key: "dt.host.cpu.usage", Agg: "avg", Vital: true},
+				{Alias: "mem", Title: "Memory usage", Unit: "%", Key: "dt.host.memory.usage", Agg: "avg", Vital: true},
+				{Alias: "disk", Title: "Disk used (worst)", Unit: "%", Key: "dt.host.disk.used.percent", Agg: "max", Vital: true},
+				{Alias: "net_rx", Title: "Network received", Unit: "B/s", Key: "dt.host.net.nic.bytes_rx", Agg: "sum", Vital: true},
+				{Alias: "net_tx", Title: "Network transmitted", Unit: "B/s", Key: "dt.host.net.nic.bytes_tx", Agg: "sum", Vital: true},
 			},
 			Filter: smartscapeEq("HOST"),
+		}
+	case "PROCESS":
+		// dt.process.cpu.usage and memory.usage are the process' share of the
+		// host in percent; working set is bytes (validated live: 2.35% mem ↔
+		// 387MB working set). Scoped via dt.smartscape.process.
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "cpu", Title: "CPU usage", Unit: "%", Key: "dt.process.cpu.usage", Agg: "avg", Vital: true},
+				{Alias: "mem", Title: "Memory usage", Unit: "%", Key: "dt.process.memory.usage", Agg: "avg", Vital: true},
+				{Alias: "ws", Title: "Memory working set", Unit: "B", Key: "dt.process.memory.working_set_size", Agg: "avg", Vital: true},
+				{Alias: "net_rx", Title: "Network received", Unit: "B/s", Key: "dt.process.network.bytes_rx", Agg: "avg"},
+				{Alias: "net_tx", Title: "Network transmitted", Unit: "B/s", Key: "dt.process.network.bytes_tx", Agg: "avg"},
+				{Alias: "fds", Title: "File descriptors used", Unit: "%", Key: "dt.process.handles.file_descriptors_percent_used", Agg: "avg"},
+			},
+			Filter: smartscapeEq("PROCESS"),
+		}
+	case "CONTAINER":
+		// K8s container metrics carry dt.smartscape.container (validated
+		// live); non-K8s containers have no per-container keys yet and the
+		// availability probe degrades the page to ∅.
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "cpu", Title: "CPU usage", Unit: "mCores", Key: "dt.kubernetes.container.cpu_usage", Agg: "avg", Vital: true},
+				{Alias: "mem", Title: "Memory working set", Unit: "B", Key: "dt.kubernetes.container.memory_working_set", Agg: "avg", Vital: true},
+				{Alias: "throttled", Title: "CPU throttled", Unit: "mCores", Key: "dt.kubernetes.container.cpu_throttled", Agg: "avg"},
+				{Alias: "restarts", Title: "Restarts", Unit: "", Key: "dt.kubernetes.container.restarts", Agg: "sum", Default: "0", Vital: true},
+			},
+			Filter: smartscapeEq("CONTAINER"),
 		}
 	case "SERVICE":
 		// Scope via MetricScopeFilter: OTel-instrumented services report
@@ -433,50 +494,90 @@ func MetricsFor(entityType string) *MetricsSpec {
 		// .response_time is microseconds — the µs unit renders adaptively.
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "req", Title: "Requests", Unit: "", Key: "dt.service.request.count", Agg: "sum"},
-				{Alias: "fail", Title: "Failed requests", Unit: "", Key: "dt.service.request.failure_count", Agg: "sum"},
-				{Alias: "rt", Title: "Response time", Unit: "µs", Key: "dt.service.request.response_time", Agg: "avg"},
+				{Alias: "req", Title: "Requests", Unit: "", Key: "dt.service.request.count", Agg: "sum", Vital: true},
+				{Alias: "fail", Title: "Failed requests", Unit: "", Key: "dt.service.request.failure_count", Agg: "sum", Vital: true},
+				{Alias: "rt", Title: "Response time", Unit: "µs", Key: "dt.service.request.response_time", Agg: "avg", Vital: true},
 				{Alias: "odur", Title: "HTTP server duration (OTel)", Unit: "s", Key: "http.server.request.duration", Agg: "avg"},
 			},
 			Filter: func(e Entity) string { return MetricScopeFilter(e) },
 		}
 	case "K8S_POD":
 		// Universal keys plus the limits story — limit/throttling series only
-		// exist on pods with limits set and drop out via the availability probe.
+		// exist on pods with limits set and drop out via the availability
+		// probe. Container metrics sum across the pod's containers: avg would
+		// understate every pod with a sidecar (validated live: 5-container
+		// pods exist).
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "cpu", Title: "CPU usage", Unit: "mCores", Key: "dt.kubernetes.container.cpu_usage", Agg: "avg"},
-				{Alias: "cpu_limit", Title: "CPU limit", Unit: "mCores", Key: "dt.kubernetes.container.limits_cpu", Agg: "avg"},
-				{Alias: "throttled", Title: "CPU throttled", Unit: "mCores", Key: "dt.kubernetes.container.cpu_throttled", Agg: "avg"},
-				{Alias: "mem", Title: "Memory working set", Unit: "B", Key: "dt.kubernetes.container.memory_working_set", Agg: "avg"},
-				{Alias: "mem_limit", Title: "Memory limit", Unit: "B", Key: "dt.kubernetes.container.limits_memory", Agg: "avg"},
-				{Alias: "net_rx", Title: "Network received", Unit: "B/s", Key: "dt.kubernetes.pod.network_received_data", Agg: "avg"},
-				{Alias: "net_tx", Title: "Network transmitted", Unit: "B/s", Key: "dt.kubernetes.pod.network_transmitted_data", Agg: "avg"},
+				{Alias: "cpu", Title: "CPU usage", Unit: "mCores", Key: "dt.kubernetes.container.cpu_usage", Agg: "sum", Vital: true},
+				{Alias: "cpu_limit", Title: "CPU limit", Unit: "mCores", Key: "dt.kubernetes.container.limits_cpu", Agg: "sum"},
+				{Alias: "throttled", Title: "CPU throttled", Unit: "mCores", Key: "dt.kubernetes.container.cpu_throttled", Agg: "sum"},
+				{Alias: "mem", Title: "Memory working set", Unit: "B", Key: "dt.kubernetes.container.memory_working_set", Agg: "sum", Vital: true},
+				{Alias: "mem_limit", Title: "Memory limit", Unit: "B", Key: "dt.kubernetes.container.limits_memory", Agg: "sum"},
+				{Alias: "net_rx", Title: "Network received", Unit: "B/s", Key: "dt.kubernetes.pod.network_received_data", Agg: "avg", Vital: true},
+				{Alias: "net_tx", Title: "Network transmitted", Unit: "B/s", Key: "dt.kubernetes.pod.network_transmitted_data", Agg: "avg", Vital: true},
 			},
 			Filter: smartscapeEq("K8S_POD"),
 		}
 	case "K8S_DEPLOYMENT", "K8S_STATEFULSET", "K8S_DAEMONSET":
+		// Container metrics carry dt.smartscape.k8s_deployment /
+		// _statefulset / _daemonset dimensions (validated live), so the
+		// workload's total CPU/memory across its pods scopes by its own id.
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "desired", Title: "Desired pods", Unit: "", Key: "dt.kubernetes.workload.pods_desired", Agg: "max"},
+				{Alias: "cpu", Title: "CPU usage", Unit: "mCores", Key: "dt.kubernetes.container.cpu_usage", Agg: "sum", Vital: true},
+				{Alias: "mem", Title: "Memory working set", Unit: "B", Key: "dt.kubernetes.container.memory_working_set", Agg: "sum", Vital: true},
+				{Alias: "desired", Title: "Desired pods", Unit: "", Key: "dt.kubernetes.workload.pods_desired", Agg: "max", Vital: true},
+				{Alias: "restarts", Title: "Container restarts", Unit: "", Key: "dt.kubernetes.container.restarts", Agg: "sum", Default: "0"},
 			},
 			Filter: smartscapeEq(entityType),
 		}
 	case "K8S_NODE":
+		// A node's utilization IS its host's: dt.host.* series match via the
+		// host.name arm of MetricScopeFilter (validated live on EKS —
+		// OneAgent names the host after the node), the dt.kubernetes.node.*
+		// series via the node's own Smartscape id. A field a series doesn't
+		// carry compares null (false), so each series matches through its
+		// own arm of the or-chain.
 		return &MetricsSpec{
 			Series: []MetricSeries{
+				{Alias: "cpu", Title: "CPU usage", Unit: "%", Key: "dt.host.cpu.usage", Agg: "avg", Vital: true},
+				{Alias: "mem", Title: "Memory usage", Unit: "%", Key: "dt.host.memory.usage", Agg: "avg", Vital: true},
+				{Alias: "disk", Title: "Disk used (worst)", Unit: "%", Key: "dt.host.disk.used.percent", Agg: "max", Vital: true},
 				{Alias: "cpu_alloc", Title: "CPU allocatable", Unit: "mCores", Key: "dt.kubernetes.node.cpu_allocatable", Agg: "max"},
 				{Alias: "mem_alloc", Title: "Memory allocatable", Unit: "B", Key: "dt.kubernetes.node.memory_allocatable", Agg: "max"},
 				{Alias: "pods_alloc", Title: "Pods allocatable", Unit: "", Key: "dt.kubernetes.node.pods_allocatable", Agg: "max"},
 			},
-			Filter: smartscapeEq("K8S_NODE"),
+			Filter: func(e Entity) string { return MetricScopeFilter(e) },
+		}
+	case "K8S_NAMESPACE":
+		// dt.kubernetes.container.* and dt.kubernetes.pods carry
+		// dt.smartscape.k8s_namespace (validated live). Pods sums across the
+		// phase dimension — the total, not the biggest phase.
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "cpu", Title: "CPU usage", Unit: "mCores", Key: "dt.kubernetes.container.cpu_usage", Agg: "sum", Vital: true},
+				{Alias: "mem", Title: "Memory working set", Unit: "B", Key: "dt.kubernetes.container.memory_working_set", Agg: "sum", Vital: true},
+				{Alias: "pods", Title: "Pods", Unit: "", Key: "dt.kubernetes.pods", Agg: "sum", Vital: true},
+			},
+			Filter: smartscapeEq("K8S_NAMESPACE"),
+		}
+	case "K8S_CLUSTER":
+		return &MetricsSpec{
+			Series: []MetricSeries{
+				{Alias: "pods", Title: "Pods", Unit: "", Key: "dt.kubernetes.pods", Agg: "sum", Vital: true},
+				{Alias: "nodes", Title: "Nodes", Unit: "", Key: "dt.kubernetes.nodes", Agg: "sum", Vital: true},
+				{Alias: "workloads", Title: "Workloads", Unit: "", Key: "dt.kubernetes.workloads", Agg: "sum"},
+				{Alias: "readyz", Title: "API server ready", Unit: "", Key: "dt.kubernetes.cluster.readyz", Agg: "min", Vital: true},
+			},
+			Filter: smartscapeEq("K8S_CLUSTER"),
 		}
 	case "FRONTEND":
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "req", Title: "Requests", Unit: "", Key: "dt.frontend.request.count", Agg: "sum"},
-				{Alias: "err", Title: "Errors", Unit: "", Key: "dt.frontend.error.count", Agg: "sum"},
-				{Alias: "lcp", Title: "Largest contentful paint", Unit: "ms", Key: "dt.frontend.web.page.largest_contentful_paint", Agg: "avg"},
+				{Alias: "req", Title: "Requests", Unit: "", Key: "dt.frontend.request.count", Agg: "sum", Vital: true},
+				{Alias: "err", Title: "Errors", Unit: "", Key: "dt.frontend.error.count", Agg: "sum", Vital: true},
+				{Alias: "lcp", Title: "Largest contentful paint", Unit: "ms", Key: "dt.frontend.web.page.largest_contentful_paint", Agg: "avg", Vital: true},
 				{Alias: "inp", Title: "Interaction to next paint", Unit: "ms", Key: "dt.frontend.web.page.interaction_to_next_paint", Agg: "avg"},
 			},
 			Filter: smartscapeEq("FRONTEND"),
@@ -484,18 +585,18 @@ func MetricsFor(entityType string) *MetricsSpec {
 	case "DB_INSTANCE_POSTGRES":
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "active", Title: "Active connections", Unit: "", Key: "postgres.activity.active", Agg: "avg"},
+				{Alias: "active", Title: "Active connections", Unit: "", Key: "postgres.activity.active", Agg: "avg", Vital: true},
 				{Alias: "idle", Title: "Idle connections", Unit: "", Key: "postgres.activity.idle", Agg: "avg"},
-				{Alias: "deadlocks", Title: "Deadlocks", Unit: "", Key: "postgres.deadlocks.count", Agg: "sum", Default: "0"},
+				{Alias: "deadlocks", Title: "Deadlocks", Unit: "", Key: "postgres.deadlocks.count", Agg: "sum", Default: "0", Vital: true},
 			},
 			Filter: smartscapeEq("DB_INSTANCE_POSTGRES"),
 		}
 	case "AWS_RDS_DBINSTANCE":
 		return &MetricsSpec{
 			Series: []MetricSeries{
-				{Alias: "cpu", Title: "CPU utilization", Unit: "%", Key: "cloud.aws.rds.CPUUtilization.By.DBInstanceIdentifier", Agg: "avg"},
-				{Alias: "conn", Title: "Database connections", Unit: "", Key: "cloud.aws.rds.DatabaseConnections.By.DBInstanceIdentifier", Agg: "avg"},
-				{Alias: "mem", Title: "Freeable memory", Unit: "B", Key: "cloud.aws.rds.FreeableMemory.By.DBInstanceIdentifier", Agg: "avg"},
+				{Alias: "cpu", Title: "CPU utilization", Unit: "%", Key: "cloud.aws.rds.CPUUtilization.By.DBInstanceIdentifier", Agg: "avg", Vital: true},
+				{Alias: "conn", Title: "Database connections", Unit: "", Key: "cloud.aws.rds.DatabaseConnections.By.DBInstanceIdentifier", Agg: "avg", Vital: true},
+				{Alias: "mem", Title: "Freeable memory", Unit: "B", Key: "cloud.aws.rds.FreeableMemory.By.DBInstanceIdentifier", Agg: "avg", Vital: true},
 			},
 			Filter: func(e Entity) string {
 				return fmt.Sprintf("dt.smartscape_source.id == toSmartscapeId(%q)", e.ID)

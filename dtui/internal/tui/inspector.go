@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/theme"
 )
@@ -63,6 +64,12 @@ type inspectorView struct {
 	sigLoaded   bool
 	change      map[string]any
 	changeLoad  bool
+
+	// Vitals block (entity mode): the curated utilization series injected
+	// by the detail view's vitals query, rendered between the facts and the
+	// signals.
+	vitals       []vitalStat
+	vitalsWindow string // timeframe label the series cover
 
 	lines []string // assembled content lines (selection applied at render)
 
@@ -118,6 +125,24 @@ type changeOwner struct{ v *inspectorView }
 func (v *inspectorView) setProblems(problems []map[string]any) {
 	v.sigProblems = problems
 	v.sigLoaded = true
+	v.rebuild()
+}
+
+// vitalStat is one row of the details tab's vitals block: a curated
+// utilization series (the Vital-marked subset of the entity's canned
+// metrics) rendered as sparkline + latest value + avg/max.
+type vitalStat struct {
+	title  string
+	unit   string
+	key    string // metric key — enter opens its explorer chart
+	series []float64
+}
+
+// setVitals injects the page's utilization block (the detail view's vitals
+// query result), with the window label the series cover.
+func (v *inspectorView) setVitals(stats []vitalStat, window string) {
+	v.vitals = stats
+	v.vitalsWindow = window
 	v.rebuild()
 }
 
@@ -657,6 +682,7 @@ func (v *inspectorView) rebuild() {
 			}
 		}
 		if needle == "" {
+			v.addVitalRows()
 			v.addSignalRows()
 		}
 		v.addLine("")
@@ -757,6 +783,40 @@ func (v *inspectorView) rebuild() {
 }
 
 func (v *inspectorView) addLine(line string) { v.lines = append(v.lines, line) }
+
+// addVitalRows renders the entity page's vitals block: one row per curated
+// utilization series — label, sparkline, latest value, avg/max over the
+// window. Enter on a row opens the metric's explorer chart scoped to the
+// entity (aggregation cycling, dimension splits). Absent while loading or
+// unavailable: the block must never noise up the page.
+func (v *inspectorView) addVitalRows() {
+	if len(v.vitals) == 0 {
+		return
+	}
+	v.addLine("")
+	v.addLine(theme.Section("vitals (last " + v.vitalsWindow + ")"))
+	labelW := 14
+	for _, s := range v.vitals {
+		if n := len(s.title); n > labelW {
+			labelW = n
+		}
+	}
+	for _, s := range v.vitals {
+		_, maxV, avg, last := seriesStats(s.series)
+		label := strings.ToLower(s.title)
+		line := " " + theme.FactLabel.Render(fmt.Sprintf("%-*s", labelW, label)) + "  " +
+			theme.Chart.Render(output.MiniGraph(s.series, 16)) + "  " +
+			theme.HeaderVal.Render(fmt.Sprintf("%9s", fmtUnit(last, s.unit))) +
+			theme.Dim.Render(fmt.Sprintf("   avg %s · max %s", fmtUnit(avg, s.unit), fmtUnit(maxV, s.unit)))
+		var entity *catalog.Entity
+		if v.entity != nil {
+			e := *v.entity
+			entity = &e
+		}
+		v.addActionRow("__vital."+s.key, label, line,
+			metricChartMsg{key: s.key, entity: entity}, "chart "+label, fmtUnit(last, s.unit))
+	}
+}
 
 // addSignalRows renders the entity page's signals block: the active problems
 // (injected by the page's pulse query) and the latest change-ish event, each

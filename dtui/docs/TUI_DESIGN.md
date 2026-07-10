@@ -120,8 +120,8 @@ adding one is configuration, not plumbing.
 |---|---|---|---|---|
 | Services | `:services`, `:svc` | Smartscape + `dt.service.request.*` | name, technology, requests/min ▁▃▅ , error % , p95 latency, active problems | service detail (RED charts + endpoints) |
 | Hosts | `:hosts`, `:ho` | Smartscape + host metrics | name, OS, CPU % ▁▃▅, mem %, disk %, net, state, problems | host detail (processes, containers) |
-| Processes | `:processes`, `:pg` | Smartscape | name, technology, host, CPU, memory, restarts | process detail |
-| Containers | `:containers` | Smartscape / container metrics | name, image, host/pod, CPU, mem, restarts | container detail |
+| Processes | `:processes`, `:ps` | Smartscape | name, CPU ▁▃▅, mem ▁▃▅, technology, containerized, host | process detail |
+| Containers | `:containers`, `:ct` | Smartscape / container metrics | name, CPU ▁▃▅, mem ▁▃▅, image, pod | container detail |
 | K8s clusters | `:clusters` | Smartscape (K8s) | name, version, nodes, pods, CPU/mem pressure, problems | nodes of cluster |
 | K8s nodes | `:nodes`, `:no` | Smartscape (K8s) | name, cluster, status, CPU/mem alloc, pods, conditions | pods on node |
 | K8s namespaces | `:namespaces`, `:ns` | Smartscape (K8s) | name, cluster, workloads, pods, quota usage | workloads in namespace |
@@ -438,6 +438,13 @@ HOST nodes are field-rich (`os.*`, `cores`, `memory`, `ip`, `cloud.provider`,
 and NETWORK_INTERFACE as child entities plus a deep `dt.host.*` metric
 namespace — enough for a btop-style page.
 
+> **Shipped**: the details tab carries a **vitals block** (CPU %, memory %,
+> worst-disk %, net rx/tx sparklines with last/avg/max; enter charts the
+> metric) and a pre-scoped **processes** tab is the first tab after the
+> details (`Vital` series flags + `containmentTab` in the code). Disks and
+> Network stay future tabs; a host's containers are reachable via `:containers`
+> and the related tab.
+
 ```
 │ ╭──────────╮────────────────────────────────────────────────────────────────
 │ │ Overview │ Processes   Disks   Network   Containers
@@ -462,6 +469,13 @@ namespace — enough for a btop-style page.
 K8S_POD nodes carry `k8s.pod.phase`, workload/replicaset/node/namespace names,
 and full labels/annotations (`tags:k8s.labels`) — plus `dt.kubernetes.container.*`
 metrics for the limits/usage story.
+
+> **Shipped**: pod details carry a vitals block (CPU mCores / memory working
+> set summed across containers, pod net rx/tx) and a pre-scoped
+> **containers** tab. The same pattern covers node → pods (+ vitals from the
+> node's host metrics via the `host.name` arm of `MetricScopeFilter`),
+> workload → pods, namespace → workloads, cluster → nodes, and process /
+> container / namespace / cluster canned metrics.
 
 | Tab | Content | Source |
 |---|---|---|
