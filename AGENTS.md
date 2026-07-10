@@ -27,7 +27,11 @@ sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
   ├── urls/        # Environment URL validation/normalization
   ├── credstore/   # OS keyring and file-based credential storage
   └── agentmode/   # AI agent environment detection
+dtui/           # Separate Go module + binary (github.com/dynatrace-oss/dtui): the interactive TUI
+  └── internal/tui/  # k9s-style navigator; `dtctl tui` forwards to the dtui binary on PATH
 ```
+
+**dtui module**: The TUI is a separate Go module and binary that consumes dtctl's packages (`pkg/config`, `pkg/client`, `pkg/exec`, `pkg/output`, selected `pkg/resources/*`) via `replace` directives — see [docs/dev/DTUI_SPLIT_DESIGN.md](docs/dev/DTUI_SPLIT_DESIGN.md). The root module must stay TUI-free: no charmbracelet dependencies, no imports of `github.com/dynatrace-oss/dtui` (enforced by `make dtctl-check-lean`). Build with `make build-dtui`, test with `make test-dtui`; root-module changes to the packages dtui imports must keep `dtui/` compiling (CI runs both).
 
 **SDK delegation pattern**: CLI resource handlers in `pkg/resources/` import types from `sdk/api/` (often via type aliases) and delegate HTTP calls to SDK functions. The SDK contains **no file I/O, no CLI concerns, no display logic**. File reading (e.g., `ReadFileOrStdin`, `ParseInputFromFile`) stays in `pkg/resources/`.
 

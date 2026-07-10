@@ -1,6 +1,10 @@
 # dtui Split & Plugin System — Design Proposal
 
-**Status:** Proposal — decision pending
+**Status:** Phase 1 executed 2026-07-10 — in-repo split: the TUI lives in its
+own Go module and binary (`dtui/`, module `github.com/dynatrace-oss/dtui`),
+`dtctl tui` forwards to the `dtui` binary on PATH, and the root module is
+charmbracelet-free (guarded by `make dtctl-check-lean`). The repo split and
+the remaining contract work below are still pending.
 **Created:** 2026-07-08
 **Author:** dtctl team
 
@@ -15,10 +19,13 @@ product level — its own repo, binary, release cadence, and issue tracker — b
 2. **The config file + OS keyring** as the state contract (shared, versioned,
    documented).
 
-dtctl is **not** a runtime prerequisite for dtui. dtui reads the same config
-and keyring through the same sdk library — the k9s/kubeconfig model (k9s does
-not require kubectl; it reads the same file via client-go), not the
-lazygit/git model (shelling out to an installed binary).
+**dtctl owns config and context management entirely; dtui is a pure
+consumer.** That ownership is consumed by *importing dtctl's Go packages*
+(statically linked), never by shelling out to an installed dtctl binary — the
+k9s/kubeconfig model (k9s does not require kubectl; it reads the same file via
+client-go), not the lazygit/git model. "Install dtctl to create contexts" is
+product positioning (a soft prerequisite in the docs), not a runtime
+dependency: a container with a baked-in config file runs dtui alone.
 
 Additionally, adopt a **lean kubectl-style exec plugin convention** for dtctl.
 dtui ships as its first plugin (`dtctl-tui`), which preserves the `dtctl tui`
@@ -54,7 +61,8 @@ Further arguments for the split:
 These measurements ground the plan; re-verify before executing.
 
 - **TUI size**: ~12k LOC excluding tests (~17k including) across `pkg/tui/`
-  and `cmd/tui*.go`.
+  and `cmd/tui*.go`. (Since Phase 1 the code lives in `dtui/internal/tui/`
+  plus the `dtui` main package.)
 - **Coupling surface is already thin** (by design — see TUI_DESIGN.md
   "Reuse, don't fork" via narrow adapters in `datasource.go`). Outside its own
   packages the TUI imports only:
@@ -74,8 +82,12 @@ These measurements ground the plan; re-verify before executing.
   CLI-only concerns (command aliases, pre/post-apply hooks, spill config).
 - **Keyring service name** is hardcoded `"dtctl"`
   (`pkg/config/keyring.go`) — this is the de-facto credential contract.
-- **`pkg/config/oauth_file_store.go` has no file locking or atomic-rename
-  discipline** (needs verification + hardening — see Landmines).
+- **OAuth refresh locking exists but is bypassable** (corrected 2026-07-10;
+  an earlier revision wrongly claimed no locking exists): refresh tokens
+  rotate on use, and `pkg/auth/refresh_lock_unix.go` / `_windows.go` implement
+  a cross-process refresh lock that `GetToken` holds. `TokenManager.RefreshToken`
+  bypasses it by design — and the TUI's 401 forced-refresh path calls exactly
+  that method (see Landmines).
 - **`DTCTL_CONTEXT` exists only in tests** — there is no production env-var
   context override today (precedent for env config exists:
   `DTCTL_DISABLE_KEYRING`, `DTCTL_TOKEN_STORAGE`, `DTCTL_SPILL*`).
@@ -93,10 +105,14 @@ them". Split when the contract is real, not before.
 
 1. **In-repo seam work** (now): promote the session layer into the sdk
    (Decision 2), harden the config contract (Landmines).
-2. **Enforce the seam**: `pkg/tui` + `cmd/tui` compile against **only** the
-   sdk, charmbracelet, and their own packages. Optionally make the TUI its own
-   Go module + binary inside the repo — this yields the lean-dtctl and
-   separate-versioning benefits immediately and reversibly.
+2. **Enforce the seam** — ✅ done 2026-07-10 (Phase 1): the TUI is its own Go
+   module + binary inside the repo (`dtui/`), which yields the lean-dtctl and
+   separate-versioning benefits immediately and reversibly. It compiles
+   against the root module's packages (the pragmatic bridge below),
+   charmbracelet, and its own packages; `dtctl tui` is a PATH forwarder and
+   `make dtctl-check-lean` keeps the TUI stack out of the root module.
+   Narrowing the import surface to the promoted sdk happens with step 1,
+   off the critical path.
 3. **Split the repo** when the seam proves stable. The measurable signal:
    **TUI feature PRs stop needing same-PR changes in `pkg/` or `sdk/`.**
    (Counter-example from Phase 3.6: the 401-retry landed in `pkg/client` for
@@ -129,48 +145,71 @@ them". Split when the contract is real, not before.
   two-styling-systems tension; divergence may be healthy).
 - Resource display-field metadata; the TUI's ViewSpec catalog is dtui-domain.
 
-**Pragmatic bridge** (know it exists, don't let it become permanent): `pkg/`
-is not `internal/`, so a separate dtui repo can legally import
-`github.com/dynatrace-oss/dtctl/pkg/config` etc. from the published root
-module today, with zero refactoring. Acceptable while the sdk promotion lands
-(e.g. if upstream review is slow); the root module makes no API-stability
-promises.
+**Pragmatic bridge** (the Phase-1 mechanism): `pkg/` is not `internal/`, so
+dtui can legally import `github.com/dynatrace-oss/dtctl/pkg/config` etc. from
+the root module with zero refactoring — this is how the in-repo `dtui/` module
+consumes dtctl today (via `replace` directives), and how a separate dtui repo
+would consume the published root module. It takes the sdk promotion off the
+split's critical path. Don't let it become permanent across a repo split: the
+root module makes no API-stability promises, so promote the session layer
+before (or with) the repo split.
 
-## Decision 3 — Config & context: shared state, shared library, independent binaries
+## Decision 3 — Config & context: dtctl owns management entirely; dtui is a pure consumer
+
+(Revised 2026-07-10: sharpened from "shared contract with dtui
+standalone-capable" to full dtctl ownership — simpler, and what Phase 1
+implements.)
 
 Options considered:
 
 | Option | Verdict | Why |
 |---|---|---|
 | dtui gets its own config/credentials | ❌ | Double onboarding, drifting contexts, two credential stores; kills "drop into the TUI wherever dtctl points" |
-| dtctl as installed prerequisite (shell out) | ❌ | A TUI makes dozens of concurrent cancellable calls — process-spawn latency, output-parsing fragility, version skew; handing tokens across process boundaries is worse than in-process keyring reads |
-| **Shared config file + keyring as a versioned contract; reader in the sdk** | ✅ | k9s/kubeconfig model; existing users get dtui working instantly with zero migration |
+| dtctl as installed prerequisite (shell out) | ❌ | A TUI makes dozens of concurrent cancellable calls — process-spawn latency, output-parsing fragility, version skew; handing tokens across process boundaries is worse than in-process keyring reads. Note Go has no runtime code sharing: an installed dtctl binary can serve dtui **only** via shell-out, so "prerequisite" buys nothing architecturally |
+| **dtctl owns all config/context management; dtui consumes it by importing dtctl's Go packages** | ✅ | k9s/kubeconfig model; existing users get dtui working instantly with zero migration; dtui ships no onboarding, no `ctx` CRUD, no config-write path — the whole two-writer config contract disappears |
 
-Consequences:
+Consequences (Phase-1 state in parentheses):
 
-- dtui reads `~/.config/dtctl/config` and keyring service `"dtctl"` via the
-  promoted sdk package.
-- dtui stays **standalone-capable**: on first run with no config, offer
-  minimal guided context creation (same library, same file format) or point at
-  dtctl. v1 can just point.
-- dtui gets its **own namespace for UI-only state**: `~/.config/dtui/`,
-  `~/.local/state/dtui/` — theme, hotkeys, view history (the current
-  `~/.local/state/dtctl/tui-history.json` migrates there). Auth and contexts
-  never live there.
-- dtui treats the shared config as **read-only in v1** (reload on change);
-  this avoids needing a two-writer contract on day one.
+- dtui reads `~/.config/dtctl/config` and keyring service `"dtctl"` through
+  dtctl's own packages (today `pkg/config`/`pkg/client` via the pragmatic
+  bridge; later the promoted sdk package).
+- **All context management lives in dtctl**: create/edit/delete, login flows,
+  safety-level assignment, every write to the config file. dtui's first-run
+  message with no contexts points at `dtctl ctx create`. "Install dtctl" is a
+  soft prerequisite in the docs — dtui never checks for or invokes the binary.
+- dtui may **switch** between existing contexts session-locally
+  (implemented: `dtui --context` overrides in memory, never persists) — the
+  same line k9s draws: switch in-app, create/edit elsewhere.
+- dtui gets its **own namespace for UI-only state**: `~/.local/state/dtui/`
+  (implemented: view history lives in `~/.local/state/dtui/history.json`,
+  migrated on first run from `~/.local/state/dtctl/tui-history.json`). Auth
+  and contexts never live there.
+- The shared config file is **read-only for dtui**. The **token store is the
+  one exception**: OAuth refresh tokens rotate on use, so a long-running dtui
+  must persist refreshed token sets or it strands dtctl's stored copy —
+  dtui is unavoidably a token-store *writer*, through the same locked refresh
+  path dtctl uses (see Landmine 1).
 
 ## Landmines — harden before the split
 
 These sit exactly on the shared boundary; fix them while everything is one
 repo.
 
-1. **OAuth refresh races.** The OAuth file store has no file locking or
-   atomic-rename. A long-running dtui plus concurrent dtctl invocations can
-   refresh the same token concurrently; if refresh tokens rotate on use, one
-   process strands the other's credentials. Required: file locking, atomic
-   writes (write-temp + rename), re-read-before-refresh single-flight. **This
-   is the sharpest technical risk of the whole plan.**
+1. **OAuth forced-refresh bypasses the refresh lock.** (Corrected 2026-07-10:
+   an earlier revision claimed no locking exists.) Refresh tokens rotate on
+   use, and the codebase already guards concurrent refreshes with a
+   cross-process file lock (`pkg/auth/refresh_lock_unix.go` / `_windows.go`)
+   that `TokenManager.GetToken` holds around the refresh. But
+   `TokenManager.RefreshToken` **bypasses that lock** — its own WARNING
+   comment says concurrent callers risk `invalid_grant` from refresh-token
+   rotation — and the TUI's forced-refresh-on-401 path
+   (`RefreshedTokenForContext` in `pkg/client/oauth_support.go`) calls exactly
+   that method. A long-running dtui racing a concurrent dtctl refresh on the
+   same context can strand one side's credentials. Required: route the forced
+   refresh through (or wrap it in) the same lock. This also settles Decision
+   3's scope: dtui is read-only for the config file but necessarily a
+   *writer* to the token store. **This is the sharpest technical risk of the
+   whole plan, and it must be fixed regardless of the split.**
 2. **Current-context is shared mutable state.** Today `dtctl query --context X`
    *persists* the context switch to disk. If dtui inherits write-through
    semantics, an open TUI where the user hits `:ctx staging` silently repoints
@@ -303,8 +342,10 @@ dtui ships.
    spec + golden fixtures.
 3. **Plugin dispatcher** + `dtctl plugin list` + conventions doc (one small
    PR; only after step 1).
-4. **Enforce the seam**: TUI compiles against sdk + charmbracelet + own
-   packages only; optionally own Go module + binary in-repo.
+4. **Enforce the seam** — ✅ done 2026-07-10 (Phase 1, pulled ahead of steps
+   1–3 via the pragmatic bridge): own Go module + binary in-repo (`dtui/`),
+   `dtctl tui` forwards, root module TUI-free. Narrowing dtui's imports from
+   `pkg/*` to the promoted sdk lands with step 1.
 5. **Split** when TUI PRs stop touching `pkg/`/`sdk/` in the same change:
    `git filter-repo` → dtui repo; `dtctl tui` becomes the forwarder; dtui is
    the first plugin and the contract dogfood.
@@ -334,8 +375,11 @@ dtui ships.
    branding.
 3. **Renderer strategy**: extract a standalone terminal-viz module vs fork
    into dtui and let implementations diverge.
-4. **Does dtui ever write the shared config?** v1: no (read-only + reload).
-   Revisit when dtui grows guided onboarding.
+4. **Does dtui ever write the shared config?** Resolved 2026-07-10: the
+   config file — never (dtctl owns all management; no dtui onboarding is
+   planned). The token store — necessarily yes, because OAuth refresh-token
+   rotation forces refreshed sets to be persisted; writes go through the
+   shared refresh lock (Landmine 1).
 
 ## References
 

@@ -22,7 +22,7 @@ jobs:
       - name: Check goimports formatting
         run: |
           go install golang.org/x/tools/cmd/goimports@latest
-          goimports_output=$(goimports -local github.com/dynatrace-oss/dtctl -l .)
+          goimports_output=$(goimports -local github.com/dynatrace-oss -l .)
           if [ -n "$goimports_output" ]; then
             echo "The following files are not properly formatted:"
             echo "$goimports_output"
@@ -40,7 +40,23 @@ jobs:
             exit 1
           fi
 
+      - name: Check go mod tidy (dtui)
+        working-directory: dtui
+        run: |
+          go mod tidy
+          if ! git diff --exit-code go.mod go.sum; then
+            echo ""
+            echo "dtui/go.mod or dtui/go.sum is not tidy. Run 'go mod tidy' in dtui/ and commit the changes."
+            exit 1
+          fi
+
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.1
+
+      - name: Run golangci-lint (dtui)
+        uses: golangci/golangci-lint-action@v7
+        with:
+          version: v2.11.1
+          working-directory: dtui

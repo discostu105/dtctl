@@ -3,43 +3,33 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"path/filepath"
+	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
-	"github.com/dynatrace-oss/dtctl/pkg/tui"
-	"github.com/dynatrace-oss/dtctl/pkg/tui/catalog"
 )
 
+// tuiBinaryNames are the binaries `dtctl tui` forwards to, in lookup order.
+// dtctl-tui is the kubectl-style plugin name; dtui is the packaging alias.
+var tuiBinaryNames = []string{"dtctl-tui", "dtui"}
+
+// The TUI ships as the separate dtui binary (see docs/dev/DTUI_SPLIT_DESIGN.md);
+// this command only forwards to it so the `dtctl tui` muscle memory keeps
+// working. Flag parsing is disabled, which in cobra means even root-level
+// flags (dtctl --context prod tui) arrive here unparsed — everything is
+// passed to dtui verbatim, so dtui owns the flag surface and can grow flags
+// without dtctl needing to know them.
 var tuiCmd = &cobra.Command{
 	Use:   "tui [view]",
-	Short: "Launch the interactive terminal UI",
+	Short: "Launch the interactive terminal UI (forwards to dtui)",
 	Long: `Launch the interactive terminal UI — a k9s-style navigator over
-observability primitives: problems, services, hosts, Kubernetes (pods,
-workloads, namespaces, nodes, clusters), traces with a span waterfall,
-logs with Davis log-pattern clustering, events, AWS inventory, frontends
-and RUM (user sessions and events with Core Web Vitals), business
-events, synthetic monitors, databases, GenAI entities, security
-vulnerabilities, SLOs with live evaluation, anomaly detectors, the
-semantic dictionary (models and fields), a Grail data explorer
-(tables, buckets, lookup files with record sampling), and the
-smartscape navigator (:nav) — a topology explorer with a type census
-and relationship schema, per-type entity browsing, and an ego-centric
-walk mode with a breadcrumb trail (X walks from any selected entity).
+observability primitives (problems, services, hosts, Kubernetes, traces,
+logs, events, RUM, SLOs, the smartscape navigator, and more).
 
-Views are opened from the command bar (:) by name or alias — arguments
-narrow the jump (:pods checkout, :trace <id>). Every drill-down key
-(l logs, s traces, m metrics, p problems, v events, x relations,
-a log patterns, u sessions) opens the target pre-scoped to the selected
-entity and the active timeframe.
-'.' pins an entity as the global scope, ctrl+q reveals any view's DQL in
-an editable query, and o deep-links the selection into the Dynatrace UI.
-H opens the navigation history — every page you visited, kept across
-sessions — and restores a page with its full breadcrumb trail.
-Press ? inside the TUI for the full key reference.
+The TUI ships as a separate binary (dtui). This command finds dtctl-tui or
+dtui on PATH and forwards to it; run 'dtui --help' for the full view list
+and key reference.
 
 The TUI is read-only and interactive-only: it refuses to start in agent
 mode, with --plain, or when stdout is not a terminal.`,
@@ -48,68 +38,66 @@ mode, with --plain, or when stdout is not a terminal.`,
 
   # Launch directly into a view (any alias works)
   dtctl tui pods
-  dtctl tui traces
-  dtctl tui svc
 
-  # Launch against a specific context
+  # Launch against a specific context (session-local, never persisted)
   dtctl tui --context prod`,
-	Args:              cobra.MaximumNArgs(1),
-	ValidArgsFunction: tuiViewCompletion,
+	DisableFlagParsing: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if GetAgentMode() {
+		// Help must work even when dtui is not installed.
+		for _, a := range args {
+			if a == "--help" || a == "-h" {
+				return cmd.Help()
+			}
+		}
+
+		// Fail fast with dtctl's structured errors before handing over the
+		// terminal. Agent mode comes from auto-detection (initConfig); a raw
+		// --no-agent waives it here and is forwarded so dtui's own detection
+		// is waived with it. --plain is refused rather than forwarded — dtui
+		// has no such flag, and the refusal message beats "unknown flag".
+		if GetAgentMode() && !hasRawFlag(args, "--no-agent") {
 			return fmt.Errorf("tui is interactive-only and does not run in agent mode (pass --no-agent if this session was misdetected)")
 		}
-		if GetPlainMode() {
+		if hasRawFlag(args, "--plain") {
 			return fmt.Errorf("tui requires an interactive terminal and does not support --plain")
 		}
 		if !term.IsTerminal(int(os.Stdout.Fd())) {
 			return fmt.Errorf("tui requires a terminal (stdout is not a TTY)")
 		}
 
-		view := "home"
-		if len(args) == 1 {
-			view = args[0]
-		}
-		if !isBespokeTuiView(view) && catalog.Lookup(view) == nil {
-			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", view, strings.Join(catalog.Names(), ", "))
-		}
-
-		cfg, c, err := SetupClient()
+		bin, err := lookupTUIBinary()
 		if err != nil {
 			return err
 		}
-		ctxObj, err := cfg.CurrentContextObj()
-		if err != nil {
-			return err
-		}
-
-		return tui.Run(tui.Options{
-			ContextName: cfg.CurrentContext,
-			Environment: ctxObj.Environment,
-			SafetyLevel: string(ctxObj.GetEffectiveSafetyLevel()),
-			Executor:    NewDQLExecutorFromConfig(cfg, c),
-			Sources:     tuiSources(c),
-			InitialView: view,
-			HistoryPath: filepath.Join(config.StateDir(), "tui-history.json"),
-		})
+		return forwardToTUI(bin, args)
 	},
 }
 
-// isBespokeTuiView reports whether the name is one of the TUI's bespoke
-// (non-catalog) screens.
-func isBespokeTuiView(name string) bool {
-	switch name {
-	case "home", "query", "dql", "nav", "smartscape", "navigator":
-		return true
+// lookupTUIBinary finds the dtui binary on PATH.
+func lookupTUIBinary() (string, error) {
+	for _, name := range tuiBinaryNames {
+		if bin, err := exec.LookPath(name); err == nil {
+			return bin, nil
+		}
 	}
-	return false
+	return "", fmt.Errorf(`the TUI ships as the separate dtui binary, and neither %s was found on PATH
+
+Install it from the dtctl repository:
+  make install-dtui
+
+or build it directly:
+  cd dtui && go build -o ~/.local/bin/dtui .`, strings.Join(tuiBinaryNames, " nor "))
 }
 
-func tuiViewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	if len(args) > 0 {
-		return nil, cobra.ShellCompDirectiveNoFileComp
+// hasRawFlag reports whether the unparsed args carry the given long flag,
+// either as "--flag" or "--flag=value".
+func hasRawFlag(args []string, flag string) bool {
+	for _, a := range args {
+		if a == flag || strings.HasPrefix(a, flag+"=") {
+			return true
+		}
 	}
-	return append([]string{"home", "query", "nav"}, catalog.Names()...), cobra.ShellCompDirectiveNoFileComp
+	return false
 }
 
 func init() {

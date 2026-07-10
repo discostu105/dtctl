@@ -1,6 +1,11 @@
 # TUI (Interactive Mode) Design Proposal
 
-**Status:** Phases 1–3 implemented (`cmd/tui.go`, `pkg/tui/`); Phase 4 (assets & mutations) proposed
+**Status:** Phases 1–3 implemented; Phase 4 (assets & mutations) proposed
+**Location:** Since 2026-07-10 the TUI lives in its own Go module and binary —
+`dtui/` (`dtui/main.go`, `dtui/internal/tui/`); `dtctl tui` forwards to the
+`dtui` binary on PATH. Older path references in this document (`pkg/tui/`,
+`cmd/tui.go`) map to `dtui/internal/tui/` and `dtui/`. See
+[DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md).
 **Created:** 2026-07-05
 **Author:** dtctl team
 
