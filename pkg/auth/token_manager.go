@@ -137,7 +137,7 @@ func (tm *TokenManager) GetToken(tokenName string) (string, error) {
 	//      Checking AccessToken == "" directly avoids silently returning an empty
 	//      bearer token to the caller.
 	if stored.AccessToken == "" && stored.RefreshToken != "" {
-		refreshed, err := tm.RefreshToken(tokenName)
+		refreshed, err := tm.refreshTokenLocked(tokenName)
 		if err != nil {
 			if isInvalidGrantError(err) {
 				_ = tm.DeleteToken(tokenName)
@@ -150,7 +150,7 @@ func (tm *TokenManager) GetToken(tokenName string) (string, error) {
 
 	// Access token is present — refresh proactively if it is near expiry.
 	if tm.needsRefresh(&stored.TokenSet) {
-		refreshed, err := tm.RefreshToken(tokenName)
+		refreshed, err := tm.refreshTokenLocked(tokenName)
 		if err != nil {
 			if isInvalidGrantError(err) {
 				_ = tm.DeleteToken(tokenName)
@@ -176,16 +176,51 @@ func isInvalidGrantError(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "invalid_grant")
 }
 
-// RefreshToken refreshes an OAuth token by exchanging the stored refresh token
-// for a new token set and persisting the result.
+// RefreshToken forces a refresh of an OAuth token by exchanging the stored
+// refresh token for a new token set and persisting the result.
 //
-// WARNING: RefreshToken bypasses the cross-process refresh lock. Callers that
-// may run concurrently (e.g. multiple parallel dtctl invocations) should use
-// GetToken instead, which holds the lock around the refresh call so that only
-// one process contacts the OAuth endpoint at a time. Calling RefreshToken
-// directly from concurrent goroutines or processes risks "invalid_grant" errors
-// caused by OAuth refresh-token rotation invalidating the token after first use.
+// The refresh runs under the same cross-process lock GetToken uses: OAuth
+// refresh-token rotation invalidates a refresh token after first use, so an
+// unguarded forced refresh (e.g. a long-running TUI reacting to a 401 while a
+// parallel dtctl invocation refreshes on expiry) would strand one side with
+// "invalid_grant". After acquiring the lock the token is re-read — if another
+// process refreshed while we waited (the stored access token changed and is
+// not near expiry), that fresher token set is returned instead of spending
+// another refresh. A genuinely-forced refresh (nothing changed while waiting)
+// always proceeds, so a token the server rejects despite looking valid can
+// never be returned to the caller unrefreshed. Like GetToken, the lock is
+// best-effort: on lock failure a warning is printed and the refresh proceeds
+// unguarded.
 func (tm *TokenManager) RefreshToken(tokenName string) (*TokenSet, error) {
+	// Snapshot before locking so a refresh completed by another process while
+	// we wait is detectable as a change.
+	before, beforeErr := tm.loadToken(tokenName)
+
+	unlock, lockErr := acquireRefreshLock(string(tm.environment), tokenName)
+	if lockErr != nil {
+		fmt.Fprintf(os.Stderr, "dtctl: warning: could not acquire token refresh lock: %v\n", lockErr)
+	} else {
+		defer unlock()
+
+		if beforeErr == nil {
+			reread, err := tm.loadToken(tokenName)
+			if err == nil && reread.AccessToken != "" &&
+				reread.AccessToken != before.AccessToken &&
+				!tm.needsRefresh(&reread.TokenSet) {
+				tokens := reread.TokenSet
+				return &tokens, nil
+			}
+		}
+	}
+
+	return tm.refreshTokenLocked(tokenName)
+}
+
+// refreshTokenLocked performs the refresh-token exchange and persists the
+// result, without touching the cross-process refresh lock. Callers must hold
+// the lock (GetToken does; RefreshToken acquires it) — an unguarded call
+// races refresh-token rotation across processes.
+func (tm *TokenManager) refreshTokenLocked(tokenName string) (*TokenSet, error) {
 	// Load current token
 	stored, err := tm.loadToken(tokenName)
 	if err != nil {
