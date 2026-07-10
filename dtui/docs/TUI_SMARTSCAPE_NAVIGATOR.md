@@ -72,7 +72,8 @@ grouping, health, and an overview of the type schema.
 ### One layout language
 
 Every level is `[list on the left] [preview on the right]` with a context
-line on top. Below ~100 columns the preview pane collapses (toggle: `tab`).
+line on top. Below ~100 columns the preview pane collapses (`P` is the
+app-wide preview toggle).
 
 ### Level 1 — Overview (`:nav`)
 

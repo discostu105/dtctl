@@ -184,7 +184,7 @@ func TestNavigatorSpacePagesZFolds(t *testing.T) {
 		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
 		edgeRec("SERVICE-1", "SERVICE", "routes_to", "K8S_POD-checkout-1", "K8S_POD"),
 	})
-	v.previewOn = false
+	disablePreview(t)
 
 	press(a, key("j")) // onto the runs_on group row
 	rows := len(v.rows)

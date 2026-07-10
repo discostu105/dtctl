@@ -307,7 +307,7 @@ func TestWalkDrillScopesToHighlightedNode(t *testing.T) {
 	a := testApp(t, "pods")
 	seedRows(t, a, []map[string]any{podRow("checkout-1", "shop", "Running", 0)})
 	press(a, key("X"))
-	v := seedNav(t, a, []map[string]any{
+	seedNav(t, a, []map[string]any{
 		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
 	})
 	disablePreview(t)

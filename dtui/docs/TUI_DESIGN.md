@@ -356,7 +356,7 @@ Every detail page shares one chrome:
 │ ╰──────────╯                                                                 │
 │  <tab body>                                                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ <tab>/[ ] switch tab  <l s m p v x u> signals  <o>pen <d>escribe <esc> back │
+│ <tab> switch tab  <l s m p v x u> signals  <o>pen <d>escribe <esc> back     │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -364,7 +364,8 @@ Every detail page shares one chrome:
   (truncated, `y` to yank), problem indicator, and a *relationship one-liner*
   built from Smartscape references (where it runs, what it belongs to, age
   from `lifetime`).
-- **Tab bar**: `tab` / `shift-tab` (also `[` / `]`) cycle tabs. Tabs hold
+- **Tab bar**: `tab` / `shift-tab` cycle tabs — `[` / `]` never do; the
+  brackets always drive the active tab's own lens strip. Tabs hold
   content that *belongs to* the object (summaries, embedded lists, charts).
   The signal keys (`l s m p v`) keep their global meaning — they *leave* the
   page into a full, pre-scoped signal view. Rule of thumb: tabs answer "what
@@ -738,7 +739,7 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   containment tab where one exists (K8S_NODE → its pods, completing
   host → related → node → pods; pods edge to the node, never the host),
   and metrics / logs / events / problems as lazily-loaded pre-scoped tabs
-  (`tab` / digits to switch). Record inspector with a highlights block and
+  (`tab` to switch, drill letters jump to their tab). Record inspector with a highlights block and
   `/` property search.
 - Read-only. Success criterion: the incident-triage journey works end to end.
 
@@ -873,11 +874,11 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
   match); enter on a session row inside the tab drills straight into the
   session timeline, and `d` there opens the session's own record — the
   event → session navigation.
-- **Nested lens strips own the digits**: when a detail tab shows its own
-  lens strip (traces, sessions), the digits and `[`/`]` drive that strip —
-  it is the numbered thing on screen — while tab/shift+tab keep cycling
-  the page tabs (whose bar drops its digit labels to avoid two competing
-  number rows).
+- **Nested lens strips**: when a detail tab shows its own lens strip
+  (traces, sessions), `[`/`]` drive that strip; tab/shift+tab keep cycling
+  the page tabs. (Superseded refinement — see "One owner per key" below:
+  digits stayed global hotkeys and the brackets stopped falling back to
+  the tab bar.)
 - **Both GenAI instrumentation eras**: the genai lens, badges, detail
   column, tokens, and the conversation section understand the semconv
   convention (`gen_ai.operation.name`, JSON message blobs) *and* the
@@ -953,9 +954,10 @@ Full design: `docs/TUI_SMARTSCAPE_NAVIGATOR.md`.
   **both id eras** — problem dots on every node, per-type counts on the
   census, never a per-node query.
 - **Preview pane**: cursor-following (debounced 250 ms, session-cached
-  `DetailQuery`) identity + health + curated `KeyFacts`; `tab` toggles,
-  auto-hidden under 100 columns. Nodeless edge endpoints (`K8S_SECRET` et
-  al.) render dimmed raw ids and preview as "no node record".
+  `DetailQuery`) identity + health + curated `KeyFacts`; on by default
+  (`P` is the app-wide preview toggle), auto-hidden under 100 columns.
+  Nodeless edge endpoints (`K8S_SECRET` et al.) render dimmed raw ids and
+  preview as "no node record".
 - **Session topo cache**: edges and details cache per navigator instance —
   backtracks and re-visits are zero-query; `r` clears and refetches.
 - The shared query builders (`EdgesQuery`, `NamesQuery`, `BuildEdges`,
@@ -967,6 +969,35 @@ Full design: `docs/TUI_SMARTSCAPE_NAVIGATOR.md`.
   (`t` is the global timeframe picker) and `g`/`G` stay cursor home/end
   (overview is esc or `:nav` away) — consistency with the app vocabulary
   beat the draft bindings.
+
+### Phase 3.9 — One owner per key ✅ implemented
+
+Digits used to mean five different things by context (lens, tab, hotkey,
+picker); tab meant three. Every key now has exactly one owner, matching the
+visual hierarchy:
+
+- **Digits 0-9**: global hotkeys, on every screen. Lens strips and tab bars
+  never claim them.
+- **`[` / `]`**: the lens strip, and only the lens strip — including a strip
+  nested inside a detail tab. On a view without lenses the brackets say so
+  instead of silently doing something else (the old fallback to tab cycling
+  is gone: the same key must not change meaning between tabs).
+- **`tab` / `shift+tab`**: the tab bar (detail pages, problem page) and the
+  home panels. Nothing anywhere else.
+- **Drill letters** (`l s v p m u e`): pre-scoped signal views; on tabbed
+  pages they jump to the same-named tab unless the active tab's rows drill
+  by that key (per-row meaning wins).
+- **Peek pane on by default**: tables and the navigator render the selected
+  row's highlights (PriorityFields / KeyFacts — client-side, zero queries)
+  in a side pane at ≥110 columns, a bottom panel on narrower-but-tall
+  screens, auto-hidden when cramped (bottom panel needs ≥30 rows). **`P`**
+  flips the preference app-wide — one sticky setting, not per-view state —
+  so enter is reserved for committing to a page, not for peeking.
+- Same rework shipped the shared severity rendering (ITIL `event.severity`
+  as SEV1–SEV5 badges — 1 is worst; the old word mapping was inverted),
+  the `:events` hub with all/alerts/changes/system/audit lenses (system
+  and audit surface `dt.system.events`), `x`=`X`= navigator walk, and
+  `:aws` as an `:entities` census preset.
 
 ### Phase 4 — Assets & mutations
 
