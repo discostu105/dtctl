@@ -183,9 +183,9 @@ func (v *timelineView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.cursor, v.offset = 0, 0
 	case "end", "G":
 		v.move(len(v.rows))
-	case "]":
+	case "]", "tab":
 		return v.setLens(v.lens+1, true)
-	case "[":
+	case "[", "shift+tab":
 		return v.setLens(v.lens-1, true)
 	case "enter":
 		if row := v.selectedRow(); row != nil {

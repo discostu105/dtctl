@@ -68,10 +68,22 @@ func TestHotkeysJumpEverywhereAndLettersJumpTabs(t *testing.T) {
 	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "events" {
 		t.Fatalf("v on detail page must jump to the events tab (active=%s, top=%T)", dv.tabs[dv.active].name, a.top())
 	}
-	// ...and digits stay global hotkeys, replacing the stack.
+	// ...and the entered page owns the digits: they address its numbered tab
+	// bar (1 = first tab), not the global bookmarks.
+	press(a, key("1"))
+	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.active != 0 {
+		t.Fatalf("digit on an entered page must pick its tab (active=%d, top=%T)", dv.active, a.top())
+	}
+	// A digit the bar doesn't show is swallowed, not a hidden global jump.
+	press(a, key("9"))
+	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.active != 0 {
+		t.Fatalf("out-of-range digit must stay on the page (active=%d, top=%T)", dv.active, a.top())
+	}
+	// esc pops out — the digits are global bookmarks again.
+	press(a, key("esc"))
 	press(a, key("3"))
 	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "hosts" || len(a.stack) != 1 {
-		t.Fatalf("digit on detail page must stay a global hotkey (top=%T, depth=%d)", a.top(), len(a.stack))
+		t.Fatalf("digit after esc must be a global bookmark (top=%T, depth=%d)", a.top(), len(a.stack))
 	}
 }
 

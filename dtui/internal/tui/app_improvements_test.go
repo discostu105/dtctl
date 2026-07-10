@@ -174,6 +174,27 @@ func TestRecordsCommandRoutesToTables(t *testing.T) {
 	}
 }
 
+// TestTabCyclesLensOnPlainTable: tab drives the view's primary strip — the
+// lens strip on a top-level table — while digits stay global bookmarks there
+// (no numbers on screen means no local claim).
+func TestTabCyclesLensOnPlainTable(t *testing.T) {
+	a := testApp(t, "traces")
+	tv := a.top().(*tableView)
+	start := tv.scope.Lens
+	press(a, key("tab"))
+	if tv.scope.Lens == start {
+		t.Fatal("tab should advance the lens strip on a plain table")
+	}
+	press(a, key("shift+tab"))
+	if tv.scope.Lens != start {
+		t.Fatal("shift+tab should cycle the lens strip back")
+	}
+	press(a, key("1"))
+	if top, ok := a.top().(*tableView); !ok || top.spec.Name != "problems" {
+		t.Fatalf("digit on a top-level table must stay a global bookmark, top = %T", a.top())
+	}
+}
+
 // TestNavigatorSpacePagesZFolds: space pages down like every other list; z
 // folds the selected group.
 func TestNavigatorSpacePagesZFolds(t *testing.T) {

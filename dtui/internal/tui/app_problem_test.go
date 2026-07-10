@@ -320,7 +320,7 @@ func TestProblemOverviewScrollUpRevealsFacts(t *testing.T) {
 	}
 }
 
-func TestProblemPageLettersJumpTabsDigitsStayGlobal(t *testing.T) {
+func TestProblemPageLettersJumpTabsDigitsPickTabs(t *testing.T) {
 	a := testApp(t, "problems")
 	seedRows(t, a, []map[string]any{richProblemRow()})
 	press(a, key("enter"))
@@ -343,9 +343,9 @@ func TestProblemPageLettersJumpTabsDigitsStayGlobal(t *testing.T) {
 	if body := ansi.Strip(pv.View(140, 40)); !strings.Contains(body, "event.description") {
 		t.Errorf("details tab should show the full record:\n%s", body)
 	}
-	// Digits stay global hotkeys on the problem page too.
+	// The problem page is entered, so digits pick its numbered tabs.
 	press(a, key("2"))
-	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "services" {
-		t.Fatalf("digit on the problem page must stay a global hotkey, top = %T", a.top())
+	if _, still := a.top().(*problemView); !still || pv.active != 1 {
+		t.Fatalf("digit on the problem page must pick its tab (active=%d, top=%T)", pv.active, a.top())
 	}
 }

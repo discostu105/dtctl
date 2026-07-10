@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -176,9 +177,9 @@ func TestFrontendDetailConnectsRUM(t *testing.T) {
 }
 
 // TestNestedLensStripOnDetailPage: the drill letters jump straight to their
-// page tab, the brackets drive the active tab's own lens strip, and digits
-// stay global hotkeys even there. GenAI entities open traces on the genai
-// lens — their spans rarely include roots.
+// page tab, the brackets drive the active tab's own lens strip, and the
+// entered page's digits address its numbered tab bar. GenAI entities open
+// traces on the genai lens — their spans rarely include roots.
 func TestNestedLensStripOnDetailPage(t *testing.T) {
 	a := testApp(t, "genai")
 	seedRows(t, a, []map[string]any{{"id": "GENAI_MODEL-1", "name": "claude", "type": "GENAI_MODEL"}})
@@ -196,7 +197,7 @@ func TestNestedLensStripOnDetailPage(t *testing.T) {
 	if traceIdx < 0 {
 		t.Fatalf("genai detail page has no traces tab (tabs %v)", dv.tabs)
 	}
-	// The drill letter jumps straight to the traces tab (digits are global).
+	// The drill letter jumps straight to the traces tab.
 	press(a, key("s"))
 	if dv.active != traceIdx {
 		t.Fatalf("s must jump to the traces tab, active = %d", dv.active)
@@ -227,10 +228,11 @@ func TestNestedLensStripOnDetailPage(t *testing.T) {
 	if dv.active == traceIdx {
 		t.Error("tab must still cycle the page tabs")
 	}
-	// A digit fires its global hotkey even while a lens strip is on screen.
-	press(a, key("1"))
-	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "problems" {
-		t.Fatalf("digit must stay a global hotkey, top = %T", a.top())
+	// Even with a lens strip on screen, a digit addresses the numbered tab
+	// bar — the page owns the digits while entered.
+	press(a, key(fmt.Sprintf("%d", traceIdx+1)))
+	if _, still := a.top().(*detailView); !still || dv.active != traceIdx {
+		t.Fatalf("digit must pick the numbered tab (active=%d, top=%T)", dv.active, a.top())
 	}
 }
 

@@ -302,7 +302,7 @@ func (v *tableView) Hints() []keyHint {
 	}
 	var hints []keyHint
 	if len(v.spec.Lenses) > 0 {
-		hints = append(hints, keyHint{"[/]", "lens"})
+		hints = append(hints, keyHint{"tab", "lens"})
 	}
 	if !previewEnabled {
 		hints = append(hints, keyHint{"P", "preview"})
@@ -547,6 +547,17 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return v.setLens(v.scope.Lens-1, true)
 		}
 		return status("no lens strip on this view")
+	case "tab":
+		// tab cycles the view's primary strip; on a plain table that is the
+		// lens strip. (A table nested in a detail tab never sees tab — the
+		// page's tab bar claims it first.)
+		if len(v.spec.Lenses) > 0 {
+			return v.setLens(v.scope.Lens+1, true)
+		}
+	case "shift+tab":
+		if len(v.spec.Lenses) > 0 {
+			return v.setLens(v.scope.Lens-1, true)
+		}
 	case "/":
 		v.filtering = true
 		v.filterInput.Focus()

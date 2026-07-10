@@ -77,29 +77,45 @@ func (ts *tabSet) YankText() (string, string, bool) {
 }
 
 func (ts *tabSet) Hints() []keyHint {
-	hints := []keyHint{{"tab", "tabs"}}
+	hints := []keyHint{{"1-9/tab", "tabs"}}
 	return append(hints, ts.activeView().Hints()...)
 }
 
 // tabJumps maps the drill vocabulary onto same-named page tabs: pressing l on
 // an entity page lands on its logs tab directly — the letters mean the same
-// signals everywhere, and digits stay global hotkeys.
+// signals everywhere.
 var tabJumps = map[string]string{
 	"l": "logs", "s": "traces", "v": "events", "p": "problems",
 	"m": "metrics", "u": "sessions", "e": "userevents",
 }
 
+// ClaimsDigits marks the page as entered: its numbered tab bar owns the
+// digit keys while it is on top (the numbering on screen is the mode
+// indicator); everywhere without visible numbers the digits stay the global
+// bookmarks, and esc restores them.
+func (ts *tabSet) ClaimsDigits() bool { return len(ts.tabs) > 1 }
+
 // tabKey handles tab-switching keys; everything else falls through to the
-// active tab's view. Each visible strip has one owner: tab/shift+tab cycle
-// the page tabs, the brackets always fall through to the active tab's own
-// lens strip (never the tabs — the same key must not change meaning between
-// tabs), and the drill letters jump straight to their tab.
+// active tab's view. Entering the page rescoped the keyboard to it: the
+// digits address the numbered tab bar directly, tab/shift+tab cycle it, the
+// brackets always fall through to the active tab's own lens strip (never the
+// tabs — the same key must not change meaning between tabs), and the drill
+// letters jump straight to their tab.
 func (ts *tabSet) tabKey(key string) (tea.Cmd, bool) {
 	switch key {
 	case "tab":
 		return ts.setActive((ts.active + 1) % len(ts.tabs)), true
 	case "shift+tab":
 		return ts.setActive((ts.active + len(ts.tabs) - 1) % len(ts.tabs)), true
+	}
+	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
+		if i := int(key[0] - '1'); i < len(ts.tabs) {
+			return ts.setActive(i), true
+		}
+		// 1-9 belong to the page while it is entered (0 stays the global
+		// jump home) — a digit the bar doesn't show teaches the way out
+		// instead of jumping somewhere invisible.
+		return status("digits pick tabs here — esc first for the global bookmarks"), true
 	}
 	// A letter the active tab's rows drill by (l on an evidence row scopes to
 	// THAT row's source entity) keeps its per-row meaning — the tab jump only
@@ -180,16 +196,16 @@ func (ts *tabSet) setTimeframeTabs(tf catalog.Timeframe) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// tabBar renders the tab strip with a row-count badge on every tab that has
-// loaded one. No digit labels: digits are global hotkeys everywhere; tab and
-// the brackets cycle the strip, the drill letters jump to their tab.
+// tabBar renders the tab strip with a digit label per tab (the digits switch
+// tabs while the page is entered — the numbers on screen say what the keys
+// do) and a row-count badge on every tab that has loaded one.
 func (ts *tabSet) tabBar() string {
 	labels := make([]string, len(ts.tabs))
 	for i, t := range ts.tabs {
-		label := t.name
+		label := fmt.Sprintf("%d %s", i+1, t.name)
 		if rc, ok := t.view.(rowCounter); ok && t.started {
 			if n, valid := rc.RowCount(); valid {
-				label = fmt.Sprintf("%s (%d)", t.name, n)
+				label = fmt.Sprintf("%s (%d)", label, n)
 			}
 		}
 		if i == ts.active {

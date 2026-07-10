@@ -75,6 +75,13 @@ type yankProvider interface {
 	YankText() (text, label string, ok bool)
 }
 
+// digitClaimer is implemented by entered pages whose visible numbered strip
+// (the tab bar) owns the digit keys while the page is on top; views without
+// numbers on screen leave the digits to the global bookmarks.
+type digitClaimer interface {
+	ClaimsDigits() bool
+}
+
 type app struct {
 	opts Options
 	ds   *dataSource
@@ -382,12 +389,17 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	top := a.top()
 	if !top.InputActive() {
-		// Digit hotkeys jump to bookmarked views — the same ten keys mean the
-		// same ten places on every screen. Lens strips and page tabs never
-		// claim them ([ and ] cycle those); only modal pickers (timeframe,
-		// open-with), which own the whole keyboard anyway, use digits.
+		// Digit hotkeys jump to bookmarked views. Entering a page rescopes
+		// the keyboard to it: a view showing a numbered strip (the tab bar
+		// on detail/problem pages) claims 1-9 while it is on top — the
+		// numbering on screen is the mode indicator — and esc restores the
+		// global bookmarks. 0 never appears on a tab bar, so it stays the
+		// jump home from anywhere; top-level tables, home, and the
+		// navigator show no numbers, so all ten keys stay global there.
 		if name, ok := hotkeys[key]; ok {
-			return a.jumpTo(name, "")
+			if c, entered := top.(digitClaimer); key == "0" || !entered || !c.ClaimsDigits() {
+				return a.jumpTo(name, "")
+			}
 		}
 		switch key {
 		case "q":
@@ -1043,10 +1055,10 @@ func (a *app) renderHelp() string {
 		{"Navigation", []keyHint{
 			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
-			{"0-9", "hotkeys, work on every screen: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
+			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 switch its numbered tabs instead (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},
-			{"[ / ]", "cycle the lens strip (traces, events, sessions, … — also inside detail tabs)"},
-			{"tab", "next tab on detail pages · next panel on home"},
+			{"tab", "cycle the view's primary strip: lens strip on tables · tabs on detail pages · panels on home"},
+			{"[ / ]", "cycle the lens strip explicitly (the only way for a strip nested inside a detail tab)"},
 			{"P", "preview pane on/off — the peek at the selected row is on by default and auto-hides on cramped terminals"},
 			{"H", "history — restore a previous page (survives restarts)"},
 			{"/", "filter table (live) — enter adds it as a server-side search, alt+enter replaces"},

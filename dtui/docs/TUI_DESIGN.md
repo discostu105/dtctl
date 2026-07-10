@@ -145,7 +145,7 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 |---|---|---|---|
 | Problems | `:problems`, `:pb` | `dt.davis.problems` | severity, status, title, root cause, impact, age; **the investigation entry point** |
 | Logs | `:logs` | `logs` | live-follow toggle, severity coloring, grouped-by-pattern mode, record inspector |
-| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · rpc · messaging · genai · all, [/] cycles — digits stay global hotkeys); trace-ID lookup (`:trace <id>`); waterfall view |
+| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · rpc · messaging · genai · all, tab/[/] cycle — digits stay global at the top level); trace-ID lookup (`:trace <id>`); waterfall view |
 | Metrics | `:metrics` | `timeseries` | metric browser for the scoped entity; braille/sparkline charts |
 | Events | `:events` | `events`, `dt.davis.events` | deployments, K8s events, Davis events; filterable by kind |
 | Security | `:security`, `:vulns` | `security.events` | vulnerabilities (CVE, DSS score, affected entities), detections (MITRE), posture findings |
@@ -356,7 +356,7 @@ Every detail page shares one chrome:
 │ ╰──────────╯                                                                 │
 │  <tab body>                                                                  │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ <tab> switch tab  <l s m p v x u> signals  <o>pen <d>escribe <esc> back     │
+│ <1-9>/<tab> switch tab  <l s m p v x u> signals  <o>pen <d>escribe <esc> ba │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -364,8 +364,10 @@ Every detail page shares one chrome:
   (truncated, `y` to yank), problem indicator, and a *relationship one-liner*
   built from Smartscape references (where it runs, what it belongs to, age
   from `lifetime`).
-- **Tab bar**: `tab` / `shift-tab` cycle tabs — `[` / `]` never do; the
-  brackets always drive the active tab's own lens strip. Tabs hold
+- **Tab bar**: the tabs are numbered and the digits switch them directly
+  while the page is entered (`0` stays the global jump home); `tab` /
+  `shift-tab` cycle them. `[` / `]` never touch the tab bar — the brackets
+  always drive the active tab's own lens strip. Tabs hold
   content that *belongs to* the object (summaries, embedded lists, charts).
   The signal keys (`l s m p v`) keep their global meaning — they *leave* the
   page into a full, pre-scoped signal view. Rule of thumb: tabs answer "what
@@ -977,13 +979,15 @@ picker); tab meant three. Every key now has exactly one owner, matching the
 visual hierarchy:
 
 - **Digits 0-9**: global hotkeys, on every screen. Lens strips and tab bars
-  never claim them.
+  never claim them. (Refined by "Entering rescopes the keyboard" below:
+  entered pages reclaimed 1-9 for their numbered tab bars.)
 - **`[` / `]`**: the lens strip, and only the lens strip — including a strip
   nested inside a detail tab. On a view without lenses the brackets say so
   instead of silently doing something else (the old fallback to tab cycling
   is gone: the same key must not change meaning between tabs).
 - **`tab` / `shift+tab`**: the tab bar (detail pages, problem page) and the
-  home panels. Nothing anywhere else.
+  home panels. Nothing anywhere else. (Refined below: tab now cycles the
+  view's primary strip, which on a plain table is the lens strip.)
 - **Drill letters** (`l s v p m u e`): pre-scoped signal views; on tabbed
   pages they jump to the same-named tab unless the active tab's rows drill
   by that key (per-row meaning wins).
@@ -998,6 +1002,27 @@ visual hierarchy:
   the `:events` hub with all/alerts/changes/system/audit lenses (system
   and audit surface `dt.system.events`), `x`=`X`= navigator walk, and
   `:aws` as an `:entities` census preset.
+
+### Phase 3.10 — Entering rescopes the keyboard ✅ implemented
+
+Phase 3.9's "digits global everywhere" treated the symptom (invisible key
+scope) by banning context. The durable rule is visibility-based: **digits do
+what the numbers on screen say; no numbers visible → global bookmarks.**
+
+- Detail and problem pages regained their digit labels (`1 details
+  2 related …`). While such a page is on top, `1`–`9` switch its tabs
+  directly (a digit the bar doesn't show is swallowed with a teaching
+  status, never a hidden jump), `0` stays the jump home from anywhere (it
+  never appears on a tab bar), and `esc` pops out to where all ten keys
+  are global again. Top-level tables, home, and the navigator show no
+  numbers, so digits stay global bookmarks there — the original
+  lens-strip/hotkey overlap stays fixed where users roam.
+- **`tab` cycles the view's primary strip**: page tabs when entered,
+  panels on home, and the lens strip on plain tables and the session
+  timeline — one unmodified key for the most common slice-switch (`[`/`]`
+  are AltGr chords on German-layout keyboards). The brackets remain the
+  explicit lens keys everywhere and the only driver for a strip nested
+  inside a detail tab, where the tab bar owns both tab and the digits.
 
 ### Phase 4 — Assets & mutations
 
