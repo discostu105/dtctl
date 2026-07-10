@@ -2,10 +2,10 @@
 
 **Status:** Phases 1–3 implemented; Phase 4 (assets & mutations) proposed
 **Location:** Since 2026-07-10 the TUI lives in its own Go module and binary —
-`dtui/` (`dtui/main.go`, `dtui/internal/tui/`); `dtctl tui` forwards to the
-`dtui` binary on PATH. Older path references in this document (`pkg/tui/`,
-`cmd/tui.go`) map to `dtui/internal/tui/` and `dtui/`. See
-[DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md).
+`dtui/` (`main.go`, `internal/tui/`, this document under `docs/`); `dtctl tui`
+forwards to the `dtui` binary on PATH. Older path references in this document
+(`pkg/tui/`, `cmd/tui.go`) map to `internal/tui/` and `main.go`. See
+[DTUI_SPLIT_DESIGN.md](../../docs/dev/DTUI_SPLIT_DESIGN.md) in the dtctl repo.
 **Created:** 2026-07-05
 **Author:** dtctl team
 
@@ -934,7 +934,7 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 
 ### Phase 3.8 — Smartscape navigator ✅ implemented
 
-Full design: `docs/dev/TUI_SMARTSCAPE_NAVIGATOR.md`.
+Full design: `docs/TUI_SMARTSCAPE_NAVIGATOR.md`.
 
 - **`:nav`** (aliases `smartscape`, `navigator`): a dedicated topology app in
   three stacked levels — overview (type census + type-level relationship
@@ -1001,13 +1001,13 @@ triage".
    `console_windows.go` VT enablement must run before bubbletea init).
 6. **Smartscape topology *visualization*** (graph drawing) — resolved by
    Phase 3.8: don't draw, navigate. The smartscape navigator (`:nav`,
-   `docs/dev/TUI_SMARTSCAPE_NAVIGATOR.md`) covers overview, browsing, and
+   `docs/TUI_SMARTSCAPE_NAVIGATOR.md`) covers overview, browsing, and
    walking; graph *drawing* stays rejected (hairball + lipgloss compositing
    limits).
 
 ## References
 
-- `docs/dev/TUI_LEARNINGS.md` — field notes: live-validated DQL/Grail facts, the view extension model, bubbletea message-flow patterns, and how to verify the TUI
+- `docs/TUI_LEARNINGS.md` — field notes: live-validated DQL/Grail facts, the view extension model, bubbletea message-flow patterns, and how to verify the TUI
 - `docs/dev/ARCHITECTURE.md` — prior "Interactive Mode" future idea
 - `docs/dev/WATCH_MODE_DESIGN.md` — existing live/watch semantics
 - `pkg/output/progress.go`, `live.go`, `watch.go` — current live rendering

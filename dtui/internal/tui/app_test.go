@@ -19,6 +19,7 @@ import (
 
 func testApp(t *testing.T, initial string) *app {
 	t.Helper()
+	previewEnabled = true // the app-wide default; tests must not leak a toggle
 	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly", InitialView: initial})
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +29,15 @@ func testApp(t *testing.T, initial string) *app {
 	a.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	deliver(a, a.Init())
 	return a
+}
+
+// disablePreview turns the app-wide peek pane off for one test: navigator
+// tests stay synchronous (no debounce ticks) and table tests measure the
+// bare table.
+func disablePreview(t *testing.T) {
+	t.Helper()
+	previewEnabled = false
+	t.Cleanup(func() { previewEnabled = true })
 }
 
 func key(s string) tea.KeyMsg {

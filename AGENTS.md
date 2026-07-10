@@ -28,6 +28,7 @@ sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
   ├── credstore/   # OS keyring and file-based credential storage
   └── agentmode/   # AI agent environment detection
 dtui/           # Separate Go module + binary (github.com/dynatrace-oss/dtui): the interactive TUI
+  ├── docs/          # TUI design docs (TUI_DESIGN.md, TUI_LEARNINGS.md, TUI_SMARTSCAPE_NAVIGATOR.md)
   └── internal/tui/  # k9s-style navigator; `dtctl tui` forwards to the dtui binary on PATH
 ```
 

@@ -205,11 +205,17 @@ repo.
    rotation — and the TUI's forced-refresh-on-401 path
    (`RefreshedTokenForContext` in `pkg/client/oauth_support.go`) calls exactly
    that method. A long-running dtui racing a concurrent dtctl refresh on the
-   same context can strand one side's credentials. Required: route the forced
-   refresh through (or wrap it in) the same lock. This also settles Decision
+   same context can strand one side's credentials. This also settles Decision
    3's scope: dtui is read-only for the config file but necessarily a
-   *writer* to the token store. **This is the sharpest technical risk of the
-   whole plan, and it must be fixed regardless of the split.**
+   *writer* to the token store.
+   ✅ **Fixed 2026-07-10**: `RefreshToken` now acquires the cross-process
+   lock and re-reads the store under it — a refresh completed by another
+   process while waiting is reused instead of double-spending the rotating
+   refresh token; an unchanged store still always refreshes (the 401-retry
+   contract). `GetToken` calls the extracted unlocked internal
+   (`refreshTokenLocked`) since it already holds the lock. Covered by
+   `pkg/auth/token_manager_refresh_lock_test.go`, including a
+   rotation-faithful concurrent regression test against the real file lock.
 2. **Current-context is shared mutable state.** Today `dtctl query --context X`
    *persists* the context switch to disk. If dtui inherits write-through
    semantics, an open TUI where the user hits `:ctx staging` silently repoints
@@ -383,8 +389,9 @@ dtui ships.
 
 ## References
 
-- `docs/dev/TUI_DESIGN.md` — the TUI design this proposal extracts
-- `docs/dev/TUI_LEARNINGS.md` — field notes; moves to dtui with the code
+- `dtui/docs/TUI_DESIGN.md` — the TUI design this proposal extracts
+- `dtui/docs/TUI_LEARNINGS.md` — field notes; moved to dtui with the code
+  2026-07-10 (as did `TUI_SMARTSCAPE_NAVIGATOR.md`)
 - `docs/dev/ARCHITECTURE.md` — Phase-2 "Plugin System" line superseded here
 - `docs/dev/context-safety-levels.md`, `pkg/safety/` — safety semantics that
   become part of the shared contract

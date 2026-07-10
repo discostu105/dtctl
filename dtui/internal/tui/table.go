@@ -67,13 +67,16 @@ type tableView struct {
 	// spec is Dynamic (the record sampler browses arbitrary tables).
 	dynCols []catalog.Column
 
-	// previewOn shows the selected row's highlights in a side pane (bottom
-	// panel on narrow screens) — the navigator's peek pattern, toggled with
-	// tab. Entirely client-side: the row's record is already fetched.
-	previewOn bool
-
 	width, height int
 }
+
+// previewEnabled is the app-wide peek-pane preference, toggled with P. A
+// package global on purpose: every table and navigator pane — including ones
+// nested inside detail tabs — honors the one preference, and views pushed
+// later inherit it without plumbing. The pane costs nothing (it renders the
+// row already fetched), so it defaults to on; the size gates below hide it
+// where it cannot fit.
+var previewEnabled = true
 
 // previewPaneMinWidth is the narrowest screen that fits a side preview; below
 // it the preview renders as a bottom panel instead.
@@ -82,8 +85,15 @@ const previewPaneMinWidth = 110
 // previewBottomH is the bottom preview panel's line budget on narrow screens.
 const previewBottomH = 9
 
-func (v *tableView) previewSide() bool   { return v.previewOn && v.width >= previewPaneMinWidth }
-func (v *tableView) previewBottom() bool { return v.previewOn && v.width < previewPaneMinWidth }
+// previewBottomMinHeight is the shortest screen that affords the bottom
+// panel — below it the panel's ten-line bite starves the table, so the
+// preview auto-hides instead.
+const previewBottomMinHeight = 30
+
+func (v *tableView) previewSide() bool { return previewEnabled && v.width >= previewPaneMinWidth }
+func (v *tableView) previewBottom() bool {
+	return previewEnabled && v.width < previewPaneMinWidth && v.height >= previewBottomMinHeight
+}
 
 // facetStage is the facet picker's overlay state.
 type facetStage int
@@ -294,7 +304,9 @@ func (v *tableView) Hints() []keyHint {
 	if len(v.spec.Lenses) > 0 {
 		hints = append(hints, keyHint{"[/]", "lens"})
 	}
-	hints = append(hints, keyHint{"tab", "preview"})
+	if !previewEnabled {
+		hints = append(hints, keyHint{"P", "preview"})
+	}
 	switch {
 	case v.spec.EnterTarget == "pattern-logs":
 		hints = append(hints, keyHint{"enter", "matching logs"})
@@ -529,19 +541,12 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if len(v.spec.Lenses) > 0 {
 			return v.setLens(v.scope.Lens+1, true)
 		}
+		return status("no lens strip on this view")
 	case "[":
 		if len(v.spec.Lenses) > 0 {
 			return v.setLens(v.scope.Lens-1, true)
 		}
-	case "tab":
-		// Peek without committing: tab toggles the preview pane (the same
-		// key the navigator uses), rendering the selected row's highlights
-		// from data already fetched — no extra query.
-		v.previewOn = !v.previewOn
-		if v.previewOn {
-			return status("preview on — enter opens the full record")
-		}
-		return status("preview off")
+		return status("no lens strip on this view")
 	case "/":
 		v.filtering = true
 		v.filterInput.Focus()

@@ -6,7 +6,7 @@ import (
 )
 
 // All queries below were validated live against a tenant (field names, filter
-// syntax, and toSmartscapeId usage); see docs/dev/TUI_DESIGN.md "Detail Pages"
+// syntax, and toSmartscapeId usage); see docs/TUI_DESIGN.md "Detail Pages"
 // for the exploration notes.
 
 var problemsSpec = &Spec{

@@ -16,7 +16,7 @@ import (
 )
 
 // navView is the smartscape navigator (:nav) — a dedicated app for exploring
-// the topology graph (docs/dev/TUI_SMARTSCAPE_NAVIGATOR.md). Three levels,
+// the topology graph (docs/TUI_SMARTSCAPE_NAVIGATOR.md). Three levels,
 // one layout language (list left, preview right):
 //
 //   - overview: entity-type census plus the type-level relationship schema
@@ -65,8 +65,8 @@ type navView struct {
 	probByType map[string]int              // node type → #problems touching it
 
 	// preview debounce: cursor movement bumps the generation; the fetch fires
-	// only when the tick comes back with the current one.
-	previewOn  bool
+	// only when the tick comes back with the current one. Whether the pane
+	// shows at all follows the app-wide previewEnabled preference (P).
 	previewGen int
 
 	rows []navRow // flattened cursor rows for the current mode
@@ -168,7 +168,6 @@ func newNavView(ds *dataSource, tf catalog.Timeframe) *navView {
 		detail:      map[string]map[string]any{},
 		collapsed:   map[navGroupKey]bool{},
 		expanded:    map[navGroupKey]bool{},
-		previewOn:   true,
 		filterInput: fi,
 	}
 }
@@ -254,7 +253,11 @@ func (v *navView) Hints() []keyHint {
 		return []keyHint{{"enter", "walk to"}, {"←", "back"}, {"d", "details"}, {"z", "fold"},
 			{"i", "direction"}, {"M", "mesh"}, {"/", "filter"}}
 	}
-	return []keyHint{{"enter", "browse type"}, {"/", "filter"}, {"tab", "pane"}}
+	hints := []keyHint{{"enter", "browse type"}, {"/", "filter"}}
+	if !previewEnabled {
+		hints = append(hints, keyHint{"P", "pane"})
+	}
+	return hints
 }
 
 // Selection exposes the highlighted node for app-level actions (pin, x,
@@ -565,9 +568,6 @@ func (v *navView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return status("structure only — mesh edges (calls, routes to) hidden")
 		}
 		return status("mesh edges shown")
-	case "tab":
-		v.previewOn = !v.previewOn
-		return nil
 	case "l", "s", "v", "p", "m":
 		return v.drill(map[string]string{
 			"l": "logs", "s": "traces", "v": "events", "p": "problems", "m": "metrics",
@@ -846,7 +846,7 @@ func (v *navView) schedulePreview() tea.Cmd {
 }
 
 func (v *navView) rightPaneVisible() bool {
-	return v.previewOn && v.width >= 100
+	return previewEnabled && v.width >= 100
 }
 
 // --- rendering ------------------------------------------------------------------

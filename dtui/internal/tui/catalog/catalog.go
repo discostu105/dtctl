@@ -2,7 +2,7 @@
 //
 // Each view is a Spec: a scope-aware DQL query template plus curated columns
 // and drill-down targets. Adding a view is configuration, not plumbing (see
-// docs/dev/TUI_DESIGN.md, "The ViewSpec catalog"). The package is free of any
+// docs/TUI_DESIGN.md, "The ViewSpec catalog"). The package is free of any
 // TUI framework dependency so query composition can be tested as plain data.
 package catalog
 

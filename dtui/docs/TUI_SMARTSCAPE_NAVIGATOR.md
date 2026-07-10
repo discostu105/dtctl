@@ -365,9 +365,9 @@ the actual edge list).
 
 - `pkg/tui/relations.go` — data seed (ego edges, names, edge ranking)
 - `pkg/tui/waterfall.go` — tree rendering model
-- `docs/dev/TUI_DESIGN.md` — Open Question 6 (topology view), scope system,
+- `docs/TUI_DESIGN.md` — Open Question 6 (topology view), scope system,
   "DQL is the substrate"
-- `docs/dev/TUI_LEARNINGS.md` — §1.1/§1.2/§1.8 Smartscape DQL facts,
+- `docs/TUI_LEARNINGS.md` — §1.1/§1.2/§1.8 Smartscape DQL facts,
   §2 extension model, §3 message-flow patterns, §5 live verification
 - `docs/dev/DTUI_SPLIT_DESIGN.md` — seam discipline this feature respects
 - [ranger](https://github.com/ranger/ranger) — Miller-column walking idiom

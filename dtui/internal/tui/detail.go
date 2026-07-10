@@ -81,15 +81,6 @@ func (ts *tabSet) Hints() []keyHint {
 	return append(hints, ts.activeView().Hints()...)
 }
 
-// lensedInner returns the active tab's table when it carries a lens strip —
-// a nested strip that the brackets drive while it is visible.
-func (ts *tabSet) lensedInner() *tableView {
-	if tv, ok := ts.activeView().(*tableView); ok && len(tv.spec.Lenses) > 0 {
-		return tv
-	}
-	return nil
-}
-
 // tabJumps maps the drill vocabulary onto same-named page tabs: pressing l on
 // an entity page lands on its logs tab directly — the letters mean the same
 // signals everywhere, and digits stay global hotkeys.
@@ -99,25 +90,15 @@ var tabJumps = map[string]string{
 }
 
 // tabKey handles tab-switching keys; everything else falls through to the
-// active tab's view. tab/shift+tab cycle the page tabs; [ and ] cycle the
-// active tab's own lens strip when it shows one (it is the visible strip),
-// else the page tabs; the drill letters jump straight to their tab.
+// active tab's view. Each visible strip has one owner: tab/shift+tab cycle
+// the page tabs, the brackets always fall through to the active tab's own
+// lens strip (never the tabs — the same key must not change meaning between
+// tabs), and the drill letters jump straight to their tab.
 func (ts *tabSet) tabKey(key string) (tea.Cmd, bool) {
-	inner := ts.lensedInner()
 	switch key {
 	case "tab":
 		return ts.setActive((ts.active + 1) % len(ts.tabs)), true
 	case "shift+tab":
-		return ts.setActive((ts.active + len(ts.tabs) - 1) % len(ts.tabs)), true
-	case "]":
-		if inner != nil {
-			return nil, false // the inner view cycles its lens
-		}
-		return ts.setActive((ts.active + 1) % len(ts.tabs)), true
-	case "[":
-		if inner != nil {
-			return nil, false
-		}
 		return ts.setActive((ts.active + len(ts.tabs) - 1) % len(ts.tabs)), true
 	}
 	// A letter the active tab's rows drill by (l on an evidence row scopes to

@@ -1,5 +1,5 @@
 // Command dtui is the interactive terminal UI for Dynatrace — a k9s-style
-// navigator over observability primitives (see docs/dev/TUI_DESIGN.md).
+// navigator over observability primitives (see docs/TUI_DESIGN.md).
 //
 // dtui is a pure consumer of dtctl's configuration: contexts and credentials
 // are created and managed with dtctl (`dtctl ctx create`), and dtui reads the

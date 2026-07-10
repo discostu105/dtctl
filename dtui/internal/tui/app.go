@@ -1,6 +1,6 @@
 // Package tui implements the interactive terminal UI behind the dtui binary
 // (`dtctl tui` forwards to it) — a k9s-style navigator over observability
-// primitives (see docs/dev/TUI_DESIGN.md). It is a presentation layer over
+// primitives (see docs/TUI_DESIGN.md). It is a presentation layer over
 // dtctl's pkg/exec and the catalog's DQL templates; nothing outside the dtui
 // main package imports it.
 package tui
@@ -418,6 +418,27 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return statusErr("selection carries no entity to walk")
 		case ".":
 			return a.togglePin()
+		case "P":
+			// The peek pane is an app-wide preference, not per-view state:
+			// every table and navigator pane follows it, nested ones
+			// included, and views pushed later inherit it.
+			previewEnabled = !previewEnabled
+			if !previewEnabled {
+				return status("preview pane off (P restores it)")
+			}
+			cmd := status("preview pane on")
+			if a.width < previewPaneMinWidth && a.bodyHeight() < previewBottomMinHeight {
+				cmd = status("preview on — hidden until the terminal grows")
+			}
+			if nv, ok := top.(*navView); ok {
+				if nv.rightPaneVisible() {
+					cmd = status("preview pane on")
+				}
+				// The pane may have been off since the walk opened — arm the
+				// debounced detail fetch for the current selection.
+				return tea.Batch(cmd, nv.schedulePreview())
+			}
+			return cmd
 		case "ctrl+x":
 			if a.pin == nil {
 				return nil
@@ -1024,8 +1045,9 @@ func (a *app) renderHelp() string {
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "hotkeys, work on every screen: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
-			{"[ / ]", "cycle lens (traces, events, sessions, …) or tab (detail pages)"},
-			{"tab", "preview pane — peek at the selected row (tables, navigator) · next tab on detail pages · next panel on home"},
+			{"[ / ]", "cycle the lens strip (traces, events, sessions, … — also inside detail tabs)"},
+			{"tab", "next tab on detail pages · next panel on home"},
+			{"P", "preview pane on/off — the peek at the selected row is on by default and auto-hides on cramped terminals"},
 			{"H", "history — restore a previous page (survives restarts)"},
 			{"/", "filter table (live) — enter adds it as a server-side search, alt+enter replaces"},
 			{"f / F", "facet manager: add attribute=value filters (fieldsSummary top values, * patterns), edit/remove each / clear all"},

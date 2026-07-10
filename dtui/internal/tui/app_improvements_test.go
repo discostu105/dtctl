@@ -9,8 +9,9 @@ import (
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
-// TestTablePreviewPane: tab toggles the peek pane; it renders the selected
-// record's priority fields (severity colored) entirely client-side.
+// TestTablePreviewPane: the peek pane is on by default (it renders the
+// selected record's priority fields entirely client-side); P is the app-wide
+// toggle, and cramped terminals auto-hide the bottom panel.
 func TestTablePreviewPane(t *testing.T) {
 	a := testApp(t, "logs")
 	seedRows(t, a, []map[string]any{{
@@ -20,12 +21,8 @@ func TestTablePreviewPane(t *testing.T) {
 		"trace_id":  "7485b342cc6046e1d820a3a397141d12",
 	}})
 	tv := a.top().(*tableView)
-	if tv.previewOn {
-		t.Fatal("preview should start off")
-	}
-	press(a, key("tab"))
-	if !tv.previewOn || !tv.previewSide() {
-		t.Fatalf("tab should toggle the side preview on a 120-wide screen (on=%v side=%v)", tv.previewOn, tv.previewSide())
+	if !tv.previewSide() {
+		t.Fatal("preview should be on by default (side pane on a 120-wide screen)")
 	}
 	body := ansi.Strip(tv.View(120, 30))
 	for _, want := range []string{"loglevel: ERROR", "connection refused", "trace:"} {
@@ -39,19 +36,32 @@ func TestTablePreviewPane(t *testing.T) {
 		t.Fatal("narrow screens should use the bottom panel")
 	}
 	withPreview := tv.pageSize()
-	tv.previewOn = false
+	// P flips the app-wide preference — the pane disappears everywhere.
+	press(a, key("P"))
+	if previewEnabled || tv.previewBottom() {
+		t.Fatal("P should turn the preview off")
+	}
 	if tv.pageSize() <= withPreview {
-		t.Error("bottom preview must shrink the page size")
+		t.Error("hiding the bottom preview must grow the page size")
+	}
+	press(a, key("P"))
+	if !previewEnabled || !tv.previewBottom() {
+		t.Fatal("P should turn the preview back on")
+	}
+	// Short screens auto-hide the bottom panel: its ten-line bite would
+	// starve the table.
+	tv.height = previewBottomMinHeight - 1
+	if tv.previewBottom() {
+		t.Error("short screens must auto-hide the bottom panel")
 	}
 }
 
 // TestTablePreviewEntityRow: entity rows preview their curated key facts from
-// the list row itself — no extra query.
+// the list row itself — no extra query, no toggle needed.
 func TestTablePreviewEntityRow(t *testing.T) {
 	a := testApp(t, "hosts")
 	seedRows(t, a, []map[string]any{hostRow()})
 	tv := a.top().(*tableView)
-	press(a, key("tab"))
 	body := ansi.Strip(tv.View(120, 30))
 	for _, want := range []string{"web-01.example.invalid", "HOST", "os:", "memory:"} {
 		if !strings.Contains(body, want) {
