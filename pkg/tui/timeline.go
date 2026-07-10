@@ -183,9 +183,9 @@ func (v *timelineView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.cursor, v.offset = 0, 0
 	case "end", "G":
 		v.move(len(v.rows))
-	case "tab", "]":
+	case "]":
 		return v.setLens(v.lens+1, true)
-	case "shift+tab", "[":
+	case "[":
 		return v.setLens(v.lens-1, true)
 	case "enter":
 		if row := v.selectedRow(); row != nil {
@@ -216,10 +216,6 @@ func (v *timelineView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		scope := catalog.Scope{Timeframe: v.tf, Arg: v.sessionID}
 		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
-	default:
-		if len(key) == 1 && key[0] >= '1' && key[0] < byte('1'+len(catalog.SessionTimelineLenses)) {
-			return v.setLens(int(key[0]-'1'), false)
-		}
 	}
 	return nil
 }

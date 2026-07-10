@@ -217,7 +217,7 @@ var logTimeColumn = Column{
 	Sort:  func(rec map[string]any) any { return Str(rec, "timestamp") },
 }
 
-var logLevelColumn = Column{Title: "LEVEL", Width: 5, Value: logLevel, Class: classLogLevel}
+var logLevelColumn = Column{Title: "LEVEL", Width: 5, Value: logLevel, Class: ClassLevel}
 
 // logLevel prefers loglevel over the coarser status field.
 func logLevel(rec map[string]any) string {
@@ -225,20 +225,6 @@ func logLevel(rec map[string]any) string {
 		return l
 	}
 	return Str(rec, "status")
-}
-
-func classLogLevel(val string) string {
-	switch strings.ToUpper(val) {
-	case "ERROR", "SEVERE", "CRITICAL", "FATAL", "EMERGENCY", "ALERT":
-		return "error"
-	case "WARN", "WARNING":
-		return "warn"
-	case "INFO", "NOTICE":
-		return "ok"
-	case "NONE", "DEBUG", "TRACE":
-		return "dim"
-	}
-	return ""
 }
 
 // logSource labels the row with the most specific origin available.
@@ -260,25 +246,88 @@ func signalSourceEntity(rec map[string]any) *Entity {
 	return &Entity{ID: id, Name: logSource(rec), Type: Str(rec, "dt.smartscape_source.type")}
 }
 
+// eventLenses slice the events hub. The first three lens the Davis events
+// table; system and audit swap the query to dt.system.events — one view is
+// the front door for every event-shaped record (TUI_DESIGN.md promised a
+// filterable events view; the lenses are that filter).
+var eventLenses = []Lens{
+	{Name: "all", Desc: "every Davis event record"},
+	// event.severity is the ITIL ordinal (1 worst … 5 info); <= 4 drops the
+	// CUSTOM_INFO chatter that otherwise buries everything (validated live:
+	// 18k of 20k rows were SEV5).
+	{Name: "alerts", Desc: "SEV4 and worse — no CUSTOM_INFO chatter", Filter: "event.severity <= 4"},
+	{Name: "changes", Desc: "deployments, config changes, restarts", Filter: changeEventFilter},
+	{Name: "system", Desc: "platform health — extensions, log sources, workflows", Columns: systemEventColumns},
+	{Name: "audit", Desc: "who did what — the API audit trail", Columns: auditEventColumns},
+}
+
+var systemEventColumns = []Column{
+	eventTimeColumn,
+	{Title: "KIND", Field: "event.kind", Width: 20},
+	// dt.system.events status carries log-shaped words (WARN on extension
+	// SFM events, SUCCEEDED/FAILED on workflow runs) — color them like a
+	// log line's level.
+	{Title: "STATUS", Field: "status", Width: 9, Class: ClassLevel},
+	{Title: "CONTENT", Value: func(rec map[string]any) string {
+		return firstNonEmpty(Str(rec, "content"), Str(rec, "event.name"), Str(rec, "event.type"))
+	}},
+}
+
+var auditEventColumns = []Column{
+	eventTimeColumn,
+	{Title: "METHOD", Field: "event.type", Width: 6},
+	{Title: "OUTCOME", Field: "event.outcome", Width: 7, Right: true, Class: classHTTPStatus},
+	{Title: "PROVIDER", Field: "event.provider", Width: 14},
+	{Title: "USER", Field: "user.id", Width: 20},
+	{Title: "RESOURCE", Field: "resource"},
+}
+
+var eventTimeColumn = Column{
+	Title: "TIME", Width: 12,
+	Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) },
+	Sort:  func(rec map[string]any) any { return Str(rec, "timestamp") },
+}
+
 var eventsSpec = &Spec{
 	Name:    "events",
 	Aliases: []string{"ev", "event"},
 	Kind:    KindSignal,
-	Desc:    "Events (Davis, deployments, K8s)",
+	Desc:    "Events by lens: davis, alerts, changes, system, audit",
 	Query: func(s Scope) string {
 		var b strings.Builder
-		fmt.Fprintf(&b, "fetch events, from:%s", s.Timeframe.DQL())
-		if f := ScopeSignalFilter(s); f != "" {
-			fmt.Fprintf(&b, "\n| filter %s", f)
+		switch lensAt(eventLenses, s.Lens).Name {
+		case "system":
+			// dt.system.events records carry no entity fields, so the scope
+			// filter deliberately does not compose here — the lens is always
+			// tenant-wide. Audit and query-execution kinds have their own
+			// homes (the audit lens; the sampler) and would drown the rest.
+			fmt.Fprintf(&b, "fetch dt.system.events, from:%s", s.Timeframe.DQL())
+			b.WriteString("\n| filter not(in(event.kind, {\"AUDIT_EVENT\", \"QUERY_EXECUTION_EVENT\"}))")
+		case "audit":
+			fmt.Fprintf(&b, "fetch dt.system.events, from:%s", s.Timeframe.DQL())
+			b.WriteString("\n| filter event.kind == \"AUDIT_EVENT\"")
+		default:
+			fmt.Fprintf(&b, "fetch events, from:%s", s.Timeframe.DQL())
+			if f := ScopeSignalFilter(s); f != "" {
+				fmt.Fprintf(&b, "\n| filter %s", f)
+			}
+			if f := lensAt(eventLenses, s.Lens).Filter; f != "" {
+				fmt.Fprintf(&b, "\n| filter %s", f)
+			}
 		}
 		b.WriteString("\n| sort timestamp desc\n| limit 300")
 		return b.String()
 	},
+	Lenses: eventLenses,
 	Columns: []Column{
-		{Title: "TIME", Width: 12, Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) }},
-		{Title: "KIND", Field: "event.kind", Width: 12},
-		{Title: "TYPE", Field: "event.type", Width: 28},
+		eventTimeColumn,
+		severityColumn,
+		{Title: "STATUS", Field: "event.status", Width: 6, Class: classProblemStatus},
+		{Title: "TYPE", Field: "event.type", Width: 24},
 		{Title: "NAME", Field: "event.name"},
+		{Title: "SOURCE", Width: 24, Value: func(rec map[string]any) string {
+			return StrFirst(rec, "dt_source_entity_name")
+		}},
 	},
 	Entity: signalSourceEntity,
 	// Events carry their source entity — logs and metrics of the thing that

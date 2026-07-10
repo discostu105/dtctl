@@ -47,7 +47,7 @@ func TestSortKeysCycleAndToggle(t *testing.T) {
 	}
 }
 
-func TestHotkeysJumpAndDetailDigitsStayTabs(t *testing.T) {
+func TestHotkeysJumpEverywhereAndLettersJumpTabs(t *testing.T) {
 	a := testApp(t, "problems")
 	press(a, key("4"))
 	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "pods" {
@@ -57,16 +57,21 @@ func TestHotkeysJumpAndDetailDigitsStayTabs(t *testing.T) {
 		t.Fatalf("hotkey jump should replace the stack")
 	}
 
-	// On a detail page digits switch tabs, not views.
+	// On a detail page the drill letters jump to their tab...
 	seedRows(t, a, []map[string]any{podRow("a", "ns1", "Running", 0)})
 	press(a, key("enter"))
 	dv, ok := a.top().(*detailView)
 	if !ok {
 		t.Fatalf("enter on pod should open detail, top = %T", a.top())
 	}
+	press(a, key("v"))
+	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "events" {
+		t.Fatalf("v on detail page must jump to the events tab (active=%s, top=%T)", dv.tabs[dv.active].name, a.top())
+	}
+	// ...and digits stay global hotkeys, replacing the stack.
 	press(a, key("3"))
-	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.active != 2 {
-		t.Fatalf("digit on detail page must switch tabs (active=%d, top=%T)", dv.active, a.top())
+	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "hosts" || len(a.stack) != 1 {
+		t.Fatalf("digit on detail page must stay a global hotkey (top=%T, depth=%d)", a.top(), len(a.stack))
 	}
 }
 
@@ -168,46 +173,46 @@ func TestSpanLensSwitching(t *testing.T) {
 		t.Fatalf("traces should open on the roots lens:\n%s", tv.dql)
 	}
 
-	// Digits pick a lens directly (claimed from the hotkey map, like detail
-	// tabs); the crumb names any non-default lens.
-	press(a, key("2"))
+	// ] cycles forward, [ back; the crumb names any non-default lens.
+	press(a, key("]"))
 	if a.top() != tv {
-		t.Fatalf("digit on a lensed table must switch lens, not views (top = %T)", a.top())
+		t.Fatalf("] on a lensed table must switch lens, not views (top = %T)", a.top())
 	}
 	if !strings.Contains(tv.dql, `span.status_code == "error"`) {
-		t.Errorf("lens 2 (errors) not composed:\n%s", tv.dql)
+		t.Errorf("lens errors not composed:\n%s", tv.dql)
 	}
 	if tv.Crumb() != "traces·errors" {
 		t.Errorf("crumb = %q, want traces·errors", tv.Crumb())
 	}
-
-	// tab cycles forward, shift+tab back.
-	press(a, key("tab"))
+	press(a, key("]"))
 	if !strings.Contains(tv.dql, `span.kind == "server"`) {
-		t.Errorf("tab should advance to server lens:\n%s", tv.dql)
+		t.Errorf("] should advance to server lens:\n%s", tv.dql)
 	}
-	press(a, key("shift+tab"))
+	press(a, key("["))
 	if !strings.Contains(tv.dql, `span.status_code == "error"`) {
-		t.Errorf("shift+tab should return to errors lens:\n%s", tv.dql)
+		t.Errorf("[ should return to errors lens:\n%s", tv.dql)
 	}
 
 	// The db lens swaps in its curated statement columns.
-	press(a, key("5"))
+	for range 3 { // errors → server → client → db
+		press(a, key("]"))
+	}
 	if got := tv.columns()[1].Title; got != "STATEMENT" {
 		t.Errorf("db lens column[1] = %q, want STATEMENT", got)
 	}
 
 	// The category lenses carry their own columns too.
-	press(a, key("7"))
+	for range 2 { // db → rpc → messaging
+		press(a, key("]"))
+	}
 	if got := tv.columns()[1].Title; got != "DESTINATION" {
 		t.Errorf("messaging lens column[1] = %q, want DESTINATION", got)
 	}
 
-	// All nine digits are lens-claimed on traces (9 lenses); digits outside
-	// the lens range still hit their global hotkey (0 → home).
-	press(a, key("9"))
-	if a.top() != tv || tv.Crumb() != "traces·all" {
-		t.Fatalf("digit 9 should pick the all lens, top = %v", a.top().Crumb())
+	// Digits never touch the lens strip: they stay global hotkeys.
+	press(a, key("5"))
+	if logs, ok := a.top().(*tableView); !ok || logs.spec.Name != "logs" {
+		t.Fatalf("digit 5 should jump to logs, top = %v", a.top().Crumb())
 	}
 	press(a, key("0"))
 	if _, ok := a.top().(*homeView); !ok {
@@ -228,16 +233,19 @@ func TestLogRowTraceJump(t *testing.T) {
 	}
 }
 
-func TestRelationsKeyOpensPanel(t *testing.T) {
+func TestTopologyKeyOpensNavigatorWalk(t *testing.T) {
 	a := testApp(t, "pods")
 	seedRows(t, a, []map[string]any{podRow("checkout-1", "shop", "Running", 0)})
+	// x and X both open the navigator walk — the trail-based walk replaced
+	// the standalone one-hop relations page (which lives on as the detail
+	// page's related tab).
 	press(a, key("x"))
-	rel, ok := a.top().(*relationsView)
-	if !ok || rel.entity.ID != "K8S_POD-checkout-1" {
-		t.Fatalf("x should open relations, top = %T", a.top())
+	nv, ok := a.top().(*navView)
+	if !ok || nv.mode != navWalk || nv.root.ID != "K8S_POD-checkout-1" {
+		t.Fatalf("x should open the navigator walk, top = %T", a.top())
 	}
-	if !strings.Contains(rel.dql, `source_id == toSmartscapeId("K8S_POD-checkout-1") or target_id == toSmartscapeId("K8S_POD-checkout-1")`) {
-		t.Errorf("relations dql:\n%s", rel.dql)
+	if !strings.Contains(nv.dql, `source_id == toSmartscapeId("K8S_POD-checkout-1") or target_id == toSmartscapeId("K8S_POD-checkout-1")`) {
+		t.Errorf("walk dql:\n%s", nv.dql)
 	}
 }
 

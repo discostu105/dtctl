@@ -152,7 +152,7 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	// The details tab renders instantly from the list row: tab bar, curated
 	// key facts, and full properties without waiting for a fetch.
 	body := a.top().View(120, 30)
-	for _, want := range []string{"1 · details", "2 · related", "3 · metrics", "4 · logs", "5 · events", "6 · problems",
+	for _, want := range []string{"details", "related", "metrics", "logs", "events", "problems",
 		"7.6 GiB", "2 logical / 1 physical", "aws us-east-1b", "HOST-AAAABBBBCCCCDDDD"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("details tab missing %q:\n%s", want, body)
@@ -170,9 +170,10 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 		t.Fatalf("related tab dql = %q", rv.dql)
 	}
 
-	// Digits jump straight to a tab: metrics starts its availability probe
-	// (the chart query follows once the probe returns).
-	press(a, key("3"))
+	// The drill letters jump straight to their tab: m opens metrics, which
+	// starts its availability probe (the chart query follows once the probe
+	// returns).
+	press(a, key("m"))
 	mv, ok := dv.tabs[2].view.(*metricsView)
 	if !ok || !strings.Contains(mv.dql, "metrics from:") ||
 		!strings.Contains(mv.dql, `toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
@@ -180,10 +181,10 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	}
 
 	// The logs tab is pre-scoped to the host.
-	press(a, key("4"))
+	press(a, key("l"))
 	logs, ok := dv.tabs[dv.active].view.(*tableView)
 	if !ok || logs.spec.Name != "logs" {
-		t.Fatalf("'4' should activate logs tab, active view = %T", dv.tabs[dv.active].view)
+		t.Fatalf("'l' should activate logs tab, active view = %T", dv.tabs[dv.active].view)
 	}
 	if !strings.Contains(logs.dql, `dt.smartscape.host == toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Errorf("logs tab not scoped to host:\n%s", logs.dql)
@@ -203,7 +204,7 @@ func TestDetailTabEscClearsChildFilterBeforePopping(t *testing.T) {
 	a := testApp(t, "hosts")
 	seedRows(t, a, []map[string]any{hostRow()})
 	press(a, key("enter"))
-	press(a, key("4")) // logs tab
+	press(a, key("l")) // logs tab
 
 	dv := a.top().(*detailView)
 	logs := dv.tabs[dv.active].view.(*tableView)
@@ -240,10 +241,10 @@ func TestHostDetailRelatedTab(t *testing.T) {
 	press(a, key("enter"))
 	dv := a.top().(*detailView)
 
-	press(a, key("2"))
+	press(a, key("tab"))
 	rv, ok := dv.tabs[dv.active].view.(*relationsView)
 	if !ok {
-		t.Fatalf("'2' should activate the related tab, view = %T", dv.tabs[dv.active].view)
+		t.Fatalf("tab should activate the related tab, view = %T", dv.tabs[dv.active].view)
 	}
 
 	dv.Update(dataMsg{owner: rv, seq: rv.seq, records: []map[string]any{

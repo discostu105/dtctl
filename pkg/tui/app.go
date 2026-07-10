@@ -74,13 +74,6 @@ type yankProvider interface {
 	YankText() (text, label string, ok bool)
 }
 
-// digitClaimer is implemented by the tabbed pages (entity detail, problem),
-// whose tab strip — or the active tab's lens strip — takes digit keys over
-// from the global hotkeys.
-type digitClaimer interface {
-	claimsDigit(d byte) bool
-}
-
 type app struct {
 	opts Options
 	ds   *dataSource
@@ -166,6 +159,12 @@ func (a *app) viewFor(name string) (viewModel, error) {
 	spec := catalog.Lookup(name)
 	if spec == nil {
 		return nil, fmt.Errorf("unknown view %q (available: home, query, nav, %s)", name, strings.Join(catalog.Names(), ", "))
+	}
+	// The record sampler without an argument would just re-browse the table
+	// catalog — that browser already exists as :tables, so go there instead
+	// (drills reach the sampler with an Arg via pushViewMsg, never here).
+	if spec.Name == "records" {
+		spec = catalog.Lookup("tables")
 	}
 	scope := catalog.Scope{Timeframe: a.tf}
 	// Only hand the pin to a view whose query actually composes it, so the
@@ -271,13 +270,10 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return a.navigate(newMetricChartView(a.ds, msg.key, entity, a.tf), false)
 
 	case waterfallMsg:
-		return a.navigate(newWaterfallView(a.ds, msg.traceID, a.tf), false)
+		return a.navigate(newWaterfallView(a.ds, msg.traceID, msg.focusSpanID, a.tf), false)
 
 	case timelineMsg:
 		return a.navigate(newTimelineView(a.ds, msg.sessionID, msg.rec, a.tf), false)
-
-	case relationsMsg:
-		return a.navigate(newRelationsView(a.ds, msg.entity, a.tf), false)
 
 	case navMsg:
 		switch {
@@ -385,29 +381,12 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 
 	top := a.top()
 	if !top.InputActive() {
-		// Digit hotkeys jump to bookmarked views. On a detail page the digits
-		// that name a tab (1..N) switch tabs instead — likewise the digits
-		// naming a lens on a lensed table; the rest (0, and any past the last
-		// tab) still hit their hotkey, so '0' → home works everywhere the
-		// help overlay promises it does.
-		if len(key) == 1 && key[0] >= '0' && key[0] <= '9' {
-			claimedByTab := false
-			if dc, isTabbed := top.(digitClaimer); isTabbed {
-				// The page tabs — or the active tab's own lens strip, which
-				// takes the digits over while it is visible.
-				claimedByTab = dc.claimsDigit(key[0])
-			}
-			if tv, isTable := top.(*tableView); isTable {
-				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(tv.spec.Lenses))
-			}
-			if _, isTimeline := top.(*timelineView); isTimeline {
-				claimedByTab = key[0] >= '1' && key[0] < byte('1'+len(catalog.SessionTimelineLenses))
-			}
-			if !claimedByTab {
-				if name, ok := hotkeys[key]; ok {
-					return a.jumpTo(name, "")
-				}
-			}
+		// Digit hotkeys jump to bookmarked views — the same ten keys mean the
+		// same ten places on every screen. Lens strips and page tabs never
+		// claim them ([ and ] cycle those); only modal pickers (timeframe,
+		// open-with), which own the whole keyboard anyway, use digits.
+		if name, ok := hotkeys[key]; ok {
+			return a.jumpTo(name, "")
 		}
 		switch key {
 		case "q":
@@ -426,14 +405,11 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "t":
 			a.tfActive = true
 			return nil
-		case "x":
-			if _, entity := a.selection(); entity != nil {
-				e := *entity
-				return func() tea.Msg { return relationsMsg{entity: e} }
-			}
-			return statusErr("selection carries no entity for relations")
-		case "X":
-			// The capital sibling of x: the full navigator, rooted here.
+		case "x", "X":
+			// Both cases walk the topology: the navigator's trail-based walk
+			// strictly dominates the old one-hop relations page (which
+			// survives as the detail page's related tab), so x stopped being
+			// a separate, weaker surface.
 			if _, entity := a.selection(); entity != nil {
 				e := *entity
 				return func() tea.Msg { return navMsg{root: &e} }
@@ -1010,9 +986,12 @@ func (a *app) renderFooter() string {
 		hints = a.top().Hints()
 	default:
 		hints = append(a.top().Hints(),
-			keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"r", "refresh"},
-			keyHint{"esc", "back"}, keyHint{"?", "help"}, keyHint{"q", "quit"},
-		)
+			keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"r", "refresh"})
+		// "esc back" at the stack root would advertise a no-op.
+		if len(a.stack) > 1 {
+			hints = append(hints, keyHint{"esc", "back"})
+		}
+		hints = append(hints, keyHint{"?", "help"}, keyHint{"q", "quit"})
 	}
 	var parts []string
 	for _, h := range hints {
@@ -1042,9 +1021,10 @@ func (a *app) renderHelp() string {
 		{"Navigation", []keyHint{
 			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
-			{"0-9", "hotkeys: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
+			{"0-9", "hotkeys, work on every screen: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws"},
 			{"esc / -", "back / toggle last two views"},
-			{"tab / 1-N", "switch tab (detail pages) or lens (traces: roots · errors · server · client · db · genai · all)"},
+			{"[ / ]", "cycle lens (traces, events, sessions, …) or tab (detail pages)"},
+			{"tab", "preview pane — peek at the selected row (tables, navigator) · next tab on detail pages · next panel on home"},
 			{"H", "history — restore a previous page (survives restarts)"},
 			{"/", "filter table (live) — enter adds it as a server-side search, alt+enter replaces"},
 			{"f / F", "facet manager: add attribute=value filters (fieldsSummary top values, * patterns), edit/remove each / clear all"},
@@ -1052,7 +1032,7 @@ func (a *app) renderHelp() string {
 			{"j/k ↑/↓ g/G", "move"},
 			{"pgup/pgdn", "page jump (ctrl+d/u half page in inspectors)"},
 		}},
-		{"Drill-down (pre-scoped to selection)", []keyHint{
+		{"Drill-down (pre-scoped to selection; on detail pages the letters jump to the matching tab)", []keyHint{
 			{"l", "logs"},
 			{"s", "traces (spans) / jump to a log's or RUM event's trace"},
 			{"m", "metrics — canned charts, or the metric explorer for other types"},
@@ -1061,8 +1041,7 @@ func (a *app) renderHelp() string {
 			{"a", "log patterns — Davis clustering of the current logs (enter: records with the pattern's fields parsed out)"},
 			{"u", "sessions of a frontend / session timeline of a RUM event"},
 			{"e", "user events of a frontend / of a session"},
-			{"x", "relations — one hop of Smartscape topology"},
-			{"X", "smartscape navigator — walk the topology from the selection (:nav)"},
+			{"x / X", "smartscape navigator — walk the topology from the selection (:nav); one-hop relations live on the detail page's related tab"},
 			{"d", "describe / details"},
 		}},
 		{"Scope & actions", []keyHint{

@@ -332,7 +332,7 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 			return newNavView(a.ds, tf), nil
 		}
 	case "waterfall":
-		return newWaterfallView(a.ds, ref.TraceID, tf), nil
+		return newWaterfallView(a.ds, ref.TraceID, "", tf), nil
 	case "timeline":
 		v := newTimelineView(a.ds, ref.Arg, nil, tf)
 		if ref.Lens > 0 && ref.Lens < len(catalog.SessionTimelineLenses) {

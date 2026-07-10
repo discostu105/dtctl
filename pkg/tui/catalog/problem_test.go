@@ -144,8 +144,11 @@ func TestProblemRecordAccessors(t *testing.T) {
 	if ids := ProblemEventIDs(rec); len(ids) != 2 || ids[0] != "111_222" {
 		t.Errorf("event ids = %v", ids)
 	}
-	if sev := ProblemSeverity(rec); sev != "CRITICAL" {
-		t.Errorf("severity = %q, want CRITICAL", sev)
+	// event.severity is the ITIL ordinal (1 = most severe, 5 = least severe,
+	// per the semantic dictionary) — rendered as an honest SEVn badge, not an
+	// ordinal word.
+	if sev := ProblemSeverity(rec); sev != "SEV4" {
+		t.Errorf("severity = %q, want SEV4", sev)
 	}
 	if flags := ProblemFlags(rec); flags != "frequent event" {
 		t.Errorf("flags = %q", flags)

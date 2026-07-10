@@ -35,6 +35,11 @@ type homePanel struct {
 	query   func(tf catalog.Timeframe) string
 	line    func(rec map[string]any) (text, class string)
 	action  func(rec map[string]any, tf catalog.Timeframe) tea.Msg
+	// entity derives the row's Smartscape entity for the global actions
+	// (pin, x/X, o) — nil for panels whose rows carry none.
+	entity func(rec map[string]any) *catalog.Entity
+	// yank names the row's most copyable identity (display id, error name).
+	yank func(rec map[string]any) string
 	records []map[string]any
 	loading bool
 	err     error
@@ -85,6 +90,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 				return pushViewMsg{spec: catalog.Lookup("problems"),
 					scope: catalog.Scope{Timeframe: day}, filter: catalog.Str(rec, "display_id")}
 			},
+			yank: func(rec map[string]any) string { return catalog.Str(rec, "display_id") },
 		},
 		{
 			title: "failing services",
@@ -111,10 +117,23 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 				entity := catalog.Entity{ID: id, Name: catalog.Str(rec, "svc"), Type: "SERVICE"}
 				return detailMsg{entity: entity}
 			},
+			entity: func(rec map[string]any) *catalog.Entity {
+				id := catalog.Str(rec, "dt.smartscape.service")
+				if id == "" {
+					return nil
+				}
+				return &catalog.Entity{ID: id, Name: catalog.Str(rec, "svc"), Type: "SERVICE"}
+			},
+			yank: func(rec map[string]any) string { return catalog.Str(rec, "dt.smartscape.service") },
 		},
 		{
 			title: "kubernetes warnings (24h)",
 			dot:   theme.Class("warn", "●"),
+			// The dt.kubernetes.events METRIC is deliberately the backend here:
+			// K8s warning events (FailedScheduling, FailedMount, …) are not
+			// ingested into `fetch events` on real tenants (validated live —
+			// no k8s.event.reason rows exist there), so the metric is the only
+			// record of them.
 			query: func(catalog.Timeframe) string {
 				return `timeseries events = sum(dt.kubernetes.events, default: 0), by:{k8s.pod.name, k8s.event.reason}, from:now() - 24h, interval: 1h, filter: { k8s.event.type == "Warning" }
 | limit 100`
@@ -139,6 +158,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 				return pushViewMsg{spec: catalog.Lookup("pods"),
 					scope: catalog.Scope{Timeframe: day, Entity: pod}}
 			},
+			yank: func(rec map[string]any) string { return catalog.Str(rec, "k8s.pod.name") },
 		},
 		{
 			title: "frontend errors (24h)",
@@ -166,6 +186,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 					scope:  catalog.Scope{Timeframe: day, Lens: 1},
 					filter: catalog.Str(rec, "error.display_name")}
 			},
+			yank: func(rec map[string]any) string { return catalog.Str(rec, "error.display_name") },
 		},
 		{
 			title: "open vulnerabilities (24h)",
@@ -189,9 +210,38 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 				return pushViewMsg{spec: catalog.Lookup("vulnerabilities"),
 					scope: catalog.Scope{Timeframe: tf}, filter: catalog.Str(rec, "display_id")}
 			},
+			yank: func(rec map[string]any) string { return catalog.Str(rec, "display_id") },
 		},
 	}
 	return v
+}
+
+// Selection exposes the focused row for the app-level actions (pin, x/X, o).
+// Only rows that carry a Smartscape identity yield an entity; the rest still
+// return their record so y has something to say.
+func (v *homeView) Selection() (map[string]any, *catalog.Entity) {
+	p := v.panels[v.focus]
+	if v.cursor >= len(p.records) {
+		return nil, nil
+	}
+	rec := p.records[v.cursor]
+	if p.entity != nil {
+		return rec, p.entity(rec)
+	}
+	return rec, nil
+}
+
+// YankText copies the focused row's most specific identity (the global 'y').
+func (v *homeView) YankText() (string, string, bool) {
+	p := v.panels[v.focus]
+	if v.cursor >= len(p.records) || p.yank == nil {
+		return "", "", false
+	}
+	text := p.yank(p.records[v.cursor])
+	if text == "" {
+		return "", "", false
+	}
+	return text, text, true
 }
 
 func classRisk(level string) string {

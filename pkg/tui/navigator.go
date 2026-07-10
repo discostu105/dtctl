@@ -251,7 +251,7 @@ func (v *navView) Hints() []keyHint {
 	case navBrowser:
 		return []keyHint{{"enter", "walk"}, {"d", "details"}, {"/", "filter"}, {".", "pin"}, {"o", "open"}}
 	case navWalk:
-		return []keyHint{{"enter", "walk to"}, {"←", "back"}, {"d", "details"}, {"space", "fold"},
+		return []keyHint{{"enter", "walk to"}, {"←", "back"}, {"d", "details"}, {"z", "fold"},
 			{"i", "direction"}, {"M", "mesh"}, {"/", "filter"}}
 	}
 	return []keyHint{{"enter", "browse type"}, {"/", "filter"}, {"tab", "pane"}}
@@ -536,6 +536,11 @@ func (v *navView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return nil
 	case " ":
+		// Space pages like every other list; z folds (space-as-fold made the
+		// navigator the one view where paging collapsed things instead).
+		v.move(v.listHeight())
+		return v.schedulePreview()
+	case "z":
 		return v.toggleFold()
 	case "d":
 		if _, e := v.Selection(); e != nil {

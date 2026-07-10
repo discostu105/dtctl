@@ -20,7 +20,11 @@ import (
 type waterfallView struct {
 	ds      *dataSource
 	traceID string
-	tf      catalog.Timeframe
+	// focusSpan anchors the cursor on the span the jump came from once the
+	// trace loads ("" = root) — consumed on first use so refreshes and manual
+	// movement keep the user's own position.
+	focusSpan string
+	tf        catalog.Timeframe
 
 	rows    []wfRow
 	cursor  int
@@ -53,8 +57,8 @@ type wfRow struct {
 	category string
 }
 
-func newWaterfallView(ds *dataSource, traceID string, tf catalog.Timeframe) *waterfallView {
-	return &waterfallView{ds: ds, traceID: traceID, tf: tf}
+func newWaterfallView(ds *dataSource, traceID, focusSpan string, tf catalog.Timeframe) *waterfallView {
+	return &waterfallView{ds: ds, traceID: traceID, focusSpan: focusSpan, tf: tf}
 }
 
 func (v *waterfallView) Init() tea.Cmd { return v.Refresh() }
@@ -93,7 +97,7 @@ func (v *waterfallView) DQL() string { return v.dql }
 
 func (v *waterfallView) Hints() []keyHint {
 	return []keyHint{
-		{"enter", "span attributes"}, {"l", "trace logs"}, {"x", "relations"},
+		{"enter", "span attributes"}, {"l", "trace logs"}, {"x", "topology"},
 		{"y", "yank trace id"}, {"o", "open"},
 	}
 }
@@ -140,6 +144,18 @@ func (v *waterfallView) Update(msg tea.Msg) tea.Cmd {
 		if v.cursor >= len(v.rows) {
 			v.cursor = 0
 			v.offset = 0
+		}
+		// Anchor on the originating span, then let the user own the cursor.
+		if v.focusSpan != "" {
+			for i, r := range v.rows {
+				if catalog.Str(r.rec, "span.id") == v.focusSpan {
+					v.cursor = i
+					v.offset = 0
+					v.move(0) // clamp the window around the anchored row
+					break
+				}
+			}
+			v.focusSpan = ""
 		}
 		return nil
 

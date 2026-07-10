@@ -129,20 +129,12 @@ func ChangeEventQuery(e Entity) string {
 		SignalFilter(e), changeEventFilter)
 }
 
-// ProblemSeverity renders the numeric event.severity as its Davis level name
-// (the API serializes the enum ordinal; mapping per Davis event severities).
+// ProblemSeverity renders the numeric event.severity as its SEVn badge.
+// event.severity is ITIL-aligned — 1 = most severe, 5 = least severe
+// (semantic dictionary, validated live) — so the old ordinal-word mapping
+// (4 → CRITICAL) had it backwards; the badge doesn't editorialize.
 func ProblemSeverity(rec map[string]any) string {
-	switch Str(rec, "event.severity") {
-	case "1":
-		return "INFO"
-	case "2":
-		return "LOW"
-	case "3":
-		return "HIGH"
-	case "4":
-		return "CRITICAL"
-	}
-	return Str(rec, "event.severity")
+	return SeverityBadge(Str(rec, "event.severity"))
 }
 
 // ProblemFlags summarizes the problem's boolean odds and ends ("" when
@@ -181,7 +173,7 @@ var DavisEventsSpec = &Spec{
 		return fmt.Sprintf(`fetch dt.davis.events, from:%s
 | filter in(event.id, {%s})
 | sort timestamp asc
-| summarize { start = takeLast(event.start), end = takeLast(event.end), type = takeLast(event.type), name = takeLast(event.name), status = takeLast(event.status), rootcause = takeLast(dt.davis.is_rootcause_relevant), source = takeLast(dt_source_entity_name), source_id = takeLast(dt.smartscape_source.id), source_type = takeLast(dt.smartscape_source.type), description = takeLast(event.description) }, by:{event.id}
+| summarize { start = takeLast(event.start), end = takeLast(event.end), type = takeLast(event.type), name = takeLast(event.name), status = takeLast(event.status), severity = takeLast(event.severity), rootcause = takeLast(dt.davis.is_rootcause_relevant), source = takeLast(dt_source_entity_name), source_id = takeLast(dt.smartscape_source.id), source_type = takeLast(dt.smartscape_source.type), description = takeLast(event.description) }, by:{event.id}
 | sort start desc
 | limit 100`, s.Timeframe.DQL(), strings.Join(quoted, ", "))
 	},
@@ -194,6 +186,9 @@ var DavisEventsSpec = &Spec{
 			}
 			return ""
 		}},
+		{Title: "SEV", Width: 4, Class: ClassSeverityBadge,
+			Value: func(rec map[string]any) string { return SeverityBadge(Str(rec, "severity")) },
+			Sort:  func(rec map[string]any) any { return Str(rec, "severity") }},
 		{Title: "TYPE", Field: "type", Width: 28},
 		{Title: "NAME", Field: "name"},
 		{Title: "STATUS", Field: "status", Width: 6, Class: func(val string) string {

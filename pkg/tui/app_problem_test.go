@@ -53,7 +53,7 @@ func TestEnterOnProblemOpensProblemPage(t *testing.T) {
 	}
 
 	body := ansi.Strip(pv.View(140, 40))
-	for _, s := range []string{"P-500", "ACTIVE", "CRITICAL", "impact — 2 affected", "checkout", "davis says"} {
+	for _, s := range []string{"P-500", "ACTIVE", "SEV4", "impact — 2 affected", "checkout", "davis says"} {
 		if !strings.Contains(body, s) {
 			t.Errorf("problem page missing %q:\n%s", s, body)
 		}
@@ -320,21 +320,32 @@ func TestProblemOverviewScrollUpRevealsFacts(t *testing.T) {
 	}
 }
 
-func TestProblemPageDigitsSwitchTabs(t *testing.T) {
+func TestProblemPageLettersJumpTabsDigitsStayGlobal(t *testing.T) {
 	a := testApp(t, "problems")
 	seedRows(t, a, []map[string]any{richProblemRow()})
 	press(a, key("enter"))
 	pv := a.top().(*problemView)
 
-	press(a, key("6"))
-	if pv.active != 5 || pv.tabs[5].name != "details" {
-		t.Fatalf("digit should switch to the details tab, active = %d", pv.active)
+	// The drill letter jumps straight to its tab.
+	press(a, key("l"))
+	if pv.tabs[pv.active].name != "logs" {
+		t.Fatalf("l should jump to the logs tab, active = %s", pv.tabs[pv.active].name)
+	}
+	// shift+tab wraps back to the last tab — the raw record stays available.
+	pv.setActive(0)
+	press(a, key("shift+tab"))
+	if pv.tabs[pv.active].name != "details" {
+		t.Fatalf("shift+tab should wrap to the details tab, active = %s", pv.tabs[pv.active].name)
 	}
 	if _, ok := pv.activeView().(*inspectorView); !ok {
 		t.Fatalf("details tab view = %T", pv.activeView())
 	}
-	// The details tab is the raw record — full details stay available.
 	if body := ansi.Strip(pv.View(140, 40)); !strings.Contains(body, "event.description") {
 		t.Errorf("details tab should show the full record:\n%s", body)
+	}
+	// Digits stay global hotkeys on the problem page too.
+	press(a, key("2"))
+	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "services" {
+		t.Fatalf("digit on the problem page must stay a global hotkey, top = %T", a.top())
 	}
 }

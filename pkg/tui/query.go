@@ -223,6 +223,17 @@ func deriveColumns(records []map[string]any) []catalog.Column {
 				col.Width = maxInt(len(key)+2, 14)
 			}
 		}
+		// Severity-shaped fields color like a log line's level wherever they
+		// surface — a sampled dt.system.events WARN row must read as a
+		// warning, not as plain text.
+		if field := key; catalog.SeverityField(field) {
+			col.Class = func(val string) string { return catalog.SeverityFieldClass(field, val) }
+			if field == "event.severity" {
+				col.Value = func(rec map[string]any) string {
+					return catalog.SeverityBadge(catalog.Str(rec, field))
+				}
+			}
+		}
 		cols = append(cols, col)
 	}
 	for _, key := range lead {

@@ -83,6 +83,16 @@ func renderString(key, s string, width int) valueView {
 	case s == "":
 		return valueView{lines: []string{theme.NullVal.Render(`""`)}, raw: raw}
 
+	// Severity-shaped fields (loglevel, event.severity, event.status, …)
+	// color in the inspector exactly like they do in the tables — a CRITICAL
+	// event must not turn into a plain string one drill-down deep.
+	case catalog.SeverityFieldClass(key, s) != "":
+		text := s
+		if key == "event.severity" {
+			text = catalog.SeverityBadge(s)
+		}
+		return valueView{lines: []string{theme.Class(catalog.SeverityFieldClass(key, s), text)}, raw: raw}
+
 	case entityIDRe.MatchString(s):
 		return valueView{lines: []string{theme.Link.Render(s)}, entity: entityFromID(s), raw: raw}
 

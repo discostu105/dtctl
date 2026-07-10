@@ -175,11 +175,11 @@ func TestFrontendDetailConnectsRUM(t *testing.T) {
 	}
 }
 
-// TestNestedLensDigitsOnDetailPage: when a detail tab shows its own lens
-// strip, the digits drive THAT strip (the numbered thing on screen); the
-// page tabs stay reachable via tab. GenAI entities open traces on the genai
+// TestNestedLensStripOnDetailPage: the drill letters jump straight to their
+// page tab, the brackets drive the active tab's own lens strip, and digits
+// stay global hotkeys even there. GenAI entities open traces on the genai
 // lens — their spans rarely include roots.
-func TestNestedLensDigitsOnDetailPage(t *testing.T) {
+func TestNestedLensStripOnDetailPage(t *testing.T) {
 	a := testApp(t, "genai")
 	seedRows(t, a, []map[string]any{{"id": "GENAI_MODEL-1", "name": "claude", "type": "GENAI_MODEL"}})
 	press(a, key("enter"))
@@ -196,10 +196,10 @@ func TestNestedLensDigitsOnDetailPage(t *testing.T) {
 	if traceIdx < 0 {
 		t.Fatalf("genai detail page has no traces tab (tabs %v)", dv.tabs)
 	}
-	// Digits switch page tabs while the details tab (no lenses) is active.
-	press(a, key(string(rune('1'+traceIdx))))
+	// The drill letter jumps straight to the traces tab (digits are global).
+	press(a, key("s"))
 	if dv.active != traceIdx {
-		t.Fatalf("digit must switch to the traces tab, active = %d", dv.active)
+		t.Fatalf("s must jump to the traces tab, active = %d", dv.active)
 	}
 	inner, ok := dv.tabs[traceIdx].view.(*tableView)
 	if !ok || inner.spec.Name != "traces" {
@@ -211,22 +211,26 @@ func TestNestedLensDigitsOnDetailPage(t *testing.T) {
 	if !strings.Contains(inner.dql, "dt.smartscape.gen_ai.model") {
 		t.Errorf("traces tab must scope via the gen_ai dot namespace:\n%s", inner.dql)
 	}
-	// Now the lens strip owns the digits: 1 picks the roots lens, the page
-	// tab must NOT change (and no global hotkey may fire).
-	press(a, key("1"))
+	// The brackets drive the visible lens strip; the page tab must not change.
+	press(a, key("]"))
 	if _, still := a.top().(*detailView); !still {
-		t.Fatalf("digit on a lensed tab must not leave the page, top = %s", a.top().Crumb())
+		t.Fatalf("] on a lensed tab must not leave the page, top = %s", a.top().Crumb())
 	}
 	if dv.active != traceIdx {
-		t.Errorf("digit must not switch page tabs while a lens strip is visible")
+		t.Errorf("] must not switch page tabs while a lens strip is visible")
 	}
-	if got := inner.spec.LensAt(inner.scope.Lens).Name; got != "roots" {
-		t.Errorf("digit must pick the inner lens, got %s", got)
+	if got := inner.spec.LensAt(inner.scope.Lens).Name; got != "all" {
+		t.Errorf("] must cycle the inner lens genai → all, got %s", got)
 	}
 	// tab still cycles the page tabs.
 	press(a, key("tab"))
 	if dv.active == traceIdx {
 		t.Error("tab must still cycle the page tabs")
+	}
+	// A digit fires its global hotkey even while a lens strip is on screen.
+	press(a, key("1"))
+	if tv, ok := a.top().(*tableView); !ok || tv.spec.Name != "problems" {
+		t.Fatalf("digit must stay a global hotkey, top = %T", a.top())
 	}
 }
 

@@ -128,7 +128,12 @@ func (v *problemView) statusLine() string {
 		parts = append(parts, theme.Dim.Render("● "+status))
 	}
 	if sev := catalog.ProblemSeverity(v.rec); sev != "" {
-		parts = append(parts, theme.Badge.Render(sev))
+		if class := catalog.ClassSeverityBadge(sev); class != "" {
+			sev = theme.Class(class, sev)
+		} else {
+			sev = theme.Badge.Render(sev)
+		}
+		parts = append(parts, sev)
 	}
 	if age := catalog.Age(catalog.Str(v.rec, "event.start")); age != "" {
 		parts = append(parts, theme.Dim.Render("started "+age+" ago"))
@@ -317,7 +322,12 @@ func (v *problemOverview) rebuild() {
 		status += theme.Dim.Render(" (" + strings.ToLower(transition) + ")")
 	}
 	fact("status", status)
-	fact("severity", catalog.ProblemSeverity(v.rec))
+	if sev := catalog.ProblemSeverity(v.rec); sev != "" {
+		if class := catalog.ClassSeverityBadge(sev); class != "" {
+			sev = theme.Class(class, sev)
+		}
+		fact("severity", sev)
+	}
 	fact("category", catalog.Str(v.rec, "event.category"))
 	fact("impact", catalog.StrFirst(v.rec, "dt.davis.impact_level"))
 	if start := catalog.Str(v.rec, "event.start"); start != "" {

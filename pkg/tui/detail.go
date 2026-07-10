@@ -77,18 +77,12 @@ func (ts *tabSet) YankText() (string, string, bool) {
 }
 
 func (ts *tabSet) Hints() []keyHint {
-	// While the active tab shows its own lens strip, digits belong to it —
-	// the page tabs stay reachable via tab/shift+tab.
-	label := fmt.Sprintf("tab/1-%d", len(ts.tabs))
-	if ts.lensedInner() != nil {
-		label = "tab"
-	}
-	hints := []keyHint{{label, "tabs"}}
+	hints := []keyHint{{"tab", "tabs"}}
 	return append(hints, ts.activeView().Hints()...)
 }
 
 // lensedInner returns the active tab's table when it carries a lens strip —
-// nested "tabs" that digits and brackets should drive while it is visible.
+// a nested strip that the brackets drive while it is visible.
 func (ts *tabSet) lensedInner() *tableView {
 	if tv, ok := ts.activeView().(*tableView); ok && len(tv.spec.Lenses) > 0 {
 		return tv
@@ -96,24 +90,18 @@ func (ts *tabSet) lensedInner() *tableView {
 	return nil
 }
 
-// claimsDigit reports whether the page consumes a digit key (the app's
-// global hotkeys must stand back): the active tab's lens strip when it has
-// one, else the page tabs.
-func (ts *tabSet) claimsDigit(d byte) bool {
-	if d < '1' {
-		return false
-	}
-	if inner := ts.lensedInner(); inner != nil {
-		return d < byte('1'+len(inner.spec.Lenses))
-	}
-	return d < byte('1'+len(ts.tabs))
+// tabJumps maps the drill vocabulary onto same-named page tabs: pressing l on
+// an entity page lands on its logs tab directly — the letters mean the same
+// signals everywhere, and digits stay global hotkeys.
+var tabJumps = map[string]string{
+	"l": "logs", "s": "traces", "v": "events", "p": "problems",
+	"m": "metrics", "u": "sessions", "e": "userevents",
 }
 
-// tabKey handles tab-switching keys; drill keys and everything else fall
-// through to the active tab's view. When the active tab shows its own lens
-// strip (traces, sessions), the digits and brackets drive THAT strip — it is
-// the numbered thing on screen — and tab/shift+tab keep cycling the page
-// tabs (the tab bar drops its digit labels then, see tabBar).
+// tabKey handles tab-switching keys; everything else falls through to the
+// active tab's view. tab/shift+tab cycle the page tabs; [ and ] cycle the
+// active tab's own lens strip when it shows one (it is the visible strip),
+// else the page tabs; the drill letters jump straight to their tab.
 func (ts *tabSet) tabKey(key string) (tea.Cmd, bool) {
 	inner := ts.lensedInner()
 	switch key {
@@ -132,15 +120,26 @@ func (ts *tabSet) tabKey(key string) (tea.Cmd, bool) {
 		}
 		return ts.setActive((ts.active + len(ts.tabs) - 1) % len(ts.tabs)), true
 	}
-	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
-		if inner != nil {
-			return nil, false // digits pick a lens on the visible strip
-		}
-		if key[0] < byte('1'+len(ts.tabs)) {
-			return ts.setActive(int(key[0] - '1')), true
+	// A letter the active tab's rows drill by (l on an evidence row scopes to
+	// THAT row's source entity) keeps its per-row meaning — the tab jump only
+	// catches letters the active view would otherwise drop.
+	if name, ok := tabJumps[key]; ok && !ts.activeDrills(key) {
+		for i, t := range ts.tabs {
+			if t.name == name {
+				return ts.setActive(i), true
+			}
 		}
 	}
 	return nil, false
+}
+
+// activeDrills reports whether the active tab's view drills by this key.
+func (ts *tabSet) activeDrills(key string) bool {
+	if tv, ok := ts.activeView().(*tableView); ok {
+		_, has := tv.spec.Drills[key]
+		return has
+	}
+	return false
 }
 
 func (ts *tabSet) setActive(i int) tea.Cmd {
@@ -200,11 +199,10 @@ func (ts *tabSet) setTimeframeTabs(tf catalog.Timeframe) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// tabBar renders the tab strip: digit labels unless the active tab shows its
-// own numbered lens strip (two competing number rows would lie about what the
-// digits do), and a row-count badge on every tab that has loaded one.
+// tabBar renders the tab strip with a row-count badge on every tab that has
+// loaded one. No digit labels: digits are global hotkeys everywhere; tab and
+// the brackets cycle the strip, the drill letters jump to their tab.
 func (ts *tabSet) tabBar() string {
-	digits := ts.lensedInner() == nil
 	labels := make([]string, len(ts.tabs))
 	for i, t := range ts.tabs {
 		label := t.name
@@ -212,9 +210,6 @@ func (ts *tabSet) tabBar() string {
 			if n, valid := rc.RowCount(); valid {
 				label = fmt.Sprintf("%s (%d)", t.name, n)
 			}
-		}
-		if digits {
-			label = fmt.Sprintf("%d · %s", i+1, label)
 		}
 		if i == ts.active {
 			labels[i] = theme.TabActive.Render(label)

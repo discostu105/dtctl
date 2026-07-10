@@ -63,6 +63,14 @@ func PriorityFields(rec map[string]any) []string {
 		// Synthetic execution (dt.synthetic.events).
 		return []string{"timestamp", "monitor.name", "event.type", "result.state",
 			"result.status.message", "step.name"}
+	case Str(rec, "event.kind") == "BIZ_EVENT",
+		Str(rec, "event.provider") != "" && Str(rec, "event.kind") == "":
+		// Business event (event.kind BIZ_EVENT, validated live; the second
+		// arm catches producers that omit the kind). Payload fields vary per
+		// producer, so the stable envelope leads and the producer's payload
+		// reads below in its namespace groups.
+		return []string{"event.type", "event.provider", "event.category",
+			"event.name", "timestamp", "event.id"}
 	}
 	return []string{"content", "event.name", "event.description", "display_id",
 		"event.status", "event.category", "timestamp", "loglevel", "status", "host.name"}

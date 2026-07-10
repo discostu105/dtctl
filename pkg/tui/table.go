@@ -67,8 +67,23 @@ type tableView struct {
 	// spec is Dynamic (the record sampler browses arbitrary tables).
 	dynCols []catalog.Column
 
+	// previewOn shows the selected row's highlights in a side pane (bottom
+	// panel on narrow screens) — the navigator's peek pattern, toggled with
+	// tab. Entirely client-side: the row's record is already fetched.
+	previewOn bool
+
 	width, height int
 }
+
+// previewPaneMinWidth is the narrowest screen that fits a side preview; below
+// it the preview renders as a bottom panel instead.
+const previewPaneMinWidth = 110
+
+// previewBottomH is the bottom preview panel's line budget on narrow screens.
+const previewBottomH = 9
+
+func (v *tableView) previewSide() bool   { return v.previewOn && v.width >= previewPaneMinWidth }
+func (v *tableView) previewBottom() bool { return v.previewOn && v.width < previewPaneMinWidth }
 
 // facetStage is the facet picker's overlay state.
 type facetStage int
@@ -140,8 +155,8 @@ func (v *tableView) columns() []catalog.Column {
 	return v.spec.Columns
 }
 
-// setLens activates a lens by index (wrapping when asked — tab cycles) and
-// refetches. Sort resets: lenses may carry different columns.
+// setLens activates a lens by index (wrapping when asked — the brackets
+// cycle) and refetches. Sort resets: lenses may carry different columns.
 func (v *tableView) setLens(i int, wrap bool) tea.Cmd {
 	n := len(v.spec.Lenses)
 	if n == 0 {
@@ -276,9 +291,10 @@ func (v *tableView) Hints() []keyHint {
 		return []keyHint{{"type", "filter rows"}, {"enter", "add server search"}, {"alt+enter", "replace"}, {"esc", "clear"}}
 	}
 	var hints []keyHint
-	if n := len(v.spec.Lenses); n > 0 {
-		hints = append(hints, keyHint{fmt.Sprintf("tab/1-%d", n), "lens"})
+	if len(v.spec.Lenses) > 0 {
+		hints = append(hints, keyHint{"[/]", "lens"})
 	}
+	hints = append(hints, keyHint{"tab", "preview"})
 	switch {
 	case v.spec.EnterTarget == "pattern-logs":
 		hints = append(hints, keyHint{"enter", "matching logs"})
@@ -357,6 +373,18 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 				v.dynCols = nil
 				if len(msg.records) > 0 {
 					v.dynCols = deriveColumns(msg.records)
+					// Timestamped tables sample newest-first client-side. The
+					// server query cannot sort blindly — sorting on a field
+					// the table lacks is a hard FIELD_DOES_NOT_EXIST
+					// (validated live) — so the fetched page orders here.
+					if v.sortCol < 0 {
+						for i, c := range v.dynCols {
+							if c.Field == "timestamp" {
+								v.sortCol, v.sortDesc = i, true
+								break
+							}
+						}
+					}
 				}
 			}
 			if v.onData != nil {
@@ -497,14 +525,23 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		v.sortDesc = !v.sortDesc
 		v.applyFilter()
 		return status(fmt.Sprintf("sort: %s %s", v.columns()[v.sortCol].Title, sortArrow(v.sortDesc)))
-	case "tab", "]":
+	case "]":
 		if len(v.spec.Lenses) > 0 {
 			return v.setLens(v.scope.Lens+1, true)
 		}
-	case "shift+tab", "[":
+	case "[":
 		if len(v.spec.Lenses) > 0 {
 			return v.setLens(v.scope.Lens-1, true)
 		}
+	case "tab":
+		// Peek without committing: tab toggles the preview pane (the same
+		// key the navigator uses), rendering the selected row's highlights
+		// from data already fetched — no extra query.
+		v.previewOn = !v.previewOn
+		if v.previewOn {
+			return status("preview on — enter opens the full record")
+		}
+		return status("preview off")
 	case "/":
 		v.filtering = true
 		v.filterInput.Focus()
@@ -617,12 +654,6 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		}
 		return v.inspect(rec)
 	default:
-		// Digits pick a lens directly, mirroring detail-page tabs (the app
-		// layer already kept them from the global hotkey map).
-		if key := msg.String(); len(v.spec.Lenses) > 0 && len(key) == 1 &&
-			key[0] >= '1' && key[0] < byte('1'+len(v.spec.Lenses)) {
-			return v.setLens(int(key[0]-'1'), false)
-		}
 		if target, ok := v.spec.Drills[msg.String()]; ok {
 			return v.drill(target)
 		}
@@ -1126,7 +1157,9 @@ func (v *tableView) drill(target string) tea.Cmd {
 	return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 }
 
-// openTrace jumps to the waterfall of the selected row's trace.
+// openTrace jumps to the waterfall of the selected row's trace, anchored on
+// the span the jump came from (a 500-span trace must not open at the root
+// and leave the user hunting for the row they were standing on).
 func (v *tableView) openTrace(rec map[string]any) tea.Cmd {
 	if v.spec.Trace == nil {
 		return nil
@@ -1135,7 +1168,8 @@ func (v *tableView) openTrace(rec map[string]any) tea.Cmd {
 	if id == "" {
 		return statusErr("record carries no trace id")
 	}
-	return func() tea.Msg { return waterfallMsg{traceID: id} }
+	span := catalog.Str(rec, "span.id")
+	return func() tea.Msg { return waterfallMsg{traceID: id, focusSpanID: span} }
 }
 
 // openSession jumps to the session timeline of the selected row (a sessions
@@ -1197,6 +1231,9 @@ func (v *tableView) pageSize() int {
 	chrome := 3
 	if len(v.spec.Lenses) > 0 {
 		chrome++ // the lens strip line
+	}
+	if v.previewBottom() {
+		chrome += previewBottomH + 1 // panel plus its rule
 	}
 	if v.height > chrome {
 		return v.height - chrome
@@ -1368,6 +1405,137 @@ func (v *tableView) View(width, height int) string {
 			theme.OverlayBox.Render(v.renderFacetPicker()))
 	}
 
+	if v.previewSide() {
+		paneW := width * 2 / 5
+		if paneW > 48 {
+			paneW = 48
+		}
+		leftW := width - paneW - 3
+		left := strings.Split(v.renderTable(leftW, height), "\n")
+		right := v.previewLines(paneW)
+		if len(right) > height {
+			right = append(right[:height-1], theme.Dim.Render(fmt.Sprintf("… +%d more (enter opens)", len(right)-height+1)))
+		}
+		sep := theme.Rule.Render("│")
+		var b strings.Builder
+		rows := max(len(left), len(right))
+		if rows > height {
+			rows = height
+		}
+		for i := 0; i < rows; i++ {
+			l, r := "", ""
+			if i < len(left) {
+				l = left[i]
+			}
+			if i < len(right) {
+				r = right[i]
+			}
+			b.WriteString(pad(l, leftW) + " " + sep + " " + ansi.Truncate(r, paneW, "…"))
+			if i < rows-1 {
+				b.WriteString("\n")
+			}
+		}
+		return b.String()
+	}
+	if v.previewBottom() {
+		tableH := max(height-previewBottomH-1, 1)
+		out := v.renderTable(width, tableH)
+		if gap := tableH - lipgloss.Height(out); gap > 0 {
+			out += strings.Repeat("\n", gap)
+		}
+		lines := v.previewLines(width - 2)
+		if len(lines) > previewBottomH {
+			lines = append(lines[:previewBottomH-1], theme.Dim.Render("… (enter opens the full record)"))
+		}
+		out += "\n" + theme.Rule.Render(strings.Repeat("─", max(width, 0)))
+		for _, l := range lines {
+			out += "\n " + ansi.Truncate(l, width-2, "…")
+		}
+		return out
+	}
+	return v.renderTable(width, height)
+}
+
+// previewLines renders the selected row's peek pane: identity, then the
+// curated key facts for entity rows or the priority-field highlights for
+// signal records — all from the record already in hand, zero queries.
+func (v *tableView) previewLines(w int) []string {
+	rec := v.selected()
+	if rec == nil {
+		return []string{theme.Dim.Render("no selection")}
+	}
+	entity := v.entityOf(rec)
+	title := v.spec.Name
+	if entity != nil && entity.Name != "" {
+		title = entity.Name
+	} else {
+		for _, key := range []string{"title", "name", "event.name", "span.name", "endpoint.name", "display_id", "content"} {
+			if t := catalog.Str(rec, key); t != "" {
+				title = t
+				break
+			}
+		}
+	}
+	lines := []string{theme.OverlayTitle.Render(ansi.Truncate(flatten(title), w, "…"))}
+	if entity != nil {
+		id := ansi.Truncate(" "+entity.ID, max(w-lipgloss.Width(entity.Type), 8), "…")
+		lines = append(lines, theme.Badge.Render(entity.Type)+theme.Dim.Render(id), "")
+		shown := 0
+		for _, fact := range catalog.KeyFacts(entity.Type) {
+			val := fact.Value(rec)
+			if val == "" {
+				continue
+			}
+			lines = append(lines, " "+theme.FactLabel.Render(fact.Label+":")+" "+
+				ansi.Truncate(flatten(val), max(w-len(fact.Label)-4, 8), "…"))
+			shown++
+		}
+		if shown <= 1 {
+			lines = append(lines, theme.Dim.Render(" (sparse list row — enter opens details)"))
+		}
+		return lines
+	}
+	lines = append(lines, "")
+	for _, key := range catalog.PriorityFields(rec) {
+		val, ok := rec[key]
+		if !ok {
+			continue
+		}
+		text := flatten(catalog.FormatValue(val))
+		if text == "" {
+			continue
+		}
+		if key == "event.severity" {
+			text = catalog.SeverityBadge(catalog.Str(rec, key))
+		}
+		// Long prose fields (log content, event descriptions) wrap over a few
+		// lines; everything else stays a one-line fact.
+		if key == "content" || key == "event.description" {
+			lines = append(lines, " "+theme.FactLabel.Render(key))
+			wrapped := wrapLines(text, max(w-2, 8))
+			if len(wrapped) > 4 {
+				wrapped = append(wrapped[:4], theme.Dim.Render("…"))
+			}
+			for _, l := range wrapped {
+				lines = append(lines, "  "+l)
+			}
+			continue
+		}
+		if class := catalog.SeverityFieldClass(key, text); class != "" {
+			text = theme.Class(class, text)
+		}
+		lines = append(lines, " "+theme.FactLabel.Render(key+":")+" "+
+			ansi.Truncate(text, max(w-len(key)-4, 8), "…"))
+	}
+	if v.spec.Trace != nil {
+		if id := v.spec.Trace(rec); id != "" {
+			lines = append(lines, "", " "+theme.FactLabel.Render("trace:")+" "+theme.UID.Render(shortID(id))+theme.Dim.Render(" (s opens)"))
+		}
+	}
+	return lines
+}
+
+func (v *tableView) renderTable(width, height int) string {
 	var b strings.Builder
 
 	// Status/filter line.
@@ -1398,20 +1566,20 @@ func (v *tableView) View(width, height int) string {
 	b.WriteString(ansi.Truncate(head, width, "…"))
 	b.WriteString("\n")
 
-	// Lens strip: the view's quick subsets, detail-tab style (tab/digits).
+	// Lens strip: the view's quick subsets, detail-tab style ([ and ] cycle;
+	// no digit labels — digits are global hotkeys everywhere).
 	chrome := 2
 	if n := len(v.spec.Lenses); n > 0 {
 		chrome = 3
 		labels := make([]string, n)
 		for i, l := range v.spec.Lenses {
-			label := fmt.Sprintf("%d · %s", i+1, l.Name)
 			if i == v.scope.Lens {
-				labels[i] = theme.TabActive.Render(label)
+				labels[i] = theme.TabActive.Render(l.Name)
 			} else {
-				labels[i] = theme.TabInactive.Render(label)
+				labels[i] = theme.TabInactive.Render(l.Name)
 			}
 		}
-		b.WriteString(ansi.Truncate(" "+strings.Join(labels, " "), width, "…"))
+		b.WriteString(ansi.Truncate(" "+strings.Join(labels, "  "), width, "…"))
 		b.WriteString("\n")
 	}
 
@@ -1459,7 +1627,7 @@ func (v *tableView) View(width, height int) string {
 				if what == "all" {
 					what = "data" // "no all in timeframe" reads broken
 				}
-				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — tab switches lens",
+				empty = fmt.Sprintf("∅ no %s in timeframe (last %s) — [/] switches lens",
 					what, v.scope.Timeframe.Label)
 			}
 			b.WriteString("\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, theme.Dim.Render(empty)))

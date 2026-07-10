@@ -52,9 +52,11 @@ type pushViewMsg struct {
 	facets   []catalog.Facet
 }
 
-// waterfallMsg opens the span waterfall for one trace.
+// waterfallMsg opens the span waterfall for one trace. focusSpanID anchors
+// the cursor on the span the jump came from ("" = trace root).
 type waterfallMsg struct {
-	traceID string
+	traceID     string
+	focusSpanID string
 }
 
 // timelineMsg opens the session timeline (the RUM waterfall) for one
@@ -62,11 +64,6 @@ type waterfallMsg struct {
 type timelineMsg struct {
 	sessionID string
 	rec       map[string]any
-}
-
-// relationsMsg opens the Smartscape relations panel for an entity.
-type relationsMsg struct {
-	entity catalog.Entity
 }
 
 // navMsg opens the smartscape navigator: the overview (zero value), the type

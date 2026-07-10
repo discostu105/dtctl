@@ -174,7 +174,7 @@ instead of vim-purist `h/l` (which would collide with `l` = logs).
 | `↑/↓` `j/k` | move cursor (root, group headers, neighbors) |
 | `enter` `→` | re-root on highlighted neighbor (push trail) |
 | `←` `backspace` | backtrack one hop (pop trail) |
-| `space` | collapse/expand group; later: expand neighbor in place |
+| `z` | collapse/expand group (space pages, as in every list); later: expand neighbor in place |
 | `d` | full detail page for highlighted node (existing `detailMsg`) |
 | `l` `m` `s` `v` | logs/metrics/traces/events scoped to highlighted node |
 | `i` | cycle direction filter: both → outgoing → incoming |
@@ -330,7 +330,7 @@ Census + schema overview, type browser, session-wide active-problem overlay
 caps with explicit `+N more`, `i`/`M` filters.
 
 **Phase 3 — Lookahead & polish**
-Expand-in-place (`space` on a neighbor shows *its* neighbors inline, depth
+Expand-in-place (`z` on a neighbor shows *its* neighbors inline, depth
 ≤ 2 — peek two hops without moving), visited-nodes minimap, trail yank
 (id list or reconstructed DQL), schema-cell drill (overview edge row →
 the actual edge list).
@@ -350,8 +350,11 @@ the actual edge list).
 
 ## Open questions
 
-1. Does the navigator eventually subsume `relationsView` (make `x` open a
-   trail-less walk view), or do quick-peek and navigator stay separate?
+1. ~~Does the navigator eventually subsume `relationsView`?~~ **Decided —
+   yes:** `x` and `X` both open the walk; the standalone relations page is
+   gone. One-hop quick-peek lives on as the detail page's embedded related
+   tab (`relationsView` survives only for that and for restoring old history
+   entries).
 2. Should the overview replace `entitiesSpec` (`:topo`) once stable?
 3. Expand-in-place vs preview-only: is 2-hop lookahead worth the render
    complexity, or does the cache make re-rooting cheap enough?

@@ -124,9 +124,10 @@ func (c Column) Text(rec map[string]any) string {
 }
 
 // Lens is one quick server-side slice of a view's dataset — the spans view
-// offers roots/errors/server/…. Lenses render as a tab strip above the table
-// (digits and tab switch), and the active lens' filter is part of the spec's
-// Query output, so facet exploration and the DQL echo see it too.
+// offers roots/errors/server/…. Lenses render as a strip above the table
+// ([ and ] cycle; digits stay global hotkeys), and the active lens' filter is
+// part of the spec's Query output, so facet exploration and the DQL echo see
+// it too.
 type Lens struct {
 	Name   string // strip label ("roots")
 	Desc   string // one-liner shown in the status bar on switch

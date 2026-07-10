@@ -174,7 +174,7 @@ func TestHistoryRestoresEveryPageKind(t *testing.T) {
 		newDetailView(a.ds, entity, nil, a.tf),
 		newMetricsView(a.ds, entity, a.tf),
 		newRelationsView(a.ds, entity, a.tf),
-		newWaterfallView(a.ds, trace, a.tf),
+		newWaterfallView(a.ds, trace, "", a.tf),
 		newInspectorView(a.ds, "P-1", rec),
 	}
 	wantKinds := []string{"home", "table", "query", "detail", "metrics", "relations", "waterfall", "inspector"}
