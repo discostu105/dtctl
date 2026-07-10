@@ -54,6 +54,7 @@ func newProblemView(ds *dataSource, rec map[string]any, now time.Time) *problemV
 	}
 	v.tabs = append(v.tabs, detailTab{name: "details",
 		view: newInspectorView(ds, catalog.Str(rec, "display_id"), rec)})
+	v.adoptTabs()
 	return v
 }
 

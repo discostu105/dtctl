@@ -68,16 +68,30 @@ func TestHotkeysJumpEverywhereAndLettersJumpTabs(t *testing.T) {
 	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "events" {
 		t.Fatalf("v on detail page must jump to the events tab (active=%s, top=%T)", dv.tabs[dv.active].name, a.top())
 	}
-	// ...and the entered page owns the digits: they address its numbered tab
-	// bar (1 = first tab), not the global bookmarks.
-	press(a, key("1"))
-	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.active != 0 {
-		t.Fatalf("digit on an entered page must pick its tab (active=%d, top=%T)", dv.active, a.top())
+	// The events tab shows a lens strip — the innermost numbered strip — so
+	// digits address it: 2 picks the alerts lens, not a page tab.
+	ev, ok := dv.activeView().(*tableView)
+	if !ok {
+		t.Fatalf("events tab view = %T", dv.activeView())
 	}
-	// A digit the bar doesn't show is swallowed, not a hidden global jump.
+	press(a, key("2"))
+	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "events" {
+		t.Fatalf("digit on a lensed tab must stay there (active=%s, top=%T)", dv.tabs[dv.active].name, a.top())
+	}
+	if got := ev.spec.LensAt(ev.scope.Lens).Name; got != "alerts" {
+		t.Fatalf("2 on the events tab must pick the alerts lens, got %s", got)
+	}
+	// A digit past the strip is swallowed with a hint, never a hidden jump.
 	press(a, key("9"))
-	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.active != 0 {
-		t.Fatalf("out-of-range digit must stay on the page (active=%d, top=%T)", dv.active, a.top())
+	if _, stillDetail := a.top().(*detailView); !stillDetail {
+		t.Fatalf("out-of-range digit must stay on the page, top=%T", a.top())
+	}
+	// On a lens-less tab the tab bar is the numbered strip again: 2 picks
+	// the related tab.
+	dv.setActive(0) // details — no lens strip
+	press(a, key("2"))
+	if _, stillDetail := a.top().(*detailView); !stillDetail || dv.tabs[dv.active].name != "related" {
+		t.Fatalf("digit on a lens-less tab must pick a page tab (active=%s, top=%T)", dv.tabs[dv.active].name, a.top())
 	}
 	// esc pops out — the digits are global bookmarks again.
 	press(a, key("esc"))

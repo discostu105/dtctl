@@ -1055,7 +1055,7 @@ func (a *app) renderHelp() string {
 		{"Navigation", []keyHint{
 			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
-			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 switch its numbered tabs instead (0 still jumps home, esc restores all bookmarks)"},
+			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 address the innermost numbered strip: its tabs, or the active tab's lens strip when it shows one (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},
 			{"tab", "cycle the view's primary strip: lens strip on tables · tabs on detail pages · panels on home"},
 			{"[ / ]", "cycle the lens strip explicitly (the only way for a strip nested inside a detail tab)"},

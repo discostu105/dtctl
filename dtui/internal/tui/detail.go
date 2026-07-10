@@ -77,7 +77,12 @@ func (ts *tabSet) YankText() (string, string, bool) {
 }
 
 func (ts *tabSet) Hints() []keyHint {
+	// The digit hint travels with the innermost numbered strip: the active
+	// tab's own hints lead with "1-9 lens" when it shows a strip.
 	hints := []keyHint{{"1-9/tab", "tabs"}}
+	if ts.lensedInner() != nil {
+		hints = []keyHint{{"tab", "tabs"}}
+	}
 	return append(hints, ts.activeView().Hints()...)
 }
 
@@ -89,11 +94,31 @@ var tabJumps = map[string]string{
 	"m": "metrics", "u": "sessions", "e": "userevents",
 }
 
-// ClaimsDigits marks the page as entered: its numbered tab bar owns the
-// digit keys while it is on top (the numbering on screen is the mode
+// ClaimsDigits marks the page as entered: its innermost numbered strip owns
+// the digit keys while it is on top (the numbering on screen is the mode
 // indicator); everywhere without visible numbers the digits stay the global
 // bookmarks, and esc restores them.
 func (ts *tabSet) ClaimsDigits() bool { return len(ts.tabs) > 1 }
+
+// lensedInner returns the active tab's table when it carries a lens strip —
+// then the strip is the innermost numbered strip and the digits address it.
+func (ts *tabSet) lensedInner() *tableView {
+	if tv, ok := ts.activeView().(*tableView); ok && len(tv.spec.Lenses) > 0 {
+		return tv
+	}
+	return nil
+}
+
+// adoptTabs marks every table child as nested in an entered page, so a
+// lensed tab renders digit labels on its lens strip (the innermost numbered
+// strip — the tab bar drops its own numbers while one is visible).
+func (ts *tabSet) adoptTabs() {
+	for _, t := range ts.tabs {
+		if tv, ok := t.view.(*tableView); ok {
+			tv.lensDigits = true
+		}
+	}
+}
 
 // tabKey handles tab-switching keys; everything else falls through to the
 // active tab's view. Entering the page rescoped the keyboard to it: the
@@ -109,12 +134,20 @@ func (ts *tabSet) tabKey(key string) (tea.Cmd, bool) {
 		return ts.setActive((ts.active + len(ts.tabs) - 1) % len(ts.tabs)), true
 	}
 	if len(key) == 1 && key[0] >= '1' && key[0] <= '9' {
-		if i := int(key[0] - '1'); i < len(ts.tabs) {
+		i := int(key[0] - '1')
+		// The digits address the innermost numbered strip: the active tab's
+		// lens strip when it shows one, else the tab bar (0 stays the global
+		// jump home). A digit the strip doesn't show teaches instead of
+		// jumping somewhere invisible.
+		if inner := ts.lensedInner(); inner != nil {
+			if i < len(inner.spec.Lenses) {
+				return inner.setLens(i, false), true
+			}
+			return status("digits pick lenses here — tab or letters switch tabs"), true
+		}
+		if i < len(ts.tabs) {
 			return ts.setActive(i), true
 		}
-		// 1-9 belong to the page while it is entered (0 stays the global
-		// jump home) — a digit the bar doesn't show teaches the way out
-		// instead of jumping somewhere invisible.
 		return status("digits pick tabs here — esc first for the global bookmarks"), true
 	}
 	// A letter the active tab's rows drill by (l on an evidence row scopes to
@@ -196,13 +229,18 @@ func (ts *tabSet) setTimeframeTabs(tf catalog.Timeframe) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-// tabBar renders the tab strip with a digit label per tab (the digits switch
-// tabs while the page is entered — the numbers on screen say what the keys
-// do) and a row-count badge on every tab that has loaded one.
+// tabBar renders the tab strip with a row-count badge on every tab that has
+// loaded one. Exactly one strip on screen is numbered — the innermost — so
+// the tabs carry digit labels only while the active tab shows no lens strip
+// of its own (the numbers on screen say what the digits do).
 func (ts *tabSet) tabBar() string {
+	numbered := ts.lensedInner() == nil
 	labels := make([]string, len(ts.tabs))
 	for i, t := range ts.tabs {
-		label := fmt.Sprintf("%d %s", i+1, t.name)
+		label := t.name
+		if numbered {
+			label = fmt.Sprintf("%d %s", i+1, t.name)
+		}
 		if rc, ok := t.view.(rowCounter); ok && t.started {
 			if n, valid := rc.RowCount(); valid {
 				label = fmt.Sprintf("%s (%d)", label, n)
@@ -307,6 +345,7 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, tabScope)})
 		}
 	}
+	v.adoptTabs()
 	return v
 }
 

@@ -67,6 +67,12 @@ type tableView struct {
 	// spec is Dynamic (the record sampler browses arbitrary tables).
 	dynCols []catalog.Column
 
+	// lensDigits marks a table nested in an entered page (set by tabSet):
+	// its lens strip is then the innermost numbered strip — it renders digit
+	// labels and the page routes 1-9 to it. Top-level tables stay
+	// un-numbered; their digits are the global bookmarks.
+	lensDigits bool
+
 	width, height int
 }
 
@@ -302,7 +308,11 @@ func (v *tableView) Hints() []keyHint {
 	}
 	var hints []keyHint
 	if len(v.spec.Lenses) > 0 {
-		hints = append(hints, keyHint{"tab", "lens"})
+		if v.lensDigits {
+			hints = append(hints, keyHint{"1-9", "lens"})
+		} else {
+			hints = append(hints, keyHint{"tab", "lens"})
+		}
 	}
 	if !previewEnabled {
 		hints = append(hints, keyHint{"P", "preview"})
@@ -1582,17 +1592,23 @@ func (v *tableView) renderTable(width, height int) string {
 	b.WriteString(ansi.Truncate(head, width, "…"))
 	b.WriteString("\n")
 
-	// Lens strip: the view's quick subsets, detail-tab style ([ and ] cycle;
-	// no digit labels — digits are global hotkeys everywhere).
+	// Lens strip: the view's quick subsets (tab and the brackets cycle).
+	// Nested in an entered page it is the innermost numbered strip, so it
+	// carries digit labels and the digits address it; at the top level it
+	// stays un-numbered — digits are the global bookmarks there.
 	chrome := 2
 	if n := len(v.spec.Lenses); n > 0 {
 		chrome = 3
 		labels := make([]string, n)
 		for i, l := range v.spec.Lenses {
+			name := l.Name
+			if v.lensDigits {
+				name = fmt.Sprintf("%d %s", i+1, name)
+			}
 			if i == v.scope.Lens {
-				labels[i] = theme.TabActive.Render(l.Name)
+				labels[i] = theme.TabActive.Render(name)
 			} else {
-				labels[i] = theme.TabInactive.Render(l.Name)
+				labels[i] = theme.TabInactive.Render(name)
 			}
 		}
 		b.WriteString(ansi.Truncate(" "+strings.Join(labels, "  "), width, "…"))

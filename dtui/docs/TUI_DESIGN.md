@@ -366,8 +366,10 @@ Every detail page shares one chrome:
   from `lifetime`).
 - **Tab bar**: the tabs are numbered and the digits switch them directly
   while the page is entered (`0` stays the global jump home); `tab` /
-  `shift-tab` cycle them. `[` / `]` never touch the tab bar — the brackets
-  always drive the active tab's own lens strip. Tabs hold
+  `shift-tab` cycle them. When the active tab shows its own lens strip,
+  the numbering — and the digits — migrate to that strip (the innermost
+  numbered strip always owns them). `[` / `]` never touch the tab bar —
+  the brackets always drive the active tab's own lens strip. Tabs hold
   content that *belongs to* the object (summaries, embedded lists, charts).
   The signal keys (`l s m p v`) keep their global meaning — they *leave* the
   page into a full, pre-scoped signal view. Rule of thumb: tabs answer "what
@@ -1009,20 +1011,23 @@ Phase 3.9's "digits global everywhere" treated the symptom (invisible key
 scope) by banning context. The durable rule is visibility-based: **digits do
 what the numbers on screen say; no numbers visible → global bookmarks.**
 
-- Detail and problem pages regained their digit labels (`1 details
-  2 related …`). While such a page is on top, `1`–`9` switch its tabs
-  directly (a digit the bar doesn't show is swallowed with a teaching
-  status, never a hidden jump), `0` stays the jump home from anywhere (it
-  never appears on a tab bar), and `esc` pops out to where all ten keys
-  are global again. Top-level tables, home, and the navigator show no
-  numbers, so digits stay global bookmarks there — the original
-  lens-strip/hotkey overlap stays fixed where users roam.
+- **Exactly one strip on screen is numbered — the innermost one — and the
+  digits address it.** Detail and problem pages show digit labels on their
+  tab bar (`1 details  2 related …`) and `1`–`9` switch tabs directly.
+  When the active tab's table shows its own lens strip, the numbering
+  moves down to it (`1 roots  2 errors … 9 all` — the tab bar drops its
+  numbers) and the digits pick lenses; tab/shift+tab and the drill
+  letters still switch tabs. A digit the numbered strip doesn't show is
+  swallowed with a teaching status, never a hidden jump; `0` stays the
+  jump home from anywhere (it never appears on a strip), and `esc` pops
+  out to where all ten keys are global again. Top-level tables, home, and
+  the navigator show no numbers, so digits stay global bookmarks there —
+  the original lens-strip/hotkey overlap stays fixed where users roam.
 - **`tab` cycles the view's primary strip**: page tabs when entered,
   panels on home, and the lens strip on plain tables and the session
   timeline — one unmodified key for the most common slice-switch (`[`/`]`
   are AltGr chords on German-layout keyboards). The brackets remain the
-  explicit lens keys everywhere and the only driver for a strip nested
-  inside a detail tab, where the tab bar owns both tab and the digits.
+  explicit lens-cycling keys everywhere.
 
 ### Phase 4 — Assets & mutations
 

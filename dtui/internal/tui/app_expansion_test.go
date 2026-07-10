@@ -2,7 +2,6 @@ package tui
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -228,11 +227,15 @@ func TestNestedLensStripOnDetailPage(t *testing.T) {
 	if dv.active == traceIdx {
 		t.Error("tab must still cycle the page tabs")
 	}
-	// Even with a lens strip on screen, a digit addresses the numbered tab
-	// bar — the page owns the digits while entered.
-	press(a, key(fmt.Sprintf("%d", traceIdx+1)))
+	// The digits address the innermost numbered strip: back on the traces
+	// tab, 2 picks its second lens (errors) directly instead of a tab.
+	press(a, key("s"))
+	press(a, key("2"))
 	if _, still := a.top().(*detailView); !still || dv.active != traceIdx {
-		t.Fatalf("digit must pick the numbered tab (active=%d, top=%T)", dv.active, a.top())
+		t.Fatalf("digit on a lensed tab must stay there (active=%d, top=%T)", dv.active, a.top())
+	}
+	if got := inner.spec.LensAt(inner.scope.Lens).Name; got != "errors" {
+		t.Errorf("2 on the traces tab must pick the errors lens, got %s", got)
 	}
 }
 
