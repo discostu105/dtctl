@@ -12,6 +12,7 @@ import (
 	"github.com/dynatrace-oss/dtctl/pkg/client"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/analyzer"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/anomalydetector"
+	"github.com/dynatrace-oss/dtctl/pkg/resources/segment"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/slo"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -25,6 +26,31 @@ func tuiSources(c *client.Client) map[string]tui.Source {
 		"slos":              sloSource(slo.NewHandler(c)),
 		"anomaly-detectors": detectorSource(anomalydetector.NewHandler(c)),
 		"log-patterns":      logPatternSource(analyzer.NewHandler(c)),
+	}
+}
+
+// segmentSource adapts the segment resource handler to the TUI's picker and
+// workspace seeding (the handler's List already requests the VARIABLES
+// add-field). Construction here keeps internal/tui free of HTTP.
+func segmentSource(h *segment.Handler) tui.SegmentLister {
+	return func(_ context.Context) ([]tui.SegmentOption, error) {
+		list, err := h.List()
+		if err != nil {
+			return nil, err
+		}
+		opts := make([]tui.SegmentOption, 0, len(list.FilterSegments))
+		for _, s := range list.FilterSegments {
+			opts = append(opts, tui.SegmentOption{
+				UID:          s.UID,
+				Name:         s.Name,
+				Description:  s.Description,
+				HasVariables: s.Variables != nil,
+			})
+		}
+		sort.SliceStable(opts, func(i, j int) bool {
+			return strings.ToLower(opts[i].Name) < strings.ToLower(opts[j].Name)
+		})
+		return opts, nil
 	}
 }
 

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/adrg/xdg"
@@ -23,6 +24,8 @@ import (
 	"github.com/dynatrace-oss/dtctl/pkg/client"
 	"github.com/dynatrace-oss/dtctl/pkg/config"
 	"github.com/dynatrace-oss/dtctl/pkg/exec"
+	"github.com/dynatrace-oss/dtctl/pkg/resources/segment"
+	"github.com/dynatrace-oss/dtctl/pkg/workspace"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -90,10 +93,23 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 			return fmt.Errorf("dtui requires a terminal (stdout is not a TTY)")
 		}
 
+		// A committed .dynatrace.yaml supplies workspace defaults; a broken
+		// one must never brick dtui — errors degrade to a startup warning.
+		ws, wsWarnings := loadWorkspace()
+
 		view := "home"
+		if ws != nil && ws.View != "" {
+			if isBespokeView(ws.View) || catalog.Lookup(ws.View) != nil {
+				view = ws.View
+			} else {
+				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
+			}
+		}
 		if len(args) == 1 {
 			view = args[0]
 		}
+		// Only an explicit CLI argument can still be unknown here (the
+		// workspace view fell back above) — that stays a hard error.
 		if !isBespokeView(view) && catalog.Lookup(view) == nil {
 			return fmt.Errorf("unknown view %q (available: home, query, nav, %s)", view, strings.Join(catalog.Names(), ", "))
 		}
@@ -101,6 +117,16 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 		cfg, err := loadConfig()
 		if err != nil {
 			return err
+		}
+		// Context precedence: --context flag > workspace environment match >
+		// config current-context. Session-local either way — dtui never
+		// writes the shared config.
+		if contextName == "" && ws != nil && ws.Environment != "" {
+			if name, ok := findContextByEnvironment(cfg, ws.Environment); ok {
+				cfg.CurrentContext = name
+			} else {
+				wsWarnings = append(wsWarnings, fmt.Sprintf("no context matches workspace environment %s — using %s", ws.Environment, cfg.CurrentContext))
+			}
 		}
 		ctxObj, err := cfg.CurrentContextObj()
 		if err != nil {
@@ -111,15 +137,28 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 			return err
 		}
 
-		return tui.Run(tui.Options{
-			ContextName: cfg.CurrentContext,
-			Environment: ctxObj.Environment,
-			SafetyLevel: string(ctxObj.GetEffectiveSafetyLevel()),
-			Executor:    newDQLExecutor(cfg, c),
-			Sources:     tuiSources(c),
-			InitialView: view,
-			HistoryPath: historyPath(),
-		})
+		opts := tui.Options{
+			ContextName:   cfg.CurrentContext,
+			Environment:   ctxObj.Environment,
+			SafetyLevel:   string(ctxObj.GetEffectiveSafetyLevel()),
+			Executor:      newDQLExecutor(cfg, c),
+			Sources:       tuiSources(c),
+			SegmentSource: segmentSource(segment.NewHandler(c)),
+			InitialView:   view,
+			HistoryPath:   historyPath(),
+		}
+		if ws != nil {
+			opts.WorkspaceSegments = workspaceSegments(ws)
+			opts.InitialTimeframe = ws.Timeframe
+		}
+		switch {
+		case len(wsWarnings) > 0:
+			opts.StartupNotice = strings.Join(wsWarnings, "; ")
+			opts.StartupNoticeErr = true
+		case ws != nil:
+			opts.StartupNotice = workspaceNotice(ws)
+		}
+		return tui.Run(opts)
 	},
 }
 
@@ -176,6 +215,80 @@ func historyPath() string {
 		}
 	}
 	return path
+}
+
+// loadWorkspace discovers the project's .dynatrace.yaml. Errors degrade to a
+// warning and a nil workspace: a broken committed file must never brick dtui.
+func loadWorkspace() (*workspace.Workspace, []string) {
+	ws, err := workspace.Discover()
+	if err != nil {
+		return nil, []string{"workspace file ignored: " + err.Error()}
+	}
+	return ws, nil
+}
+
+// workspaceSegments maps the file's segment refs into the TUI's resolution
+// input, flattening the variables map into deterministic (sorted) bindings.
+func workspaceSegments(ws *workspace.Workspace) []tui.WorkspaceSegment {
+	out := make([]tui.WorkspaceSegment, 0, len(ws.Segments))
+	for _, s := range ws.Segments {
+		ref := tui.WorkspaceSegment{Ref: s.Ref}
+		names := make([]string, 0, len(s.Variables))
+		for name := range s.Variables {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			ref.Variables = append(ref.Variables, exec.FilterSegmentVariable{Name: name, Values: s.Variables[name]})
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
+// workspaceNotice announces that a committed file is steering the session —
+// e.g. "workspace my-service: 2 segments, last 24h, view pods".
+func workspaceNotice(ws *workspace.Workspace) string {
+	var parts []string
+	switch n := len(ws.Segments); {
+	case n == 1:
+		parts = append(parts, "1 segment")
+	case n > 1:
+		parts = append(parts, fmt.Sprintf("%d segments", n))
+	}
+	if ws.Timeframe != "" {
+		parts = append(parts, "last "+ws.Timeframe)
+	}
+	if ws.View != "" {
+		parts = append(parts, "view "+ws.View)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("workspace %s: %s", filepath.Base(filepath.Dir(ws.Path())), strings.Join(parts, ", "))
+}
+
+// findContextByEnvironment returns the first context whose environment URL
+// matches env (case-insensitive; scheme and trailing slash ignored).
+func findContextByEnvironment(cfg *config.Config, env string) (string, bool) {
+	want := envKey(env)
+	if want == "" {
+		return "", false
+	}
+	for _, nc := range cfg.Contexts {
+		if envKey(nc.Context.Environment) == want {
+			return nc.Name, true
+		}
+	}
+	return "", false
+}
+
+// envKey normalizes an environment URL to its comparable identity.
+func envKey(env string) string {
+	s := strings.ToLower(strings.TrimSpace(env))
+	s = strings.TrimPrefix(s, "https://")
+	s = strings.TrimPrefix(s, "http://")
+	return strings.TrimSuffix(s, "/")
 }
 
 // isBespokeView reports whether the name is one of the TUI's bespoke
