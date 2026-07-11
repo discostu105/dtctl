@@ -75,12 +75,7 @@ func (v *relationsView) RowCount() (int, bool) {
 func (v *relationsView) Crumb() string { return "relations (" + entityName(v.entity) + ")" }
 func (v *relationsView) DQL() string   { return v.dql }
 
-func (v *relationsView) Echo() string {
-	if v.dql == "" {
-		return ""
-	}
-	return fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " "))
-}
+func (v *relationsView) Echo() string { return v.ds.echoQuery(v.dql) }
 
 func (v *relationsView) Hints() []keyHint {
 	return []keyHint{{"enter", "go to entity"}, {"x", "its relations"}, {".", "pin"}, {"y", "yank id"}}

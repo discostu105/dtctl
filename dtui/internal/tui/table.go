@@ -282,8 +282,7 @@ func (v *tableView) Echo() string {
 	if v.dql == "" {
 		return ""
 	}
-	oneline := strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " ")
-	return fmt.Sprintf("dtctl query '%s'", oneline)
+	return v.ds.echoQuery(v.dql)
 }
 
 // DQL reveals the view's generated query (ctrl+q).

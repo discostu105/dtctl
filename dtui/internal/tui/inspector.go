@@ -260,13 +260,7 @@ func (v *inspectorView) Crumb() string                             { return v.ti
 // Busy reports whether the detail fetch is in flight.
 func (v *inspectorView) Busy() bool { return v.loading }
 
-func (v *inspectorView) Echo() string {
-	if v.dql == "" {
-		return ""
-	}
-	oneline := strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " ")
-	return fmt.Sprintf("dtctl query '%s'", oneline)
-}
+func (v *inspectorView) Echo() string { return v.ds.echoQuery(v.dql) }
 
 func (v *inspectorView) Hints() []keyHint {
 	if v.searching {

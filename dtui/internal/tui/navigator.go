@@ -235,12 +235,7 @@ func (v *navView) Crumb() string {
 
 func (v *navView) DQL() string { return v.dql }
 
-func (v *navView) Echo() string {
-	if v.dql == "" {
-		return ""
-	}
-	return fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " "))
-}
+func (v *navView) Echo() string { return v.ds.echoQuery(v.dql) }
 
 func (v *navView) Hints() []keyHint {
 	if v.filterActive {

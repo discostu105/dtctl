@@ -76,12 +76,7 @@ func (v *timelineView) Crumb() string {
 	return label
 }
 
-func (v *timelineView) Echo() string {
-	if v.dql == "" {
-		return ""
-	}
-	return fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " "))
-}
+func (v *timelineView) Echo() string { return v.ds.echoQuery(v.dql) }
 
 func (v *timelineView) DQL() string { return v.dql }
 

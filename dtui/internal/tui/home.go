@@ -295,12 +295,7 @@ func (v *homeView) DQL() string {
 	return ""
 }
 
-func (v *homeView) Echo() string {
-	if dql := v.DQL(); dql != "" {
-		return fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(dql, "\n", " ")), " "))
-	}
-	return ""
-}
+func (v *homeView) Echo() string { return v.ds.echoQuery(v.DQL()) }
 
 func (v *homeView) Hints() []keyHint {
 	return []keyHint{{"enter", "open"}, {"tab", "next panel"}, {"j/k", "move"}}

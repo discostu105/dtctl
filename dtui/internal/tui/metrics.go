@@ -134,12 +134,7 @@ func (v *metricsView) Crumb() string {
 	return fmt.Sprintf("metrics (%s)", entityName(v.entity))
 }
 
-func (v *metricsView) Echo() string {
-	if v.dql == "" {
-		return ""
-	}
-	return fmt.Sprintf("dtctl query '%s'", strings.ReplaceAll(v.dql, "\n", " "))
-}
+func (v *metricsView) Echo() string { return v.ds.echoQuery(v.dql) }
 
 func (v *metricsView) Hints() []keyHint {
 	if v.dimPick {

@@ -86,12 +86,7 @@ func (v *waterfallView) Crumb() string {
 	return "trace " + shortID(v.traceID)
 }
 
-func (v *waterfallView) Echo() string {
-	if v.dql == "" {
-		return ""
-	}
-	return fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(v.dql, "\n", " ")), " "))
-}
+func (v *waterfallView) Echo() string { return v.ds.echoQuery(v.dql) }
 
 func (v *waterfallView) DQL() string { return v.dql }
 

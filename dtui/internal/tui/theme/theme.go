@@ -97,6 +97,7 @@ var (
 	Track      = lipgloss.NewStyle().Foreground(Border)
 	Spinner    = lipgloss.NewStyle().Foreground(Peach)
 	Pin        = lipgloss.NewStyle().Bold(true).Foreground(Peach)
+	Segment    = lipgloss.NewStyle().Bold(true).Foreground(Mauve)
 	Badge      = lipgloss.NewStyle().Foreground(Mauve).Background(ChipBg).Padding(0, 1)
 	GenAI      = lipgloss.NewStyle().Foreground(Mauve)
 	ArrowOut   = lipgloss.NewStyle().Foreground(Green)

@@ -32,6 +32,19 @@ type Options struct {
 	Sources     map[string]Source
 	InitialView string // catalog view name or alias; "" = problems
 	HistoryPath string // navigation-history file; "" = in-memory only
+
+	// SegmentSource backs the segment picker and workspace seeding; nil
+	// disables both. Constructed in the dtui main package (no HTTP here).
+	SegmentSource SegmentLister
+	// WorkspaceSegments are .dynatrace.yaml refs resolved and applied on
+	// startup (async — the first paint is never blocked on them).
+	WorkspaceSegments []WorkspaceSegment
+	// InitialTimeframe is the workspace default window ("" = built-in 2h).
+	InitialTimeframe string
+	// StartupNotice is a one-line message shown on launch — how a committed
+	// .dynatrace.yaml announces it is steering the session (or failed to).
+	StartupNotice    string
+	StartupNoticeErr bool
 }
 
 // Run launches the TUI and blocks until the user quits.
@@ -110,6 +123,21 @@ type app struct {
 	openSel    int
 	openList   []linkOption
 
+	// Global segment scope (the fourth global state after context, timeframe,
+	// and pin) — mirrored here for the header and picker; the query-side truth
+	// lives on ds.segments.
+	segApplied []SegmentOption
+	segVars    map[string][]exec.FilterSegmentVariable // uid → workspace bindings
+	segPending bool // workspace refs still resolving against the tenant list
+
+	// Segment picker overlay ('S').
+	segPickActive bool
+	segPickSel    int
+	segChecked    map[string]bool // scratch selection until enter
+	segList       []SegmentOption // cached lister result
+	segLoading    bool
+	segErr        string
+
 	hist *historyStore
 
 	status    string
@@ -137,6 +165,9 @@ func newApp(opts Options) (*app, error) {
 		ds:   &dataSource{exec: opts.Executor, sources: opts.Sources},
 		tf:   catalog.DefaultTimeframe,
 		hist: loadHistory(opts.HistoryPath, opts.ContextName),
+	}
+	if tf, ok := catalog.ParseTimeframe(opts.InitialTimeframe); ok {
+		a.tf = tf
 	}
 	a.cmdInput = ci
 	for i, tf := range catalog.Timeframes {
@@ -196,7 +227,24 @@ func (a *app) pinRejected(name string) bool {
 
 func (a *app) top() viewModel { return a.stack[len(a.stack)-1] }
 
-func (a *app) Init() tea.Cmd { return a.top().Init() }
+func (a *app) Init() tea.Cmd {
+	cmds := []tea.Cmd{a.top().Init()}
+	if a.opts.StartupNotice != "" {
+		if a.opts.StartupNoticeErr {
+			cmds = append(cmds, statusErr(a.opts.StartupNotice))
+		} else {
+			cmds = append(cmds, status(a.opts.StartupNotice))
+		}
+	}
+	// Workspace segments resolve asynchronously: the first paint is never
+	// blocked, and the initial unsegmented queries are superseded by the
+	// applySegments refetch (seq guards drop them).
+	if len(a.opts.WorkspaceSegments) > 0 {
+		a.segPending = true
+		cmds = append(cmds, a.loadSegmentList())
+	}
+	return tea.Batch(cmds...)
+}
 
 func (a *app) bodyHeight() int { return max(a.height-4, 1) }
 
@@ -296,6 +344,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	case queryMsg:
 		return a.navigate(newQueryView(a.ds, msg.dql, a.tf), false)
 
+	case segmentListMsg:
+		return a.handleSegmentList(msg)
+
 	case statusMsg:
 		a.status, a.statusErr = msg.text, msg.isErr
 		return nil
@@ -382,6 +433,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if a.openActive {
 		return a.updateOpenPicker(msg)
 	}
+	if a.segPickActive {
+		return a.updateSegPicker(msg)
+	}
 	if a.helpActive {
 		a.helpActive = false
 		return nil
@@ -418,6 +472,8 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 		case "t":
 			a.tfActive = true
 			return nil
+		case "S":
+			return a.openSegmentPicker()
 		case "x", "X":
 			// Both cases walk the topology: the navigator's trail-based walk
 			// strictly dominates the old one-hop relations page (which
@@ -522,6 +578,11 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 	// user isn't left reading an unfiltered list wondering why.
 	if a.pinRejected(name) {
 		return tea.Batch(nav, statusErr(fmt.Sprintf("%s can't scope to %s — showing all (ctrl+x unpins)", name, a.pin.Type)))
+	}
+	// Same honesty for segments: API-backed views bypass query:execute, so
+	// the global scope doesn't reach them (the header pill dims too).
+	if a.segmentsRejected(name) {
+		return tea.Batch(nav, statusErr(fmt.Sprintf("%s is API-backed — segments don't apply", name)))
 	}
 	return nav
 }
@@ -790,6 +851,8 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 				return statusErr("usage: trace <trace-id>")
 			}
 			return func() tea.Msg { return waterfallMsg{traceID: arg} }
+		case "segments", "seg":
+			return a.openSegmentPicker()
 		}
 		spec := catalog.Lookup(input[0])
 		if spec == nil && a.cmdSel < len(a.cmdMatches) {
@@ -805,6 +868,8 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 			return a.jumpTo(spec.Name, "")
 		case "nav":
 			return a.openNav(arg)
+		case "segments":
+			return a.openSegmentPicker()
 		}
 		// Arguments narrow the jump (":pods checkout" pre-fills the filter).
 		return a.jumpTo(spec.Name, arg)
@@ -823,6 +888,7 @@ var bespokeSpecs = []*catalog.Spec{
 	{Name: "home", Desc: "Triage landing page"},
 	{Name: "query", Aliases: []string{"dql"}, Desc: "DQL escape hatch"},
 	{Name: "nav", Aliases: []string{"smartscape", "navigator"}, Desc: "Smartscape topology navigator"},
+	{Name: "segments", Aliases: []string{"seg"}, Desc: "Filter segments — global DQL scope"},
 }
 
 func (a *app) updateCmdMatches() {
@@ -913,6 +979,17 @@ func (a *app) renderHeader() string {
 	if a.pin != nil {
 		left = append(left, theme.Pin.Render("⌖ "+strings.ToLower(a.pin.Type)+":"+entityName(*a.pin)))
 	}
+	if len(a.segApplied) > 0 {
+		// Dim on API-backed views — the one surface the scope doesn't reach —
+		// so the header never claims a filter that wasn't applied.
+		style := theme.Segment
+		if tv, ok := a.top().(*tableView); ok && tv.spec.API != "" {
+			style = theme.Dim
+		}
+		left = append(left, style.Render("◐ "+segmentSummary(a.segApplied)))
+	} else if a.segPending {
+		left = append(left, theme.Dim.Render("◌ segments…"))
+	}
 	var right []string
 	if iv := refreshIntervals[a.refreshIdx]; iv > 0 {
 		right = append(right, theme.StatusOK.Render("⟳ "+iv.String()))
@@ -996,6 +1073,9 @@ func (a *app) renderBody() string {
 	if a.openActive {
 		return overlay(a.width, bodyH, a.renderOpenPicker())
 	}
+	if a.segPickActive {
+		return overlay(a.width, bodyH, a.renderSegPicker())
+	}
 	if a.cmdActive {
 		return lipgloss.Place(a.width, bodyH, lipgloss.Center, lipgloss.Position(0.2),
 			theme.OverlayBox.Render(a.renderCmdPalette()))
@@ -1013,6 +1093,8 @@ func (a *app) renderFooter() string {
 		hints = []keyHint{{"enter", "restore"}, {"j/k", "move"}, {"esc", "close"}}
 	case a.openActive:
 		hints = []keyHint{{"enter", "open"}, {"y", "yank url"}, {"esc", "cancel"}}
+	case a.segPickActive:
+		hints = []keyHint{{"space", "toggle"}, {"enter", "apply"}, {"c", "clear"}, {"esc", "cancel"}}
 	case a.top().InputActive():
 		// A view's text input (filter, search, query editor) is focused — the
 		// global keys would just type characters, so show only the view's own
@@ -1020,7 +1102,7 @@ func (a *app) renderFooter() string {
 		hints = a.top().Hints()
 	default:
 		hints = append(a.top().Hints(),
-			keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"r", "refresh"})
+			keyHint{":", "views"}, keyHint{"t", "timeframe"}, keyHint{"S", "segments"}, keyHint{"r", "refresh"})
 		// "esc back" at the stack root would advertise a no-op.
 		if len(a.stack) > 1 {
 			hints = append(hints, keyHint{"esc", "back"})
@@ -1082,6 +1164,7 @@ func (a *app) renderHelp() string {
 		{"Scope & actions", []keyHint{
 			{".", "pin selection as global scope (ctrl+x unpins)"},
 			{"t", "timeframe picker"},
+			{"S", "segments — up to 10 filter segments applied to every DQL view (:segments); a .dynatrace.yaml in the project pre-selects them"},
 			{"ctrl+q", "reveal query — this view's DQL in the editor"},
 			{"o", "open in the Dynatrace UI — a picker appears when several targets apply"},
 			{"y / c", "yank id / copy CLI command"},

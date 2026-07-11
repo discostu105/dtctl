@@ -8,6 +8,8 @@ package catalog
 
 import (
 	"fmt"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -63,6 +65,32 @@ var Timeframes = []Timeframe{
 
 // DefaultTimeframe is the window used at startup.
 var DefaultTimeframe = Timeframes[1]
+
+// timeframeLabelRe matches the workspace-file timeframe labels.
+var timeframeLabelRe = regexp.MustCompile(`^([0-9]+)([mhd])$`)
+
+// ParseTimeframe parses a timeframe label ("30m", "2h", "3d") into a
+// Timeframe — the .dynatrace.yaml startup default. Picker presets are reused
+// when the label matches one, so the picker highlight lands on the right
+// pill; other valid labels build a custom relative window (the highlight then
+// stays on the picker default — cosmetic only, DQL uses the label verbatim).
+func ParseTimeframe(label string) (Timeframe, bool) {
+	for _, tf := range Timeframes {
+		if tf.Label == label {
+			return tf, true
+		}
+	}
+	m := timeframeLabelRe.FindStringSubmatch(label)
+	if m == nil {
+		return Timeframe{}, false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n <= 0 {
+		return Timeframe{}, false
+	}
+	unit := map[string]time.Duration{"m": time.Minute, "h": time.Hour, "d": 24 * time.Hour}[m[2]]
+	return Timeframe{Label: label, Dur: time.Duration(n) * unit}, true
+}
 
 // Scope carries the context every query composes: the entity the user is
 // standing on (nil = unscoped) and the global timeframe. Drill-down

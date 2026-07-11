@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -32,6 +33,39 @@ type dataSource struct {
 	// happen on bubbletea's single update goroutine — no locking needed.
 	dict          map[string]catalog.FieldDoc
 	dictRequested bool
+
+	// segments is the global segment scope, applied to every DQL query here —
+	// the one place all queries are built — so views need no per-view
+	// plumbing. Sent out-of-band as filterSegments on query:execute; the
+	// API-backed sources above deliberately don't see them (REST endpoints
+	// have no segment parameter).
+	segments []exec.FilterSegmentRef
+}
+
+// execOpts builds one query's execution options — extracted so tests can
+// assert the segment injection without HTTP (the runFn seam skips it).
+func (d *dataSource) execOpts(maxRecords int64) exec.DQLExecuteOptions {
+	return exec.DQLExecuteOptions{
+		MaxResultRecords:    maxRecords,
+		FetchTimeoutSeconds: 60,
+		Segments:            d.segments,
+		// ShowProgress stays false: the progress bar draws on stderr and
+		// would tear the TUI's alternate screen.
+	}
+}
+
+// echoQuery renders a view's copyable CLI equivalent of a DQL fetch,
+// carrying the active segments — without the -S flags the command would
+// return different rows than the screen shows.
+func (d *dataSource) echoQuery(dql string) string {
+	if dql == "" {
+		return ""
+	}
+	out := fmt.Sprintf("dtctl query '%s'", strings.Join(strings.Fields(strings.ReplaceAll(dql, "\n", " ")), " "))
+	for _, ref := range d.segments {
+		out += " -S " + ref.ID
+	}
+	return out
 }
 
 // dictOwner tags the one-shot dictionary fetch; the app routes its result
@@ -99,13 +133,8 @@ func (d *dataSource) queryCapped(owner any, seq int, dql string, maxRecords int6
 			records, err := d.runFn(dql)
 			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
 		}
-		resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, exec.DQLExecuteOptions{
-			MaxResultRecords:    maxRecords,
-			FetchTimeoutSeconds: 60,
-			// ShowProgress stays false: the progress bar draws on stderr and
-			// would tear the TUI's alternate screen.
-		})
-		msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: err}
+		resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, d.execOpts(maxRecords))
+		msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
 		if err == nil {
 			if resp == nil {
 				msg.err = errors.New("query cancelled")
