@@ -720,7 +720,15 @@ the user intended.
   single shared time axis (`└ 2h ago … now`) closes the page — every chart
   spans the same window, so per-chart axes would be noise.
 - Unit-aware formatting: `"B"` → IEC bytes (a 15.3 GiB axis label, not
-  "16106.1M"), `%`/`ms` attach suffixes.
+  "16106.1M"), `%`/`ms` attach suffixes. Shared as `catalog.FormatUnit`
+  (charts, vitals rows) and `catalog.FormatUnitShort` (dense table cells:
+  one-decimal percent, spaceless bytes, k8s `500m` millicores).
+- **A sparkline alone misleads**: `MiniGraph` normalizes to its own range,
+  so a flat 3% and a flat 90% CPU render identically. Every spark column
+  pairs the mini-graph with the right-aligned latest value, and the vitals
+  block adds a btop-style meter for `%` series — `█…░` scaled 0–100 and
+  class-colored by load (ok < 75 ≤ warn < 90 ≤ error) — because percent has
+  an absolute scale the trend can't show.
 
 ---
 

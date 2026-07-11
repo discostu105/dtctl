@@ -41,6 +41,13 @@ func TestDetailVitalsBlock(t *testing.T) {
 			t.Errorf("vitals block missing %q:\n%s", want, body)
 		}
 	}
+	// Percent rows carry a btop-style gauge: filled span plus track — the
+	// absolute story the normalized sparkline can't tell.
+	for _, want := range []string{"███", "░"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("vitals gauge missing %q:\n%s", want, body)
+		}
+	}
 	if strings.Contains(body, "disk used") {
 		t.Errorf("series the probe dropped must not render a row:\n%s", body)
 	}

@@ -544,49 +544,9 @@ func (v *metricsView) renderDimPicker(width, height int) string {
 	return b.String()
 }
 
-// fmtUnit renders a metric value in its series unit ("B" gets IEC bytes,
-// durations ("µs", "ms", "s") scale adaptively, "%" attaches its suffix,
-// anything else appends the unit label).
-func fmtUnit(f float64, unit string) string {
-	switch unit {
-	case "%":
-		return formatMetric(f) + "%"
-	case "B":
-		if f >= 0 {
-			return catalog.FormatBytes(int64(f))
-		}
-		return formatMetric(f) + " B"
-	case "B/s":
-		if f >= 0 {
-			return catalog.FormatBytes(int64(f)) + "/s"
-		}
-		return formatMetric(f) + " B/s"
-	case "µs":
-		return fmtSeconds(f / 1e6)
-	case "ms":
-		return fmtSeconds(f / 1e3)
-	case "s":
-		return fmtSeconds(f)
-	case "":
-		return formatMetric(f)
-	default:
-		return formatMetric(f) + " " + unit
-	}
-}
-
-// fmtSeconds renders a duration given in seconds at a readable magnitude
-// (Grail serves response times in µs, OTel histograms in s — both land here).
-func fmtSeconds(f float64) string {
-	abs := math.Abs(f)
-	switch {
-	case abs >= 1 || abs == 0:
-		return formatMetric(f) + " s"
-	case abs >= 1e-3:
-		return formatMetric(f*1e3) + " ms"
-	default:
-		return formatMetric(f*1e6) + " µs"
-	}
-}
+// fmtUnit renders a metric value in its series unit (catalog.FormatUnit —
+// shared with the table spark columns).
+func fmtUnit(f float64, unit string) string { return catalog.FormatUnit(f, unit) }
 
 // floatSeries extracts the numeric points of a timeseries array field,
 // skipping nulls (gaps compress visually, which is fine for a sparkchart).
@@ -617,19 +577,4 @@ func seriesStats(values []float64) (minV, maxV, avg, last float64) {
 		sum += f
 	}
 	return minV, maxV, sum / float64(len(values)), values[len(values)-1]
-}
-
-func formatMetric(f float64) string {
-	switch {
-	case math.Abs(f) >= 1_000_000_000:
-		return fmt.Sprintf("%.1fG", f/1_000_000_000)
-	case math.Abs(f) >= 1_000_000:
-		return fmt.Sprintf("%.1fM", f/1_000_000)
-	case math.Abs(f) >= 10_000:
-		return fmt.Sprintf("%.1fk", f/1_000)
-	case f == math.Trunc(f):
-		return fmt.Sprintf("%.0f", f)
-	default:
-		return fmt.Sprintf("%.2f", f)
-	}
 }

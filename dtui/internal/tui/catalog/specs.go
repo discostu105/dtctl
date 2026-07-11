@@ -86,8 +86,8 @@ var servicesSpec = &Spec{
 	},
 	Columns: []Column{
 		{Title: "NAME", Field: "name"},
-		SparkColumn("REQUESTS", "req", 10),
-		SparkColumn("FAILED", "fail", 10),
+		SparkColumn("REQUESTS", "req", 15, ""),
+		SparkColumn("FAILED", "fail", 15, ""),
 		{Title: "ID", Field: "id", Width: 25},
 		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
 	},
@@ -119,8 +119,8 @@ var hostsSpec = &Spec{
 			return strings.TrimPrefix(Str(rec, "os.type"), "OS_TYPE_")
 		}},
 		{Title: "CPUS", Width: 4, Right: true, Field: "logical_cores"},
-		SparkColumn("CPU", "cpu", 8),
-		SparkColumn("MEM", "mem", 8),
+		SparkColumn("CPU", "cpu", 14, "%"),
+		SparkColumn("MEM", "mem", 14, "%"),
 		{Title: "MEMORY", Width: 9, Right: true, Value: func(rec map[string]any) string {
 			return FormatBytesStr(Str(rec, "memory"))
 		}, Sort: func(rec map[string]any) any { return Str(rec, "memory") }},

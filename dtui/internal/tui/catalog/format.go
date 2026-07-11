@@ -220,15 +220,25 @@ func SeriesLast(rec map[string]any, key string) float64 {
 }
 
 // SparkColumn builds the standard enrichment sparkline column: a braille
-// mini-graph of the batched series, sortable by its latest value.
-func SparkColumn(title, alias string, width int) Column {
+// mini-graph of the batched series with the latest value right-aligned
+// beside it, sortable by that value. Both belong in the cell — the mini
+// graph is normalized to its own range, so the shape alone cannot tell a
+// flat 3% from a flat 90%. unit renders the value via FormatUnitShort
+// ("" = bare count).
+func SparkColumn(title, alias string, width int, unit string) Column {
 	key := EnrichKey(alias)
+	const graphW = 8
 	return Column{
 		Title: title,
 		Width: width,
 		Class: func(string) string { return "spark" },
 		Value: func(rec map[string]any) string {
-			return output.MiniGraph(FloatSeries(rec[key]), width)
+			series := FloatSeries(rec[key])
+			if len(series) == 0 {
+				return ""
+			}
+			value := FormatUnitShort(series[len(series)-1], unit)
+			return fmt.Sprintf("%s %*s", output.MiniGraph(series, graphW), width-graphW-1, value)
 		},
 		Sort: func(rec map[string]any) any {
 			if last := SeriesLast(rec, key); !math.IsNaN(last) {
@@ -236,5 +246,89 @@ func SparkColumn(title, alias string, width int) Column {
 			}
 			return nil
 		},
+	}
+}
+
+// FormatUnit renders a metric value in its series unit ("B" gets IEC bytes,
+// "B/s" a rate, durations ("µs", "ms", "s") scale adaptively, "%" attaches
+// its suffix, anything else appends the unit label).
+func FormatUnit(f float64, unit string) string {
+	switch unit {
+	case "%":
+		return formatMetric(f) + "%"
+	case "B":
+		if f >= 0 {
+			return FormatBytes(int64(f))
+		}
+		return formatMetric(f) + " B"
+	case "B/s":
+		if f >= 0 {
+			return FormatBytes(int64(f)) + "/s"
+		}
+		return formatMetric(f) + " B/s"
+	case "µs":
+		return fmtSeconds(f / 1e6)
+	case "ms":
+		return fmtSeconds(f / 1e3)
+	case "s":
+		return fmtSeconds(f)
+	case "":
+		return formatMetric(f)
+	default:
+		return formatMetric(f) + " " + unit
+	}
+}
+
+// FormatUnitShort is FormatUnit for dense table cells: percent keeps one
+// decimal ("26.8%"), bytes drop the space ("69.9MiB"), millicores use the
+// k8s suffix ("500m"), everything else matches FormatUnit.
+func FormatUnitShort(f float64, unit string) string {
+	switch unit {
+	case "%":
+		if f == math.Trunc(f) {
+			return fmt.Sprintf("%.0f%%", f)
+		}
+		return fmt.Sprintf("%.1f%%", f)
+	case "B":
+		if f >= 0 {
+			return strings.ReplaceAll(FormatBytes(int64(f)), " ", "")
+		}
+	case "B/s":
+		if f >= 0 {
+			return strings.ReplaceAll(FormatBytes(int64(f)), " ", "") + "/s"
+		}
+	case "mCores":
+		return formatMetric(f) + "m"
+	}
+	return FormatUnit(f, unit)
+}
+
+// fmtSeconds renders a duration given in seconds at a readable magnitude
+// (Grail serves response times in µs, OTel histograms in s — both land here).
+func fmtSeconds(f float64) string {
+	abs := math.Abs(f)
+	switch {
+	case abs >= 1 || abs == 0:
+		return formatMetric(f) + " s"
+	case abs >= 1e-3:
+		return formatMetric(f*1e3) + " ms"
+	default:
+		return formatMetric(f*1e6) + " µs"
+	}
+}
+
+// formatMetric renders a bare metric value at a readable magnitude.
+func formatMetric(f float64) string {
+	switch {
+	case math.Abs(f) >= 1_000_000_000:
+		return fmt.Sprintf("%.1fG", f/1_000_000_000)
+	case math.Abs(f) >= 1_000_000:
+		return fmt.Sprintf("%.1fM", f/1_000_000)
+	case math.Abs(f) >= 10_000:
+		return fmt.Sprintf("%.1fk", f/1_000)
+	case f == math.Trunc(f):
+		return fmt.Sprintf("%.0f", f)
+	default:
+		return fmt.Sprintf("%.2f", f)
 	}
 }

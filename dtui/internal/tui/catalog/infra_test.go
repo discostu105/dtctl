@@ -118,6 +118,23 @@ func TestProcessTech(t *testing.T) {
 	if got := processTech(rec); got != "jvm" {
 		t.Errorf("processTech with runtime list = %q", got)
 	}
+	// Container runtimes only win when nothing else is detected — the CONT
+	// column already tells the containerized story.
+	mixed := map[string]any{
+		"process.software_technologies": []any{
+			map[string]any{"type": "CONTAINERD"},
+			map[string]any{"type": "GO"},
+		},
+	}
+	if got := processTech(mixed); got != "go" {
+		t.Errorf("processTech should skip container runtimes, got %q", got)
+	}
+	only := map[string]any{
+		"process.software_technologies": []any{map[string]any{"type": "CONTAINERD"}},
+	}
+	if got := processTech(only); got != "containerd" {
+		t.Errorf("processTech fallback = %q", got)
+	}
 }
 
 func TestVitalsFor(t *testing.T) {

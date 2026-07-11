@@ -784,10 +784,12 @@ func (v *inspectorView) rebuild() {
 
 func (v *inspectorView) addLine(line string) { v.lines = append(v.lines, line) }
 
-// addVitalRows renders the entity page's vitals block: one row per curated
-// utilization series — label, sparkline, latest value, avg/max over the
-// window. Enter on a row opens the metric's explorer chart scoped to the
-// entity (aggregation cycling, dimension splits). Absent while loading or
+// addVitalRows renders the entity page's vitals block btop-style: one row
+// per curated utilization series — label, sparkline (the trend), a
+// load-colored gauge for percent metrics (the absolute story a normalized
+// sparkline can't tell), the latest value, and avg/max over the window.
+// Enter on a row opens the metric's explorer chart scoped to the entity
+// (aggregation cycling, dimension splits). Absent while loading or
 // unavailable: the block must never noise up the page.
 func (v *inspectorView) addVitalRows() {
 	if len(v.vitals) == 0 {
@@ -796,17 +798,32 @@ func (v *inspectorView) addVitalRows() {
 	v.addLine("")
 	v.addLine(theme.Section("vitals (last " + v.vitalsWindow + ")"))
 	labelW := 14
+	hasPct := false
 	for _, s := range v.vitals {
 		if n := len(s.title); n > labelW {
 			labelW = n
 		}
+		if s.unit == "%" {
+			hasPct = true
+		}
 	}
+	const meterW = 12
 	for _, s := range v.vitals {
 		_, maxV, avg, last := seriesStats(s.series)
 		label := strings.ToLower(s.title)
+		valText := fmt.Sprintf("%11s", fmtUnit(last, s.unit))
+		gauge, value := "", theme.HeaderVal.Render(valText)
+		switch {
+		case s.unit == "%":
+			gauge = "  " + meter(last, meterW)
+			value = theme.Class(pctClass(last), valText)
+		case hasPct:
+			// Blank gauge slot so the value column stays aligned when the
+			// block mixes percent and absolute rows.
+			gauge = "  " + strings.Repeat(" ", meterW)
+		}
 		line := " " + theme.FactLabel.Render(fmt.Sprintf("%-*s", labelW, label)) + "  " +
-			theme.Chart.Render(output.MiniGraph(s.series, 16)) + "  " +
-			theme.HeaderVal.Render(fmt.Sprintf("%9s", fmtUnit(last, s.unit))) +
+			theme.Chart.Render(output.MiniGraph(s.series, 16)) + gauge + "  " + value +
 			theme.Dim.Render(fmt.Sprintf("   avg %s · max %s", fmtUnit(avg, s.unit), fmtUnit(maxV, s.unit)))
 		var entity *catalog.Entity
 		if v.entity != nil {
@@ -815,6 +832,32 @@ func (v *inspectorView) addVitalRows() {
 		}
 		v.addActionRow("__vital."+s.key, label, line,
 			metricChartMsg{key: s.key, entity: entity}, "chart "+label, fmtUnit(last, s.unit))
+	}
+}
+
+// meter renders a btop-style 0-100 gauge: the filled span is colored by how
+// loaded the value is (calm green, warn from 75%, loud from 90%).
+func meter(pct float64, width int) string {
+	filled := int(pct/100*float64(width) + 0.5)
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	return theme.Class(pctClass(pct), strings.Repeat("█", filled)) +
+		theme.Track.Render(strings.Repeat("░", width-filled))
+}
+
+// pctClass grades a percent value into the semantic cell classes.
+func pctClass(p float64) string {
+	switch {
+	case p >= 90:
+		return "error"
+	case p >= 75:
+		return "warn"
+	default:
+		return "ok"
 	}
 }
 

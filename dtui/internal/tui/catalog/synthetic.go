@@ -46,7 +46,7 @@ var syntheticSpec = &Spec{
 	Columns: []Column{
 		{Title: "NAME", Field: "entity.name"},
 		{Title: "TYPE", Width: 7, Field: "monitor.type"},
-		SparkColumn("AVAILABILITY", "avail", 12),
+		SparkColumn("AVAILABILITY", "avail", 14, "%"),
 		{Title: "TAGS", Width: 20, Value: func(rec map[string]any) string { return FormatValue(rec["tags"]) }},
 		{Title: "ID", Width: 28, Field: "id"},
 		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},

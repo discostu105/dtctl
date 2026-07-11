@@ -52,8 +52,8 @@ var processesSpec = &Spec{
 	},
 	Columns: []Column{
 		{Title: "NAME", Field: "name"},
-		SparkColumn("CPU", "cpu", 8),
-		SparkColumn("MEM", "mem", 8),
+		SparkColumn("CPU", "cpu", 14, "%"),
+		SparkColumn("MEM", "mem", 14, "%"),
 		{Title: "TECH", Width: 10, Value: processTech},
 		{Title: "CONT", Width: 4, Value: processContainerized},
 		{Title: "HOST", Field: "host.name", Width: 28},
@@ -74,19 +74,29 @@ var processesSpec = &Spec{
 	},
 }
 
-// processTech names the process' first detected technology, lowercased
-// ("go", "jvm", "containerd"). Runtime technologies win over OS-level ones.
+// processTech names the process' detected technology, lowercased ("go",
+// "jvm"). The language runtime is the interesting one: container runtimes
+// (every containerized process carries CONTAINERD) only win when nothing
+// else is detected — the CONT column already tells that story.
 func processTech(rec map[string]any) string {
+	fallback := ""
 	for _, key := range []string{"process.software_technologies", "process.software_technologies.os"} {
 		arr, _ := rec[key].([]any)
 		for _, e := range arr {
 			m, _ := e.(map[string]any)
-			if t := Str(m, "type"); t != "" {
+			t := Str(m, "type")
+			switch t {
+			case "":
+			case "CONTAINERD", "DOCKER", "CRI_O", "PODMAN":
+				if fallback == "" {
+					fallback = t
+				}
+			default:
 				return strings.ToLower(t)
 			}
 		}
 	}
-	return ""
+	return strings.ToLower(fallback)
 }
 
 // processContainerized marks containerized processes with a dot.
@@ -131,8 +141,8 @@ var containersSpec = &Spec{
 	},
 	Columns: []Column{
 		{Title: "NAME", Field: "name"},
-		SparkColumn("CPU", "cpu", 8),
-		SparkColumn("MEM", "mem", 8),
+		SparkColumn("CPU", "cpu", 15, "mCores"),
+		SparkColumn("MEM", "mem", 17, "B"),
 		{Title: "IMAGE", Width: 30, Value: containerImage},
 		{Title: "POD", Field: "k8s.pod.name", Width: 28},
 		{Title: "SEEN", Width: 5, Right: true, Value: lifetimeAge},
