@@ -40,6 +40,43 @@ dtui --context prod   # session-local override, never persisted
 dtui keeps its own UI state (navigation history) under
 `~/.local/state/dtui/`.
 
+### Workspace file (`.dynatrace.yaml`)
+
+Commit a `.dynatrace.yaml` to a software project and every developer who runs
+`dtui` inside that workspace (any subdirectory — the file is found by walking
+up, like `.git`) lands in the right context automatically: the project's
+filter segments pre-selected, the right environment, view, and timeframe.
+
+```yaml
+# .dynatrace.yaml — Dynatrace workspace defaults for this repository.
+version: 1
+
+# Pick the dtctl context whose environment URL matches (session-local;
+# --context wins; no match = warning, your current context stays active).
+environment: https://abc12345.apps.dynatrace.com
+
+# Initial view (the CLI argument wins) and default timeframe (<n>m/<n>h/<n>d).
+view: pods
+timeframe: 2h
+
+# Grail filter segments applied to every DQL-backed view (max 10,
+# AND-combined). Reference by name or UID; names must match exactly
+# (case-insensitive) — ambiguous or unknown names warn instead of guessing.
+segments:
+  - payments-prod
+  - segment: 4lpVjcpcsjd
+    variables:
+      environment: [production]
+```
+
+Guarantees: the file carries **no credentials, contexts, or executable keys**
+by construction — it can only narrow what a session shows, never change what
+it can do. It merges on top of your personal dtctl config (unlike a local
+`.dtctl.yaml`, which replaces it), is applied session-locally, has no
+environment-variable expansion, and a broken file degrades to a startup
+warning — never a failed launch. In the TUI, `S` opens the segment picker to
+change or clear the selection at any time.
+
 ## Documentation
 
 - [docs/TUI_DESIGN.md](docs/TUI_DESIGN.md) — design: view catalog, navigation

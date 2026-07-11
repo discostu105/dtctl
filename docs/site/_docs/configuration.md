@@ -146,6 +146,14 @@ Commit the file to version control without secrets -- each developer or CI syste
 > built-in command (e.g. `get`, `apply`, `version`) regardless of where it is
 > defined.
 
+> **Not to be confused with `.dynatrace.yaml`.** A local `.dtctl.yaml` is a
+> full dtctl config that *replaces* the global one. The separate
+> [`.dynatrace.yaml` workspace file]({{ site.baseurl }}/docs/segments/#workspace-file-dynatraceyaml)
+> is a committable project descriptor read by the TUI: it *merges on top* of
+> your normal config and can only pre-select filter segments, an environment,
+> a view, and a timeframe — it cannot define contexts, tokens, aliases, or
+> hooks at all.
+
 ## Safety Levels
 
 Safety levels provide **client-side** protection against accidental destructive operations:

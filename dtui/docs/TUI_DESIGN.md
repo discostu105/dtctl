@@ -155,11 +155,13 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 ### Management views (assets — secondary)
 
 The existing generic resource browser: `:slos`, `:workflows` (+ executions with
-live log follow), `:dashboards`, `:notebooks`, `:documents`, `:segments`,
+live log follow), `:dashboards`, `:notebooks`, `:documents`,
 `:buckets`, `:detectors`, `:settings`, `:extensions`, `:edgeconnects`,
 `:users`, `:groups`, … — one `ResourceView` implementation configured per type
 from the existing `pkg/resources/<name>` display fields. These get list /
 filter / describe / open / edit / delete / exec, but no bespoke layouts.
+(`:segments` is taken: it opens the segment *picker* — the global scope of
+section 4 below — not a management table; managing segments stays in the CLI.)
 
 ---
 
@@ -227,6 +229,23 @@ pod → workload → namespace → the sibling workload that's actually broken.
   specific).
 - `t` opens the **timeframe picker** (30m / 2h / 24h / 7d / custom); the active
   timeframe is global and applies to every metric column and signal view.
+- `S` (or `:segments`) opens the **segment picker** — a multi-select over the
+  tenant's Grail filter segments (space toggles, enter applies, up to 10,
+  AND-combined per Grail semantics). Applied segments are the fourth global
+  state (context, timeframe, pin, segments): they live on the shared
+  `dataSource` and are injected into **every** DQL query as `filterSegments`
+  on `query:execute`, so all views honor them with zero per-view plumbing; a
+  change just broadcasts `Refresh()`. The header shows `◐ <name> [+N]`,
+  dimmed on API-backed views (slos/detectors/log-patterns bypass
+  `query:execute`, so the scope can't reach them and `jumpTo` says so). A
+  project's `.dynatrace.yaml` — found by walking up from the cwd, committable
+  to the repo — pre-selects segments at startup: resolved async against the
+  tenant list by exact UID, then exact case-insensitive name; unknown or
+  ambiguous refs warn instead of guessing. Segments with variables get their
+  bindings from the workspace file; a missing binding surfaces Grail's
+  `FILTER_SEGMENT_REQUIRES_VARIABLE` error rewritten with TUI remedies
+  instead of CLI flags. The workspace file can also set the startup view,
+  timeframe, and preferred environment (see the dtui README).
 
 ### 5. Movement & recall
 

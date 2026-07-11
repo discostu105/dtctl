@@ -161,3 +161,35 @@ Segments support multiple aliases for convenience:
 | `create`   | `segment`    | `seg`, `filter-segment`                  |
 | `edit`     | `segment`    | `seg`, `filter-segment`                  |
 | `delete`   | `segment`    | `segments`, `seg`, `filter-segment`, `filter-segments` |
+
+## Workspace File (`.dynatrace.yaml`)
+
+Commit a `.dynatrace.yaml` to a software project to give every developer the
+right Dynatrace context when they run the interactive TUI (`dtui` / `dtctl
+tui`) inside that workspace. The file is discovered by walking up from the
+current directory (like `.git`) and pre-selects filter segments — plus,
+optionally, the environment, initial view, and timeframe:
+
+```yaml
+# .dynatrace.yaml — Dynatrace workspace defaults for this repository.
+version: 1
+environment: https://abc12345.apps.dynatrace.com  # match a context session-locally
+view: pods                                        # CLI argument wins
+timeframe: 2h                                     # <n>m / <n>h / <n>d
+segments:
+  - payments-prod              # by name (exact, case-insensitive)…
+  - segment: 4lpVjcpcsjd       # …or by UID
+    variables:
+      environment: [production]
+```
+
+The selected segments apply to every DQL-backed view in the TUI (max 10,
+AND-combined), and `S` opens the segment picker to change or clear them at any
+time. The file carries no credentials, contexts, or executable keys by
+construction, and it merges on top of your personal dtctl config — unlike a
+local [`.dtctl.yaml`]({{ site.baseurl }}/docs/configuration/), which replaces
+it. A broken or unresolvable file degrades to a startup warning, never a
+failed launch.
+
+The workspace file is read by the TUI only for now; `dtctl query` keeps
+explicit `-S` flags (CLI adoption is planned).
