@@ -30,13 +30,27 @@ func TestProcessesSpecScoping(t *testing.T) {
 		t.Errorf("pod scope missing metadata filter:\n%s", pod)
 	}
 
+	// A service scope joins through its runs_on edges — process nodes carry
+	// no service field to filter by (ServiceRunsOnStage).
+	svc := spec.Query(Scope{Timeframe: tf,
+		Entity: &Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"}})
+	for _, want := range []string{
+		`| join [smartscapeEdges "*" | filter source_id == toSmartscapeId("SERVICE-1") and type == "runs_on"`,
+		"on:{left[id] == right[target_id]}, kind:inner",
+		"| fieldsRemove right.target_id",
+	} {
+		if !strings.Contains(svc, want) {
+			t.Errorf("service scope missing %q:\n%s", want, svc)
+		}
+	}
+
 	// An incompatible or unnamed entity must not narrow the list at all —
 	// CanScope's honesty rule.
 	unscoped := spec.Query(Scope{Timeframe: tf})
-	svc := spec.Query(Scope{Timeframe: tf,
-		Entity: &Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"}})
-	if svc != unscoped {
-		t.Errorf("service scope should not compose:\n%s", svc)
+	fe := spec.Query(Scope{Timeframe: tf,
+		Entity: &Entity{ID: "FRONTEND-1", Name: "shop-ui", Type: "FRONTEND"}})
+	if fe != unscoped {
+		t.Errorf("frontend scope should not compose:\n%s", fe)
 	}
 	if !strings.Contains(unscoped, `smartscapeNodes "PROCESS"`) || !strings.Contains(unscoped, "| limit 500") {
 		t.Errorf("unscoped query = %s", unscoped)
@@ -76,6 +90,13 @@ func TestContainersSpecScoping(t *testing.T) {
 		Entity: &Entity{ID: "K8S_DEPLOYMENT-1", Name: "checkout", Type: "K8S_DEPLOYMENT"}})
 	if !strings.Contains(wl, `k8s.workload.kind == "deployment" and k8s.workload.name == "checkout"`) {
 		t.Errorf("workload scope missing kind+name filter:\n%s", wl)
+	}
+
+	// A service scope joins through its runs_on edges, like processes.
+	svc := spec.Query(Scope{Timeframe: tf,
+		Entity: &Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"}})
+	if !strings.Contains(svc, `source_id == toSmartscapeId("SERVICE-1") and type == "runs_on"`) {
+		t.Errorf("service scope missing runs_on join:\n%s", svc)
 	}
 
 	enrich := spec.Enrich.Query(tf, []string{"CONTAINER-1"})

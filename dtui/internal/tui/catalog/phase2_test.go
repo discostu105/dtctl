@@ -66,6 +66,19 @@ func TestPodsQueryComposition(t *testing.T) {
 	if !strings.Contains(byWL, `k8s.workload.kind == "statefulset" and k8s.workload.name == "kafka"`) {
 		t.Errorf("workload scope not composed:\n%s", byWL)
 	}
+
+	// A service scope has no pod-side field to filter by; it joins through
+	// the service's runs_on edges instead (validated live on two tenants).
+	bySvc := spec.Query(fixtureScope(&Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"}))
+	for _, want := range []string{
+		`| join [smartscapeEdges "*" | filter source_id == toSmartscapeId("SERVICE-1") and type == "runs_on"`,
+		"on:{left[id] == right[target_id]}, kind:inner",
+		"| fieldsRemove right.target_id",
+	} {
+		if !strings.Contains(bySvc, want) {
+			t.Errorf("service scope missing %q:\n%s", want, bySvc)
+		}
+	}
 }
 
 func TestWorkloadsQueryCoalescesDaemonSetStatus(t *testing.T) {

@@ -402,6 +402,8 @@ Every detail page shares one chrome:
   The signal keys (`l s m p v`) keep their global meaning — they *leave* the
   page into a full, pre-scoped signal view. Rule of thumb: tabs answer "what
   is this thing's state?", signal keys answer "let me dig into its telemetry".
+  Curated tabs come first (containment, then metrics and the signals); the
+  **related** tab — the full unranked edge list — is always the last tab.
 - **Lazy tabs**: each tab loads on first focus (spinner per tab), so opening a
   detail page costs one query, not five.
 - Every chart on a tab is a `timeseries` query over the global timeframe;
@@ -456,6 +458,16 @@ spans. The page is therefore chart- and span-driven.
 | **Infrastructure** | where it runs, as an indented tree: pods → containers → nodes → hosts; each row `enter`-able | Smartscape `runs_on` / `belongs_to` edges (verified: SERVICE runs_on K8S_POD/CONTAINER/HOST/PROCESS) |
 | **Problems** | problems whose affected entities include this service | `dt.davis.problems` filtered on `affected_entity_ids` |
 
+> **Shipped**: the deployment surface is two pre-scoped real tabs right after
+> the details — **pods** and **processes** (full list views: phase/ready,
+> sparklines, drills). A service's runtime nodes carry no service field to
+> filter by, so the scope is a topology join, validated live on two tenants:
+> `smartscapeNodes "K8S_POD" | join [smartscapeEdges "*" | filter source_id ==
+> toSmartscapeId(<svc>) and type == "runs_on" | fields target_id],
+> on:{left[id] == right[target_id]}, kind:inner` (`ServiceRunsOnStage`). The
+> same join lets a SERVICE pin scope `:pods`, `:processes` and `:containers`.
+> Containers and hosts stay one hop away on the related tab.
+
 `u` lists SLOs targeting the service; `s` opens the full traces view scoped to
 it; `x` walks `calls` edges (callers/callees).
 
@@ -469,7 +481,7 @@ namespace — enough for a btop-style page.
 > **Shipped**: the details tab carries a **vitals block** (CPU %, memory %,
 > worst-disk %, net rx/tx sparklines with last/avg/max; enter charts the
 > metric) and a pre-scoped **processes** tab is the first tab after the
-> details (`Vital` series flags + `containmentTab` in the code). Disks and
+> details (`Vital` series flags + `containmentTabs` in the code). Disks and
 > Network stay future tabs; a host's containers are reachable via `:containers`
 > and the related tab.
 
@@ -1073,7 +1085,7 @@ what the numbers on screen say; no numbers visible → global bookmarks.**
 
 - **Exactly one strip on screen is numbered — the innermost one — and the
   digits address it.** Detail and problem pages show digit labels on their
-  tab bar (`1 details  2 related …`) and `1`–`9` switch tabs directly.
+  tab bar (`1 details  2 processes … 7 related`) and `1`–`9` switch tabs directly.
   When the active tab's table shows its own lens strip, the numbering
   moves down to it (`1 roots  2 errors … 9 all` — the tab bar drops its
   numbers) and the digits pick lenses; tab/shift+tab and the drill

@@ -301,19 +301,22 @@ type pulseOwner struct{ v *detailView }
 type vitalsProbeOwner struct{ v *detailView }
 type vitalsOwner struct{ v *detailView }
 
-// containmentTab names each type's most relevant next entity — the
-// opinionated first hop (a host's processes, a pod's containers) served as a
-// pre-scoped table on the first tab after the details. The related tab keeps
-// the full unranked edge list for everything else.
-var containmentTab = map[string]string{
-	"HOST":            "processes",
-	"K8S_POD":         "containers",
-	"K8S_NODE":        "pods",
-	"K8S_DEPLOYMENT":  "pods",
-	"K8S_STATEFULSET": "pods",
-	"K8S_DAEMONSET":   "pods",
-	"K8S_NAMESPACE":   "workloads",
-	"K8S_CLUSTER":     "nodes",
+// containmentTabs names each type's most relevant next entities — the
+// opinionated first hops (a host's processes, a pod's containers) served as
+// pre-scoped tables on the first tabs after the details. A service gets its
+// deployment surface — the pods and processes it runs on, joined through its
+// runs_on edges. The related tab keeps the full unranked edge list for
+// everything else.
+var containmentTabs = map[string][]string{
+	"HOST":            {"processes"},
+	"SERVICE":         {"pods", "processes"},
+	"K8S_POD":         {"containers"},
+	"K8S_NODE":        {"pods"},
+	"K8S_DEPLOYMENT":  {"pods"},
+	"K8S_STATEFULSET": {"pods"},
+	"K8S_DAEMONSET":   {"pods"},
+	"K8S_NAMESPACE":   {"workloads"},
+	"K8S_CLUSTER":     {"nodes"},
 }
 
 func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf catalog.Timeframe) *detailView {
@@ -327,20 +330,16 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 	v.tabs = []detailTab{
 		{name: "details", view: newEntityInfoView(ds, entity, rec)},
 	}
-	// The type's most relevant next entity, first tab after the details: a
-	// host's processes, a pod's containers, a node's pods — pre-scoped real
-	// tables (sparklines, sorting, drills), not raw edges. Note a host's
-	// pods still live one hop out (host → related → its K8S_NODE → pods):
-	// pods edge to the node in Smartscape, not to the host.
-	if name := containmentTab[entity.Type]; name != "" {
+	// The type's most relevant next entities, first tabs after the details:
+	// a host's processes, a pod's containers, a service's pods and processes
+	// — pre-scoped real tables (sparklines, sorting, drills), not raw edges.
+	// Note a host's pods still live one hop out (host → related → its
+	// K8S_NODE → pods): pods edge to the node in Smartscape, not to the host.
+	for _, name := range containmentTabs[entity.Type] {
 		if spec := catalog.Lookup(name); spec != nil {
 			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, scope)})
 		}
 	}
-	// Every entity's topology neighbors, one tab away: a host's containers
-	// and K8s node, a service's callers. enter navigates to the neighbor, x
-	// keeps walking.
-	v.tabs = append(v.tabs, detailTab{name: "related", view: newEmbeddedRelationsView(ds, entity, tf)})
 	// Every entity gets a metrics tab: the canned charts where a type has
 	// them (enter opens the explorer from there), the scoped metric explorer
 	// where it doesn't.
@@ -370,6 +369,11 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, tabScope)})
 		}
 	}
+	// Every entity's topology neighbors, on the last tab: a host's containers
+	// and K8s node, a service's callers. enter navigates to the neighbor, x
+	// keeps walking. Last because the curated tabs answer the common
+	// questions; the raw edge list is the fallback for everything else.
+	v.tabs = append(v.tabs, detailTab{name: "related", view: newEmbeddedRelationsView(ds, entity, tf)})
 	v.adoptTabs()
 	return v
 }

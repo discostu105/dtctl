@@ -82,7 +82,7 @@ func TestDetailVitalsAbsentWhenNothingReports(t *testing.T) {
 }
 
 // TestDetailContainmentTabs: each curated type carries its most relevant
-// next entity as the pre-scoped first tab after the details.
+// next entities as pre-scoped first tabs after the details.
 func TestDetailContainmentTabs(t *testing.T) {
 	ds := &dataSource{runFn: func(string) ([]map[string]any, error) { return nil, nil }}
 	cases := []struct {
@@ -92,6 +92,8 @@ func TestDetailContainmentTabs(t *testing.T) {
 	}{
 		{catalog.Entity{ID: "HOST-1", Name: "web-01", Type: "HOST"},
 			"processes", `host.name == "web-01"`},
+		{catalog.Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"},
+			"pods", `source_id == toSmartscapeId("SERVICE-1") and type == "runs_on"`},
 		{catalog.Entity{ID: "K8S_POD-1", Name: "checkout-abc", Type: "K8S_POD"},
 			"containers", `k8s.pod.name == "checkout-abc"`},
 		{catalog.Entity{ID: "K8S_NODE-1", Name: "node-a", Type: "K8S_NODE"},
@@ -119,9 +121,24 @@ func TestDetailContainmentTabs(t *testing.T) {
 		}
 	}
 
-	// Types without a curated next entity keep related as the second tab.
-	dv := newDetailView(ds, catalog.Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"}, nil, catalog.DefaultTimeframe)
-	if dv.tabs[1].name != "related" {
-		t.Errorf("SERVICE: tabs[1] = %s, want related", dv.tabs[1].name)
+	// A service's deployment surface spans two tabs — pods, then processes —
+	// both joined through its runs_on edges.
+	svc := newDetailView(ds, catalog.Entity{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"}, nil, catalog.DefaultTimeframe)
+	if svc.tabs[2].name != "processes" {
+		t.Errorf("SERVICE: tabs[2] = %s, want processes", svc.tabs[2].name)
+	}
+
+	// The related tab — the full unranked edge list — is the LAST tab on
+	// every detail page, curated types and uncurated alike.
+	for _, e := range []catalog.Entity{
+		{ID: "SERVICE-1", Name: "checkout", Type: "SERVICE"},
+		{ID: "HOST-1", Name: "web-01", Type: "HOST"},
+		{ID: "FRONTEND-1", Name: "shop-ui", Type: "FRONTEND"},
+		{ID: "AWS_X-1", Name: "x", Type: "AWS_X"},
+	} {
+		dv := newDetailView(ds, e, nil, catalog.DefaultTimeframe)
+		if last := dv.tabs[len(dv.tabs)-1].name; last != "related" {
+			t.Errorf("%s: last tab = %s, want related", e.Type, last)
+		}
 	}
 }

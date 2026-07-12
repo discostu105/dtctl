@@ -105,6 +105,22 @@ func BuildEdges(selfID string, records []map[string]any) []Edge {
 	return out
 }
 
+// ServiceRunsOnStage renders the DQL stages that narrow a smartscapeNodes
+// list to the runs_on targets of a service — its deployment surface (pods,
+// containers, processes, hosts). A service is a detection construct: its
+// runtime nodes carry no service field to filter by, so the scope is a
+// topology join (validated live on two tenants: join composes on smartscape
+// commands with left[id] == right[target_id]). The stray right.target_id the
+// join adds is removed so it never leaks into records or facets. "" for
+// non-service entities.
+func ServiceRunsOnStage(e Entity) string {
+	if e.Type != "SERVICE" {
+		return ""
+	}
+	return fmt.Sprintf(`| join [smartscapeEdges "*" | filter source_id == toSmartscapeId(%q) and type == "runs_on" | fields target_id | limit %d], on:{left[id] == right[target_id]}, kind:inner
+| fieldsRemove right.target_id`, e.ID, EdgeQueryLimit)
+}
+
 // LogHopQuery resolves the runtime entities a service runs on — the
 // processes and containers whose IDs log records actually carry. Logs are
 // emitted by processes, not services (a service is a detection construct),

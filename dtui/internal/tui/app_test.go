@@ -189,9 +189,11 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 		t.Fatalf("processes tab should be scoped to the host, dql = %q", procs.dql)
 	}
 
-	// Another tab reaches related and lazily starts its edge walk.
-	press(a, key("tab"))
-	rv, ok := dv.tabs[2].view.(*relationsView)
+	// shift+tab wraps backwards past details to the page's LAST tab —
+	// related everywhere — and lazily starts its edge walk.
+	press(a, key("shift+tab"))
+	press(a, key("shift+tab"))
+	rv, ok := dv.tabs[len(dv.tabs)-1].view.(*relationsView)
 	if !ok || !strings.Contains(rv.dql, `source_id == toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Fatalf("related tab dql = %q", rv.dql)
 	}
@@ -200,7 +202,7 @@ func TestEnterOnEntityRowOpensDetailTabs(t *testing.T) {
 	// starts its availability probe (the chart query follows once the probe
 	// returns).
 	press(a, key("m"))
-	mv, ok := dv.tabs[3].view.(*metricsView)
+	mv, ok := dv.tabs[2].view.(*metricsView)
 	if !ok || !strings.Contains(mv.dql, "metrics from:") ||
 		!strings.Contains(mv.dql, `toSmartscapeId("HOST-AAAABBBBCCCCDDDD")`) {
 		t.Fatalf("metrics tab dql = %q", mv.dql)
@@ -267,11 +269,10 @@ func TestHostDetailRelatedTab(t *testing.T) {
 	press(a, key("enter"))
 	dv := a.top().(*detailView)
 
-	press(a, key("tab")) // processes (the containment tab)
-	press(a, key("tab")) // related
+	press(a, key("shift+tab")) // related — the last tab, one wrap away
 	rv, ok := dv.tabs[dv.active].view.(*relationsView)
 	if !ok {
-		t.Fatalf("tab tab should activate the related tab, view = %T", dv.tabs[dv.active].view)
+		t.Fatalf("shift+tab should activate the related tab, view = %T", dv.tabs[dv.active].view)
 	}
 
 	dv.Update(dataMsg{owner: rv, seq: rv.seq, records: []map[string]any{

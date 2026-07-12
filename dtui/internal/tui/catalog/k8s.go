@@ -46,6 +46,10 @@ var podsSpec = &Spec{
 		if s.Entity != nil {
 			if f := k8sScopeFilter(*s.Entity); f != "" {
 				fmt.Fprintf(&b, "\n| filter %s", f)
+			} else if j := ServiceRunsOnStage(*s.Entity); j != "" {
+				// A service's pods — where it is deployed — join through its
+				// runs_on edges (pods carry no service field).
+				b.WriteString("\n" + j)
 			}
 		}
 		b.WriteString(`

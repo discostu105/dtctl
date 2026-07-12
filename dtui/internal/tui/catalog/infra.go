@@ -9,7 +9,8 @@ import (
 // host or pod page drills into. Scoping is by the plain join fields the
 // Smartscape nodes carry (validated live): processes and containers carry
 // host.name; containers carry the k8s.* names; a process' pod name lives in
-// process.metadata[KUBERNETES_FULL_POD_NAME].
+// process.metadata[KUBERNETES_FULL_POD_NAME]. A service scope has no such
+// field and joins through its runs_on edges instead (ServiceRunsOnStage).
 
 // processScopeFilter narrows the process list to the entity drilled in from.
 // Name-based matching mirrors k8sScopeFilter — server-side narrowing matters
@@ -45,6 +46,10 @@ var processesSpec = &Spec{
 		if s.Entity != nil {
 			if f := processScopeFilter(*s.Entity); f != "" {
 				fmt.Fprintf(&b, "\n| filter %s", f)
+			} else if j := ServiceRunsOnStage(*s.Entity); j != "" {
+				// A service's processes — where it is deployed — join through
+				// its runs_on edges (processes carry no service field).
+				b.WriteString("\n" + j)
 			}
 		}
 		b.WriteString("\n| fieldsRemove references\n| sort name asc\n| limit 500")
@@ -134,6 +139,8 @@ var containersSpec = &Spec{
 		if s.Entity != nil {
 			if f := containerScopeFilter(*s.Entity); f != "" {
 				fmt.Fprintf(&b, "\n| filter %s", f)
+			} else if j := ServiceRunsOnStage(*s.Entity); j != "" {
+				b.WriteString("\n" + j)
 			}
 		}
 		b.WriteString("\n| fieldsRemove references\n| sort name asc\n| limit 500")

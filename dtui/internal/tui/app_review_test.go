@@ -19,14 +19,13 @@ func serviceRow() map[string]any {
 	return map[string]any{"id": "SERVICE-1", "name": "checkout", "type": "SERVICE"}
 }
 
-// Finding #1: pinning a SERVICE then jumping to :pods must NOT scope the pod
-// list (k8sScopeFilter can't compose a SERVICE) — and the crumb must not claim
-// it does.
+// Finding #1: pinning an entity no scope filter composes (a PROCESS on
+// :pods) must NOT scope the pod list — and the crumb must not claim it does.
 func TestIncompatiblePinIsNotAppliedOrClaimed(t *testing.T) {
-	a := testApp(t, "services")
-	seedRows(t, a, []map[string]any{serviceRow()})
-	press(a, key(".")) // pin the service
-	if a.pin == nil || a.pin.Type != "SERVICE" {
+	a := testApp(t, "processes")
+	seedRows(t, a, []map[string]any{{"id": "PROCESS-1", "name": "engine", "type": "PROCESS"}})
+	press(a, key(".")) // pin the process
+	if a.pin == nil || a.pin.Type != "PROCESS" {
 		t.Fatalf("pin = %+v", a.pin)
 	}
 
@@ -36,16 +35,44 @@ func TestIncompatiblePinIsNotAppliedOrClaimed(t *testing.T) {
 		t.Fatalf("hotkey 4 → %v", a.top().Crumb())
 	}
 	if pods.scope.Entity != nil {
-		t.Errorf("SERVICE pin must not be injected into pods scope: %+v", pods.scope.Entity)
+		t.Errorf("PROCESS pin must not be injected into pods scope: %+v", pods.scope.Entity)
 	}
-	if strings.Contains(pods.dql, "SERVICE") || strings.Contains(pods.dql, "checkout") {
+	if strings.Contains(pods.dql, "PROCESS") || strings.Contains(pods.dql, "engine") {
 		t.Errorf("pods query must not be filtered by an incompatible pin:\n%s", pods.dql)
 	}
-	if strings.Contains(pods.Crumb(), "checkout") {
+	if strings.Contains(pods.Crumb(), "engine") {
 		t.Errorf("crumb must not claim a scope that was not applied: %q", pods.Crumb())
 	}
 	if a.status == "" || !a.statusErr {
 		t.Errorf("user should be told the pin was ignored, status = %q", a.status)
+	}
+}
+
+// A SERVICE pin on :pods composes since the deployment surface landed: the
+// pod list joins through the service's runs_on edges, and the crumb claims
+// the applied scope.
+func TestServicePinScopesPodsViaEdgeJoin(t *testing.T) {
+	a := testApp(t, "services")
+	seedRows(t, a, []map[string]any{serviceRow()})
+	press(a, key(".")) // pin the service
+	press(a, key("4")) // hotkey → pods
+	pods, ok := a.top().(*tableView)
+	if !ok || pods.spec.Name != "pods" {
+		t.Fatalf("hotkey 4 → %v", a.top().Crumb())
+	}
+	if pods.scope.Entity == nil || pods.scope.Entity.ID != "SERVICE-1" {
+		t.Fatalf("service pin should scope pods: %+v", pods.scope.Entity)
+	}
+	for _, want := range []string{
+		`source_id == toSmartscapeId("SERVICE-1") and type == "runs_on"`,
+		"| fieldsRemove right.target_id",
+	} {
+		if !strings.Contains(pods.dql, want) {
+			t.Errorf("pods dql missing %q:\n%s", want, pods.dql)
+		}
+	}
+	if !strings.Contains(pods.Crumb(), "checkout") {
+		t.Errorf("crumb should claim the applied scope: %q", pods.Crumb())
 	}
 }
 
