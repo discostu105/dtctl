@@ -118,10 +118,10 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 		if err != nil {
 			return err
 		}
-		// Context precedence: --context flag > workspace environment match >
-		// config current-context. Session-local either way — dtui never
-		// writes the shared config.
-		if contextName == "" && ws != nil && ws.Environment != "" {
+		// Context precedence: --context flag > DTCTL_CONTEXT env var >
+		// workspace environment match > config current-context. Session-local
+		// either way — dtui never writes the shared config.
+		if contextOverride() == "" && ws != nil && ws.Environment != "" {
 			if name, ok := findContextByEnvironment(cfg, ws.Environment); ok {
 				cfg.CurrentContext = name
 			} else {
@@ -162,9 +162,10 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 	},
 }
 
-// loadConfig loads the shared dtctl config. The --context override is applied
-// in memory only — dtui never writes the shared config, so an open TUI cannot
-// repoint scripts and agents using dtctl on the same machine.
+// loadConfig loads the shared dtctl config. The context override (--context
+// flag or DTCTL_CONTEXT env var) is applied in memory only — dtui never
+// writes the shared config, so an open TUI cannot repoint scripts and agents
+// using dtctl on the same machine.
 func loadConfig() (*config.Config, error) {
 	var cfg *config.Config
 	var err error
@@ -176,10 +177,21 @@ func loadConfig() (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if contextName != "" {
-		cfg.CurrentContext = contextName
+	if o := contextOverride(); o != "" {
+		cfg.CurrentContext = o
 	}
 	return cfg, nil
+}
+
+// contextOverride returns the session-local context override: the --context
+// flag if given, else the DTCTL_CONTEXT env var (the same override dtctl
+// honors, so `DTCTL_CONTEXT=x dtctl ...` and `DTCTL_CONTEXT=x dtui` agree).
+// An override also suppresses the workspace environment match.
+func contextOverride() string {
+	if contextName != "" {
+		return contextName
+	}
+	return os.Getenv("DTCTL_CONTEXT")
 }
 
 // newDQLExecutor creates a DQL executor with OAuth token refresh support.
@@ -310,7 +322,7 @@ func viewCompletion(cmd *cobra.Command, args []string, toComplete string) ([]str
 
 func main() {
 	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "path to the dtctl config file (default: ~/.config/dtctl/config)")
-	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "context to use for this session (not persisted)")
+	rootCmd.PersistentFlags().StringVar(&contextName, "context", "", "context to use for this session (env: DTCTL_CONTEXT; not persisted)")
 	rootCmd.PersistentFlags().BoolVar(&noAgent, "no-agent", false, "launch even if an AI agent environment is detected")
 
 	if err := rootCmd.Execute(); err != nil {
