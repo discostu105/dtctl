@@ -91,7 +91,7 @@ func (ts *tabSet) Hints() []keyHint {
 // signals everywhere.
 var tabJumps = map[string]string{
 	"l": "logs", "s": "traces", "v": "events", "p": "problems",
-	"m": "metrics", "u": "sessions", "e": "userevents",
+	"m": "metrics", "u": "sessions", "e": "userevents", "a": "attacks",
 }
 
 // ClaimsDigits marks the page as entered: its innermost numbered strip owns

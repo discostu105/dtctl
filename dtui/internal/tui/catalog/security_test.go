@@ -209,6 +209,129 @@ func TestClassAttackAction(t *testing.T) {
 	}
 }
 
+// --- vulnerability page tabs ---------------------------------------------
+
+func TestVulnEntitiesSpecQuery(t *testing.T) {
+	q := VulnEntitiesSpec.Query(Scope{Arg: "111", Timeframe: Timeframe{Label: "2h", Dur: 2 * time.Hour}})
+	for _, want := range []string{
+		"from:now() - 24h", // state-report floor
+		`event.level == "ENTITY" and vulnerability.id == "111"`,
+		"| dedup affected_entity.id, sort:{timestamp desc}",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("entities query missing %q:\n%s", want, q)
+		}
+	}
+}
+
+func TestVulnAffectedEntity(t *testing.T) {
+	host := VulnAffectedEntity(map[string]any{
+		"affected_entity.id": "HOST-1", "affected_entity.name": "web-01", "affected_entity.type": "HOST"})
+	if host == nil || host.ID != "HOST-1" || host.Type != "HOST" {
+		t.Errorf("host entity = %+v", host)
+	}
+
+	// A process-group row drills through its first process instance, modern id.
+	pg := VulnAffectedEntity(map[string]any{
+		"affected_entity.id":                       "PROCESS_GROUP-AA",
+		"affected_entity.name":                     "checkout *",
+		"affected_entity.type":                     "PROCESS_GROUP",
+		"affected_entity.affected_processes.ids":   []any{"PROCESS_GROUP_INSTANCE-BB12"},
+		"affected_entity.affected_processes.names": []any{"checkout (pod-1)"},
+	})
+	if pg == nil || pg.ID != "PROCESS-BB12" || pg.Type != "PROCESS" || pg.Name != "checkout (pod-1)" {
+		t.Errorf("process entity = %+v", pg)
+	}
+
+	if e := VulnAffectedEntity(map[string]any{
+		"affected_entity.id": "PROCESS_GROUP-AA", "affected_entity.type": "PROCESS_GROUP"}); e != nil {
+		t.Errorf("no process instances → no drill, got %+v", e)
+	}
+	if e := VulnAffectedEntity(map[string]any{
+		"affected_entity.id": "KUBERNETES_NODE-1", "affected_entity.type": "KUBERNETES_NODE"}); e != nil {
+		t.Errorf("k8s node ids don't cross the era divide → no drill, got %+v", e)
+	}
+}
+
+func TestVulnAttacksSpecStaysHonestWithoutEntities(t *testing.T) {
+	tf := Timeframe{Label: "2h", Dur: 2 * time.Hour}
+	empty := VulnAttacksSpec.Query(Scope{Arg: "111", Timeframe: tf})
+	if !strings.Contains(empty, "| filter false") {
+		t.Errorf("no resolved entities must keep the tab empty, not tenant-wide:\n%s", empty)
+	}
+	scoped := VulnAttacksSpec.Query(Scope{Arg: "111", Timeframe: tf,
+		Entities: []Entity{{ID: "PROCESS_GROUP-77", Type: "PROCESS_GROUP"}}})
+	if !strings.Contains(scoped, `dt.entity.process_group == "PROCESS_GROUP-77"`) {
+		t.Errorf("hop-resolved entities must scope the detections:\n%s", scoped)
+	}
+	if strings.Contains(scoped, "filter false") {
+		t.Errorf("scoped query must not carry the empty guard:\n%s", scoped)
+	}
+}
+
+func TestVulnAttackHop(t *testing.T) {
+	if q := VulnAttackHopQuery(Scope{Arg: "111"}); !strings.Contains(q, `vulnerability.id == "111"`) {
+		t.Errorf("hop query missing the id filter:\n%s", q)
+	}
+	if q := VulnAttackHopQuery(Scope{Arg: "111", Entities: []Entity{{ID: "X"}}}); q != "" {
+		t.Errorf("an already-scoped view needs no hop, got:\n%s", q)
+	}
+	if q := VulnAttackHopQuery(Scope{}); q != "" {
+		t.Errorf("no vulnerability id → no hop, got:\n%s", q)
+	}
+
+	ents := VulnAttackHopEntities(Scope{}, []map[string]any{
+		{"affected_entity.id": "PROCESS_GROUP-1", "affected_entity.type": "PROCESS_GROUP", "affected_entity.name": "pg"},
+		{"affected_entity.id": "PROCESS_GROUP-1", "affected_entity.type": "PROCESS_GROUP"}, // dupe
+		{"affected_entity.id": "HOST-2", "affected_entity.type": "HOST"},
+		{"affected_entity.id": "KUBERNETES_NODE-3", "affected_entity.type": "KUBERNETES_NODE"}, // era mismatch
+	})
+	if len(ents) != 2 || ents[0].ID != "PROCESS_GROUP-1" || ents[1].ID != "HOST-2" {
+		t.Errorf("hop entities = %+v", ents)
+	}
+}
+
+func TestVulnEntryPointsSpecQuery(t *testing.T) {
+	q := VulnEntryPointsSpec.Query(Scope{Arg: "111", Timeframe: Timeframe{Label: "2h", Dur: 2 * time.Hour}})
+	for _, want := range []string{
+		"| expand entry_point = entry_points.entry_point_jsons",
+		"| fields affected_entity.name, entry_point",
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("entry points query missing %q:\n%s", want, q)
+		}
+	}
+}
+
+func TestParseEntryPoint(t *testing.T) {
+	ep := ParseEntryPoint(map[string]any{"entry_point": `{"entry_point.payload":"SELECT * FROM t WHERE id = *****","entry_point.url.path":"/svc/10","entry_point.user_controlled_inputs":[{"user_controlled_input.is_malicious":false},{"user_controlled_input.is_malicious":true}]}`})
+	if ep.Path != "/svc/10" || !strings.HasPrefix(ep.Payload, "SELECT") || ep.Inputs != 2 || !ep.Malicious {
+		t.Errorf("parsed entry point = %+v", ep)
+	}
+	if ep := ParseEntryPoint(map[string]any{"entry_point": "{not json"}); ep != (EntryPoint{}) {
+		t.Errorf("malformed JSON must yield the zero value, got %+v", ep)
+	}
+	if ep := ParseEntryPoint(map[string]any{}); ep != (EntryPoint{}) {
+		t.Errorf("missing field must yield the zero value, got %+v", ep)
+	}
+}
+
+func TestVulnTimelineSpecQuery(t *testing.T) {
+	q := VulnTimelineSpec.Query(Scope{Arg: "111", Timeframe: Timeframe{Label: "2h", Dur: 2 * time.Hour}})
+	for _, want := range []string{
+		"from:now() - 30d", // transitions are sparse
+		`in(event.type, {"VULNERABILITY_STATUS_CHANGE_EVENT", "VULNERABILITY_ASSESSMENT_CHANGE_EVENT"})`,
+		`vulnerability.id == "111"`,
+	} {
+		if !strings.Contains(q, want) {
+			t.Errorf("timeline query missing %q:\n%s", want, q)
+		}
+	}
+	if classTransition("CLOSE") != "ok" || classTransition("REOPEN") != "warn" || classTransition("MUTE") != "dim" {
+		t.Error("transition classes: CLOSE→ok, REOPEN→warn, MUTE→dim")
+	}
+}
+
 func TestPGIIDPrefixSwap(t *testing.T) {
 	if got := pgiID("PROCESS-EBC4A25674545389"); got != "PROCESS_GROUP_INSTANCE-EBC4A25674545389" {
 		t.Errorf("pgiID = %q", got)

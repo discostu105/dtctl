@@ -745,6 +745,12 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			}
 			return v.inspect(rec)
 		}
+		if v.spec.EnterTarget == "inspect" {
+			// Page tabs whose rows are slices of the page's own subject (a
+			// vulnerability's entities/timeline): enter shows the full record
+			// instead of re-routing to the same page it came from.
+			return v.inspect(rec)
+		}
 		if v.spec.EnterTarget != "" {
 			if target := catalog.Lookup(v.spec.EnterTarget); target != nil {
 				scope := catalog.Scope{Timeframe: v.scope.Timeframe}
