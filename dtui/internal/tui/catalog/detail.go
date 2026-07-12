@@ -53,7 +53,13 @@ func PriorityFields(rec map[string]any) []string {
 			"cve", "url", "affected", "vulnerability.title", "vulnerability.risk.level",
 			"vulnerability.risk.score", "vulnerability.resolution.status"}
 	case rec["span.kind"] != nil || Str(rec, "span.name") != "":
-		return []string{"span.name", "endpoint.name", "span.kind", "service.name",
+		// Whichever service-name attribute this span carries (see SpanService);
+		// listing both would render the same value twice on OneAgent spans.
+		svcField := "service.name"
+		if Str(rec, svcField) == "" {
+			svcField = "dt.service.name"
+		}
+		return []string{"span.name", "endpoint.name", "span.kind", svcField,
 			"start_time", "duration", "span.status_code", "gen_ai.operation.name"}
 	case rec["user_action_count"] != nil || Str(rec, "end_reason") != "":
 		// RUM session (user.sessions).

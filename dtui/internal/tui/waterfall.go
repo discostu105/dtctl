@@ -263,7 +263,7 @@ func buildWaterfall(records []map[string]any) []wfRow {
 			guide:    guide,
 			label:    label,
 			kind:     catalog.Str(rec, "span.kind"),
-			svc:      catalog.Str(rec, "service.name"),
+			svc:      catalog.SpanService(rec),
 			start:    parseTimeNs(catalog.Str(rec, "start_time")),
 			end:      parseTimeNs(catalog.Str(rec, "end_time")),
 			failed:   catalog.SpanFailed(rec),

@@ -98,7 +98,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 			query: func(tf catalog.Timeframe) string {
 				return fmt.Sprintf(`fetch spans, from:%s
 | filter request.is_failed == true and isNotNull(dt.smartscape.service)
-| summarize failed = count(), svc = takeFirst(service.name), ns = takeFirst(k8s.namespace.name), by:{dt.smartscape.service}
+| summarize failed = count(), svc = takeFirst(coalesce(dt.service.name, service.name)), ns = takeFirst(k8s.namespace.name), by:{dt.smartscape.service}
 | sort failed desc
 | limit 8`, tf.DQL())
 			},

@@ -201,7 +201,7 @@ func spanPreview(rec map[string]any) []PreviewFact {
 	}
 	// The code location and placement OneAgent stamps on nearly every span.
 	b.add("code", joinNonEmpty(".", Str(rec, "code.namespace"), Str(rec, "code.function")))
-	b.add("service", Str(rec, "service.name"))
+	b.add("service", SpanService(rec))
 	b.add("host", Str(rec, "host.name"))
 	b.add("release", joinNonEmpty(" · ",
 		Str(rec, "deployment.release_build_version"),

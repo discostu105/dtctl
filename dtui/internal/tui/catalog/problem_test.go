@@ -1,6 +1,7 @@
 package catalog
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -242,6 +243,23 @@ func TestPriorityFieldsPerKind(t *testing.T) {
 		fields := PriorityFields(c.rec)
 		if len(fields) == 0 || fields[0] != c.want {
 			t.Errorf("%s: PriorityFields[0] = %v, want %q", c.name, fields, c.want)
+		}
+	}
+
+	// A span's highlight set names whichever service field the record carries
+	// (extension spans have only dt.service.name), never both at once.
+	svcCases := []struct {
+		rec  map[string]any
+		want string
+	}{
+		{map[string]any{"span.kind": "client", "service.name": "checkout"}, "service.name"},
+		{map[string]any{"span.kind": "client", "dt.service.name": "ext"}, "dt.service.name"},
+		{map[string]any{"span.kind": "client", "service.name": "checkout", "dt.service.name": "checkout"}, "service.name"},
+	}
+	for _, c := range svcCases {
+		fields := PriorityFields(c.rec)
+		if !slices.Contains(fields, c.want) {
+			t.Errorf("span PriorityFields = %v, want %q listed (rec %v)", fields, c.want, c.rec)
 		}
 	}
 }

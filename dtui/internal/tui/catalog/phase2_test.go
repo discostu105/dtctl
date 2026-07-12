@@ -225,6 +225,21 @@ func TestSpanDualConventions(t *testing.T) {
 	if got := rpcSpanColumns[1].Text(map[string]any{"span.name": "POST /x"}); got != "POST /x" {
 		t.Errorf("rpc CALL fallback = %q, want POST /x", got)
 	}
+
+	// The service name has two carriers too: extension/background spans have
+	// only dt.service.name, pure-OTLP spans only service.name.
+	for _, rec := range []map[string]any{
+		{"dt.service.name": "checkout"},
+		{"service.name": "checkout"},
+		{"dt.service.name": "checkout", "service.name": "checkout"},
+	} {
+		if got := SpanService(rec); got != "checkout" {
+			t.Errorf("SpanService = %q, want checkout (rec %v)", got, rec)
+		}
+		if got := spanServiceColumn.Text(rec); got != "checkout" {
+			t.Errorf("SERVICE column = %q, want checkout (rec %v)", got, rec)
+		}
+	}
 }
 
 func TestWaterfallQueryRequiresToUid(t *testing.T) {
