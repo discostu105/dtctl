@@ -407,6 +407,77 @@ func TestSegVarSubPickerFetchError(t *testing.T) {
 	}
 }
 
+func altS() tea.KeyMsg {
+	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("s"), Alt: true}
+}
+
+func TestSegmentsPauseResume(t *testing.T) {
+	a := testAppSeeded(t, Options{
+		ContextName: "test", SafetyLevel: "readonly", InitialView: "logs",
+		SegmentSource: segStubSource(testSegmentList(), nil),
+		WorkspaceSegments: []WorkspaceSegment{
+			{Ref: "uid-b", Variables: []exec.FilterSegmentVariable{{Name: "env", Values: []string{"prod"}}}},
+		},
+	})
+	if len(a.ds.segments) != 1 {
+		t.Fatalf("seeding failed: %+v", a.ds.segments)
+	}
+
+	seqBefore := a.top().(*tableView).seq
+	press(a, altS())
+	if !a.segPaused || a.ds.segments != nil {
+		t.Fatalf("pause: paused=%v ds.segments=%+v", a.segPaused, a.ds.segments)
+	}
+	if a.top().(*tableView).seq <= seqBefore {
+		t.Error("pause did not refetch the open view")
+	}
+	if header := a.renderHeader(); !strings.Contains(header, "◌ team-checkout off") {
+		t.Errorf("header misses the off pill: %q", header)
+	}
+	if echo := a.top().Echo(); strings.Contains(echo, "-S") {
+		t.Errorf("paused Echo still carries -S: %q", echo)
+	}
+	if a.segmentsRejected("slos") {
+		t.Error("paused segments filter nothing — nothing to reject on API views")
+	}
+
+	press(a, altS())
+	if a.segPaused || len(a.ds.segments) != 1 || a.ds.segments[0].ID != "uid-b" {
+		t.Fatalf("resume: paused=%v ds.segments=%+v", a.segPaused, a.ds.segments)
+	}
+	if vars := a.ds.segments[0].Variables; len(vars) != 1 || vars[0].Values[0] != "prod" {
+		t.Fatalf("resume lost the bindings: %+v", a.ds.segments[0])
+	}
+	if header := a.renderHeader(); !strings.Contains(header, "◐ team-checkout") {
+		t.Errorf("header misses the restored pill: %q", header)
+	}
+}
+
+func TestSegmentsPauseWithNothingApplied(t *testing.T) {
+	a := testApp(t, "logs")
+	press(a, altS())
+	if a.segPaused {
+		t.Fatal("paused with nothing applied")
+	}
+	if !a.statusErr || !strings.Contains(a.status, "no segments selected") {
+		t.Errorf("status = %q, want the nothing-selected hint", a.status)
+	}
+}
+
+func TestSegmentPickerEnterResumesPausedSet(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(testSegmentList(), nil)
+	press(a, key("S"))
+	press(a, key(" "))
+	press(a, key("enter"))
+	press(a, altS()) // pause
+	press(a, key("S"))
+	press(a, key("enter")) // unchanged set, but paused — intent is resume
+	if a.segPaused || len(a.ds.segments) != 1 {
+		t.Fatalf("picker enter did not resume: paused=%v ds.segments=%+v", a.segPaused, a.ds.segments)
+	}
+}
+
 func TestSegmentSummary(t *testing.T) {
 	if got := segmentSummary(nil); got != "" {
 		t.Errorf("empty summary = %q", got)

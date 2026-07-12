@@ -152,7 +152,14 @@ func findSegmentByUID(list []SegmentOption, uid string) *SegmentOption {
 // in-flight results (mirrors setTimeframe's broadcast).
 func (a *app) applySegments(sel []SegmentOption) tea.Cmd {
 	a.segApplied = sel
+	a.segPaused = false
 	a.ds.segments = a.segmentRefs(sel)
+	return a.refreshAllViews()
+}
+
+// refreshAllViews refetches every live view on both stacks (deduped) so a
+// dataSource-level scope change reaches covered views too.
+func (a *app) refreshAllViews() tea.Cmd {
 	seen := map[viewModel]bool{}
 	var cmds []tea.Cmd
 	for _, v := range append(append([]viewModel{}, a.stack...), a.prev...) {
@@ -165,6 +172,25 @@ func (a *app) applySegments(sel []SegmentOption) tea.Cmd {
 		}
 	}
 	return tea.Batch(cmds...)
+}
+
+// toggleSegmentsPaused suspends or restores the applied segment set (alt+s):
+// one keypress to see the unfiltered picture, one to get the exact same
+// scope back — selection and variable bindings intact. Restoring a
+// workspace-seeded set needs no trip through the picker.
+func (a *app) toggleSegmentsPaused() tea.Cmd {
+	if len(a.segApplied) == 0 {
+		return statusErr("no segments selected — S picks some")
+	}
+	a.segPaused = !a.segPaused
+	if a.segPaused {
+		a.ds.segments = nil
+		return tea.Batch(a.refreshAllViews(),
+			status(fmt.Sprintf("segments off — alt+s restores %s", segmentSummary(a.segApplied))))
+	}
+	a.ds.segments = a.segmentRefs(a.segApplied)
+	return tea.Batch(a.refreshAllViews(),
+		status(fmt.Sprintf("segments on: %s", segmentSummary(a.segApplied))))
 }
 
 // segmentRefs converts the applied options into query refs, attaching the
@@ -198,9 +224,10 @@ func segmentSummary(sel []SegmentOption) string {
 
 // segmentsRejected reports whether segments are active but the named view is
 // API-backed (REST, not query:execute) — jumpTo says so instead of letting
-// the header pill overclaim.
+// the header pill overclaim. A paused set filters nothing, so nothing is
+// rejected.
 func (a *app) segmentsRejected(name string) bool {
-	if len(a.segApplied) == 0 {
+	if len(a.segApplied) == 0 || a.segPaused {
 		return false
 	}
 	spec := catalog.Lookup(name)
@@ -295,8 +322,10 @@ func (a *app) updateSegPicker(msg tea.KeyMsg) tea.Cmd {
 	case "enter":
 		a.segPickActive = false
 		sel := a.checkedSegments()
-		if segmentUIDsEqual(sel, a.segApplied) {
-			return nil // nothing changed — don't refetch every view
+		// Applying the unchanged set is a no-op — unless it is paused, where
+		// re-applying is the intent (resume).
+		if !a.segPaused && segmentUIDsEqual(sel, a.segApplied) {
+			return nil
 		}
 		note := "segments cleared"
 		if len(sel) > 0 {

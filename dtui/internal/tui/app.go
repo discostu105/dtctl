@@ -129,6 +129,7 @@ type app struct {
 	segApplied []SegmentOption
 	segVars    map[string][]exec.FilterSegmentVariable // uid → workspace bindings
 	segPending bool // workspace refs still resolving against the tenant list
+	segPaused  bool // alt+s — selection kept, nothing sent to queries
 
 	// Segment picker overlay ('S').
 	segPickActive bool
@@ -484,6 +485,8 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case "S":
 			return a.openSegmentPicker()
+		case "alt+s":
+			return a.toggleSegmentsPaused()
 		case "x", "X":
 			// Both cases walk the topology: the navigator's trail-based walk
 			// strictly dominates the old one-hop relations page (which
@@ -989,7 +992,10 @@ func (a *app) renderHeader() string {
 	if a.pin != nil {
 		left = append(left, theme.Pin.Render("⌖ "+strings.ToLower(a.pin.Type)+":"+entityName(*a.pin)))
 	}
-	if len(a.segApplied) > 0 {
+	switch {
+	case a.segPaused && len(a.segApplied) > 0:
+		left = append(left, theme.Dim.Render("◌ "+segmentSummary(a.segApplied)+" off"))
+	case len(a.segApplied) > 0:
 		// Dim on API-backed views — the one surface the scope doesn't reach —
 		// so the header never claims a filter that wasn't applied.
 		style := theme.Segment
@@ -997,7 +1003,7 @@ func (a *app) renderHeader() string {
 			style = theme.Dim
 		}
 		left = append(left, style.Render("◐ "+segmentSummary(a.segApplied)))
-	} else if a.segPending {
+	case a.segPending:
 		left = append(left, theme.Dim.Render("◌ segments…"))
 	}
 	var right []string
@@ -1180,6 +1186,7 @@ func (a *app) renderHelp() string {
 			{".", "pin selection as global scope (ctrl+x unpins)"},
 			{"t", "timeframe picker"},
 			{"S", "segments — up to 10 filter segments applied to every DQL view (:segments); v picks variable values; a .dynatrace.yaml in the project pre-selects them"},
+			{"alt+s", "segments on/off — suspend the applied set for the unfiltered picture, restore it with bindings intact"},
 			{"ctrl+q", "reveal query — this view's DQL in the editor"},
 			{"o", "open in the Dynatrace UI — a picker appears when several targets apply"},
 			{"y / c", "yank id / copy CLI command"},

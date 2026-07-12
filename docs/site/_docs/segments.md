@@ -184,10 +184,12 @@ segments:
 ```
 
 The selected segments apply to every DQL-backed view in the TUI (max 10,
-AND-combined), and `S` opens the segment picker to change or clear them at any
-time. Segments with variables prompt for their values right in the picker
-(candidates come from the segment's variable query; `v` edits bindings
-later), so the `variables:` block is a team default, not a requirement. The file carries no credentials, contexts, or executable keys by
+AND-combined), `S` opens the segment picker to change or clear them at any
+time, and `alt+s` toggles the applied set off and back on in place (selection
+and variable bindings kept). Segments with variables prompt for their values
+right in the picker (candidates come from the segment's variable query; `v`
+edits bindings later), so the `variables:` block is a team default, not a
+requirement. The file carries no credentials, contexts, or executable keys by
 construction, and it merges on top of your personal dtctl config — unlike a
 local [`.dtctl.yaml`]({{ site.baseurl }}/docs/configuration/), which replaces
 it. A broken or unresolvable file degrades to a startup warning, never a

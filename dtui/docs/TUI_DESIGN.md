@@ -249,8 +249,12 @@ pod → workload → namespace → the sibling workload that's actually broken.
   secondary selection), and `v` reopens it later to edit bindings, including
   workspace-supplied ones. A still-missing binding surfaces Grail's
   `FILTER_SEGMENT_REQUIRES_VARIABLE` error rewritten with TUI remedies
-  instead of CLI flags. The workspace file can also set the startup view,
-  timeframe, and preferred environment (see the dtui README).
+  instead of CLI flags. `alt+s` suspends the applied set in place — one
+  keypress for the unfiltered picture, one to restore the exact same scope,
+  selection and bindings intact (the pill dims to `◌ … off`) — so a
+  workspace-seeded scope toggles without a trip through the picker. The
+  workspace file can also set the startup view, timeframe, and preferred
+  environment (see the dtui README).
 
 ### 5. Movement & recall
 
