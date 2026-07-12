@@ -5,7 +5,7 @@
 shared configuration. This is the state contract required by
 [DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md) (Landmine 4): everything a
 second binary may rely on, and nothing more. Golden fixtures live in
-`pkg/config/testdata/contract/`; `pkg/config/contract_test.go` enforces this
+`sdk/session/testdata/contract/`; `sdk/session/contract_test.go` enforces this
 document. A change that breaks those tests is a contract change and must
 update this spec in the same PR.
 
@@ -30,7 +30,7 @@ YAML document. Top-level keys: `apiVersion`, `kind`, `current-context`,
 `preferences`, `aliases`, `spill`. Per-context keys: `environment`,
 `token-ref`, `safety-level` (`readonly` | `readwrite-mine` | `readwrite-all` |
 `dangerously-unrestricted`; empty means `readwrite-all`), `description`,
-`hooks`, `spill`. The Go structs in `pkg/config/config.go` are the schema's
+`hooks`, `spill`. The Go structs in `sdk/session/config.go` are the schema's
 source of truth; `testdata/contract/v1-full.yaml` exercises every field.
 
 Semantics both binaries must share: `safety-level` (a `readonly` context means
@@ -52,7 +52,7 @@ the same thing everywhere) and token resolution order (see below).
 - Writers must not destroy unknown keys: `Config.SaveTo` grafts keys unknown
   to the running build from the file being overwritten back into the saved
   document (top level, per-context and per-token matched by `name`, and
-  nested structs — see `pkg/config/preserve.go`). Known keys are owned by the
+  nested structs — see `sdk/session/preserve.go`). Known keys are owned by the
   writer: deleted contexts and cleared `omitempty` fields stay deleted.
 - Comments and key order are **not** preserved; only data survives.
 
@@ -89,7 +89,7 @@ string. Management commands that rewrite the file must load with
 2. **The token store is the one shared write surface.** OAuth refresh tokens
    rotate on use, so any long-running consumer must persist refreshed token
    sets — and must do so through the cross-process refresh lock
-   (`pkg/auth`, `TokenManager`), never with an unlocked read-modify-write.
+   (`sdk/session`, `TokenManager`), never with an unlocked read-modify-write.
    Concurrent unlocked refreshes double-spend the rotating refresh token and
    strand one side's credentials (`invalid_grant`).
 3. **Context overrides are session-local.** The `--context` flag (dtctl and
@@ -114,6 +114,7 @@ string. Management commands that rewrite the file must load with
 | `v1-minimal.yaml` | Minimal config loads; `apiVersion` is optional |
 | `future-version.yaml` | Unsupported schema version fails loudly |
 
-When the repo split happens, the dtui repo vendors these fixtures (or the
-published `pkg/config` test module) and runs the same assertions — the
-fixtures are the compatibility test between independently released binaries.
+The fixtures live in the sdk module (`sdk/session/testdata/contract/`), so
+after the repo split both binaries keep testing against the same versioned
+artifacts — the fixtures are the compatibility test between independently
+released binaries.

@@ -13,28 +13,34 @@ kubectl-inspired CLI for Dynatrace (dashboards, workflows, SLOs, etc). Go + Cobr
 ## Architecture
 
 ```text
-cmd/          # Cobra commands (get, describe, create, delete, apply, exec, ctx, doctor, commands)
+cmd/          # Cobra commands (get, describe, create, delete, apply, exec, ctx, doctor, commands, plugin)
 pkg/
-  ├── client/    # HTTP client (auth, retry, rate limiting, pagination)
-  ├── config/    # Multi-context config (~/.config/dtctl/config, keyring tokens)
+  ├── client/    # Shim over sdk/session's client; keeps CLI-only extras (typed errors, pagination, OTel injection) and pins the dtctl/<version> User-Agent
+  ├── config/    # Shim over sdk/session — the config model/keyring implementation lives in the sdk
+  ├── auth/      # Shim over sdk/session's OAuth machinery + CLI-owned scope-composition tables
+  ├── safety/    # Shim over sdk/session's safety checker
+  ├── plugin/    # kubectl-style exec plugin resolution/discovery (docs/dev/PLUGIN_CONVENTIONS.md)
   ├── resources/ # Resource handlers — thin CLI wrappers that delegate to sdk/api/
   ├── output/    # Formatters (table, JSON, YAML, charts, agent envelope, color control)
   └── exec/      # DQL query execution
 sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
+  ├── session/     # The session layer (docs/dev/CONFIG_CONTRACT.md): config model + load/save, credential stores, OAuth flow/refresh + cross-process lock, client-from-context with parameterized User-Agent, safety semantics
   ├── api/         # Typed API wrappers (one package per Dynatrace API surface)
   ├── httpclient/  # HTTP client, response helpers, pagination, typed errors
   ├── auth/        # Token type detection
   ├── urls/        # Environment URL validation/normalization
-  ├── credstore/   # OS keyring and file-based credential storage
+  ├── credstore/   # Deprecated — superseded by sdk/session (was never wired up)
   └── agentmode/   # AI agent environment detection
 dtui/           # Separate Go module + binary (github.com/dynatrace-oss/dtui): the interactive TUI
   ├── docs/          # TUI design docs (TUI_DESIGN.md, TUI_LEARNINGS.md, TUI_SMARTSCAPE_NAVIGATOR.md)
   └── internal/tui/  # k9s-style navigator; `dtctl tui` forwards to the dtui binary on PATH
 ```
 
-**dtui module**: The TUI is a separate Go module and binary that consumes dtctl's packages (`pkg/config`, `pkg/client`, `pkg/exec`, `pkg/output`, selected `pkg/resources/*`) via `replace` directives — see [docs/dev/DTUI_SPLIT_DESIGN.md](docs/dev/DTUI_SPLIT_DESIGN.md). The root module must stay TUI-free: no charmbracelet dependencies, no imports of `github.com/dynatrace-oss/dtui` (enforced by `make dtctl-check-lean`). Build with `make build-dtui`, test with `make test-dtui`; root-module changes to the packages dtui imports must keep `dtui/` compiling (CI runs both).
+**dtui module**: The TUI is a separate Go module and binary that consumes `sdk/session` (config, credentials, client — with its own `dtui/<version>` User-Agent) plus dtctl's domain packages (`pkg/exec`, `pkg/output`, selected `pkg/resources/*`) via `replace` directives — see [docs/dev/DTUI_SPLIT_DESIGN.md](docs/dev/DTUI_SPLIT_DESIGN.md). The root module must stay TUI-free: no charmbracelet dependencies, no imports of `github.com/dynatrace-oss/dtui` (enforced by `make dtctl-check-lean`). Build with `make build-dtui`, test with `make test-dtui`; root-module changes to the packages dtui imports must keep `dtui/` compiling (CI runs both).
 
-**SDK delegation pattern**: CLI resource handlers in `pkg/resources/` import types from `sdk/api/` (often via type aliases) and delegate HTTP calls to SDK functions. The SDK contains **no file I/O, no CLI concerns, no display logic**. File reading (e.g., `ReadFileOrStdin`, `ParseInputFromFile`) stays in `pkg/resources/`.
+**SDK delegation pattern**: CLI resource handlers in `pkg/resources/` import types from `sdk/api/` (often via type aliases) and delegate HTTP calls to SDK functions. The `sdk/api/*` packages contain **no file I/O, no CLI concerns, no display logic**. File reading (e.g., `ReadFileOrStdin`, `ParseInputFromFile`) stays in `pkg/resources/`. (`sdk/session` is the deliberate exception on file I/O: it owns the config file and credential stores — that's its job.)
+
+**Plugins**: dtctl dispatches unknown commands to `dtctl-<name>` executables on PATH (kubectl semantics; built-ins always win). See [docs/dev/PLUGIN_CONVENTIONS.md](docs/dev/PLUGIN_CONVENTIONS.md) for the env contract (`DTCTL_CONTEXT`, `DTCTL_CONFIG`, `DTCTL_AGENT`, `DTCTL_PLAIN`, `DTCTL_CALLER_VERSION` — never tokens).
 
 ## Agent Output Mode
 

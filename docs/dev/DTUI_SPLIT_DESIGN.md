@@ -8,8 +8,16 @@ executed 2026-07-12 — `DTCTL_CONTEXT` is a production env override in both
 binaries, the config schema version is enforced on load, unknown fields
 survive load-modify-save, and the contract is specified in
 [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md) with golden fixtures (Sequencing
-steps 1-partial and 2 below). The sdk session-layer promotion, the plugin
-dispatcher, and the repo split are still pending.
+steps 1-partial and 2 below). Session-layer promotion and plugin system
+executed 2026-07-12 — the full session layer (config model, credential
+stores, OAuth machinery with the refresh lock, client-from-context with
+parameterized identity, safety semantics) lives in `sdk/session` with
+`pkg/{config,auth,client,safety}` as re-export shims; dtui consumes
+`sdk/session` directly with its own User-Agent; the kubectl-style exec
+plugin dispatcher, `dtctl plugin list`, catalog integration, and
+[PLUGIN_CONVENTIONS.md](PLUGIN_CONVENTIONS.md) shipped. **Only the repo
+split itself (Sequencing step 5) remains**, gated on the seam-stability
+signal.
 **Created:** 2026-07-08
 **Author:** dtctl team
 
@@ -89,7 +97,8 @@ These measurements ground the plan; re-verify before executing.
   (`pkg/config/keyring.go`) — this is the de-facto credential contract.
 - **OAuth refresh locking exists but is bypassable** (corrected 2026-07-10;
   an earlier revision wrongly claimed no locking exists): refresh tokens
-  rotate on use, and `pkg/auth/refresh_lock_unix.go` / `_windows.go` implement
+  rotate on use, and `sdk/session/refresh_lock_unix.go` / `_windows.go` (moved from
+  pkg/auth 2026-07-12) implement
   a cross-process refresh lock that `GetToken` holds. `TokenManager.RefreshToken`
   bypasses it by design — and the TUI's 401 forced-refresh path calls exactly
   that method (see Landmines).
@@ -130,6 +139,17 @@ them". Split when the contract is real, not before.
 4. Extract via `git filter-repo`; `dtctl tui` becomes a forwarder (Decision 4).
 
 ## Decision 2 — Code sharing: promote a session layer into the sdk
+
+> ✅ **Executed 2026-07-12** as `sdk/session`; `pkg/config`, `pkg/auth`,
+> `pkg/client`, and `pkg/safety` remain as thin re-export shims so the root
+> module's import surface is unchanged. One deviation from the plan below:
+> the alias/hook/spill **schema fields and their data accessors** travel with
+> the `Config` type (Go methods cannot live outside the type's package);
+> what stays CLI-side is *execution* — alias expansion, hook running, spill
+> writing, and the OAuth **scope composition** tables (`pkg/auth` composes
+> scopes; the sdk's OAuth constructors take them as input — refresh never
+> needs them). Terminal renderers stayed out as planned. `sdk/credstore`,
+> the never-wired parallel store, is deprecated in favor of `sdk/session`.
 
 **Moves into the sdk** (new package, e.g. `sdk/session` or `sdk/config`):
 
@@ -207,7 +227,7 @@ repo.
 1. **OAuth forced-refresh bypasses the refresh lock.** (Corrected 2026-07-10:
    an earlier revision claimed no locking exists.) Refresh tokens rotate on
    use, and the codebase already guards concurrent refreshes with a
-   cross-process file lock (`pkg/auth/refresh_lock_unix.go` / `_windows.go`)
+   cross-process file lock (now `sdk/session/refresh_lock_unix.go` / `_windows.go`)
    that `TokenManager.GetToken` holds around the refresh. But
    `TokenManager.RefreshToken` **bypasses that lock** — its own WARNING
    comment says concurrent callers risk `invalid_grant` from refresh-token
@@ -223,7 +243,7 @@ repo.
    refresh token; an unchanged store still always refreshes (the 401-retry
    contract). `GetToken` calls the extracted unlocked internal
    (`refreshTokenLocked`) since it already holds the lock. Covered by
-   `pkg/auth/token_manager_refresh_lock_test.go`, including a
+   `sdk/session/token_manager_refresh_lock_test.go`, including a
    rotation-faithful concurrent regression test against the real file lock.
 2. **Current-context is shared mutable state.** Today `dtctl query --context X`
    *persists* the context switch to disk. If dtui inherits write-through
@@ -243,18 +263,23 @@ repo.
    the `dtctl.io/v1` spelling from `dtctl config init` all mean v1; anything
    else is a hard error naming the version), unknown fields are ignored on
    load, and `SaveTo` grafts unknown keys back from the file being
-   overwritten (`pkg/config/preserve.go`) so an older writer never destroys
+   overwritten (`sdk/session/preserve.go`) so an older writer never destroys
    a newer writer's fields — deletions of known keys still stick.
 4. **Write the contract down.** A short spec: file path, schema + version,
    keyring service name, OAuth store layout, write rules — with golden
    fixtures both repos test against.
    ✅ **Done 2026-07-12**: [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md), enforced
-   by `pkg/config/contract_test.go` against golden fixtures in
-   `pkg/config/testdata/contract/`.
+   by `sdk/session/contract_test.go` against golden fixtures in
+   `sdk/session/testdata/contract/`.
 5. **Client identity.** dtui needs its own `User-Agent` (`pkg/version` is
    dtctl-branded); parameterize the app name in the sdk client.
+   ✅ **Fixed 2026-07-12**: `sdk/session.NewClient` takes
+   `WithUserAgentProduct`; dtctl pins `dtctl/<version>` in `pkg/client`,
+   dtui sends `dtui/<version>`.
 6. **macOS keychain UX**: a second binary means a second keychain-access
    prompt. Expected; document it.
+   ✅ **Documented 2026-07-12** in [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md)
+   §Credential store and [PLUGIN_CONVENTIONS.md](PLUGIN_CONVENTIONS.md).
 
 ---
 
@@ -364,20 +389,27 @@ dtui ships.
 
 ## Sequencing
 
-1. **sdk session layer** (contexts, credentials + OAuth-store locking fix
-   ✅ 2026-07-10, client-from-context, safety semantics) + `DTCTL_CONTEXT`
-   production env override ✅ 2026-07-12. Keep aliases/hooks/spill CLI-side.
-   The session-layer promotion itself is the remaining piece.
+1. **sdk session layer** — ✅ done 2026-07-12 (`sdk/session`: contexts,
+   credentials + OAuth-store locking fix ✅ 2026-07-10, client-from-context
+   with parameterized identity, safety semantics) + `DTCTL_CONTEXT`
+   production env override ✅ 2026-07-12. Alias/hook/spill *execution* and
+   scope composition stayed CLI-side (see the Decision 2 note on the schema
+   accessors).
 2. **Config contract hardening** — ✅ done 2026-07-12: schema version
    enforced, tolerant parsing + round-trip preservation of unknown fields,
    contract spec ([CONFIG_CONTRACT.md](CONFIG_CONTRACT.md)) + golden
-   fixtures (`pkg/config/testdata/contract/`).
-3. **Plugin dispatcher** + `dtctl plugin list` + conventions doc (one small
-   PR; only after step 1).
+   fixtures (`sdk/session/testdata/contract/`).
+3. **Plugin dispatcher** + `dtctl plugin list` + conventions doc — ✅ done
+   2026-07-12: unknown commands exec `dtctl-<name>` from PATH (longest
+   dash-joined match, built-ins always win), env contract with no secrets,
+   `dtctl plugin list`, plugins in the `dtctl commands` catalog,
+   [PLUGIN_CONVENTIONS.md](PLUGIN_CONVENTIONS.md).
 4. **Enforce the seam** — ✅ done 2026-07-10 (Phase 1, pulled ahead of steps
    1–3 via the pragmatic bridge): own Go module + binary in-repo (`dtui/`),
    `dtctl tui` forwards, root module TUI-free. Narrowing dtui's imports from
-   `pkg/*` to the promoted sdk lands with step 1.
+   `pkg/*` to the promoted sdk ✅ done 2026-07-12 (dtui consumes
+   `sdk/session` for config, credentials, and the client; domain packages
+   `pkg/exec`/`pkg/output`/`pkg/resources/*` stay root-module by design).
 5. **Split** when TUI PRs stop touching `pkg/`/`sdk/` in the same change:
    `git filter-repo` → dtui repo; `dtctl tui` becomes the forwarder; dtui is
    the first plugin and the contract dogfood.
