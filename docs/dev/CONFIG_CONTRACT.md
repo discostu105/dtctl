@@ -76,6 +76,10 @@ string. Management commands that rewrite the file must load with
   `DTCTL_TOKEN_STORAGE=file`) → inline `token` value in the config file.
 - `DTCTL_DISABLE_KEYRING` (any non-empty value) disables the keyring;
   `DTCTL_TOKEN_STORAGE=file` forces the file store.
+- **macOS keychain UX**: keychain access is granted per binary, so each
+  consumer (dtctl, dtui, every plugin) triggers its own one-time
+  keychain-access prompt on first credential read. Expected behavior —
+  document it, don't "fix" it.
 
 ## Write rules
 

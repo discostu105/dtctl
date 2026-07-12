@@ -169,8 +169,14 @@ func execute() int {
 
 		errStr := err.Error()
 
-		// Enhance unknown command errors with suggestions
+		// Unknown top-level commands get one shot at plugin dispatch before
+		// the suggestion enhancer: `dtctl foo` execs dtctl-foo from PATH if
+		// present (kubectl semantics; built-ins always win because they never
+		// reach this error path). See docs/dev/PLUGIN_CONVENTIONS.md.
 		if strings.Contains(errStr, "unknown command") {
+			if code, handled := tryPluginDispatch(spanArgs); handled {
+				return code
+			}
 			err = enhanceCommandError(rootCmd, err)
 		}
 

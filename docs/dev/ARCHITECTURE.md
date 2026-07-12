@@ -1007,8 +1007,8 @@ httpClient.SetTLSClientConfig(&tls.Config{
 ## Future Enhancements
 
 ### Phase 2 Additions:
-1. **Plugin System**: Support for extending dtctl with plugins (using Go plugins or exec-based)
-2. **Interactive Mode**: TUI using bubbletea/lipgloss
+1. **Plugin System**: ✅ shipped 2026-07-12 as the kubectl-style exec convention — `dtctl foo` execs `dtctl-foo` from PATH; Go plugins rejected (see [DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md) Decision 4, [PLUGIN_CONVENTIONS.md](PLUGIN_CONVENTIONS.md))
+2. **Interactive Mode**: ✅ shipped as the separate dtui binary (`dtctl tui` forwards; see DTUI_SPLIT_DESIGN.md)
 3. **Local Development Mode**: Mock server for testing
 4. **Credential Providers**: Integration with HashiCorp Vault, AWS Secrets Manager
 5. **Advanced Caching**: Persistent cache with TTL and invalidation

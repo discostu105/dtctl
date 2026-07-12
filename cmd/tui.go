@@ -69,7 +69,14 @@ mode, with --plain, or when stdout is not a terminal.`,
 		if err != nil {
 			return err
 		}
-		return forwardToTUI(bin, args)
+		code, err := execForward(bin, args, os.Environ())
+		if err != nil {
+			return err
+		}
+		if code != 0 {
+			return &silentExitError{code: code}
+		}
+		return nil
 	},
 }
 
