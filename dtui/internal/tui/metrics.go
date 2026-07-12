@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
+	"github.com/dynatrace-oss/dtctl/pkg/exec"
 	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dtui/internal/tui/theme"
@@ -35,6 +36,9 @@ type metricsView struct {
 	// Explorer-chart mode ('a' cycles the aggregation; canned mode ignores).
 	key    string
 	aggIdx int
+	// meta is the explored key's catalogue identity from the enriched chart
+	// response (canned charts carry hand-curated units on their spec instead).
+	meta metricMeta
 
 	// Split mode ('b'): chart the metric per value of one dimension.
 	splitDim string
@@ -58,6 +62,15 @@ type metricsView struct {
 type dimInfo struct {
 	name   string
 	values int
+}
+
+// metricMeta is a metric's catalogue identity — displayName, description, and
+// unit (normalized to a FormatUnit token) — extracted from the chart query's
+// metric-metadata enrichment (metadata.metrics[]).
+type metricMeta struct {
+	unit string
+	name string
+	desc string
 }
 
 // availOwner tags the canned view's availability probe; dimOwner tags the
@@ -98,7 +111,10 @@ func (v *metricsView) Refresh() tea.Cmd {
 		} else {
 			v.dql = v.mspec.Query(v.entity, v.tf, nil)
 		}
-		return v.ds.query(v, v.seq, v.dql)
+		// Enriched: the response's metadata.metrics[] carries the key's
+		// catalogue unit/displayName/description, which no client-side table
+		// could know for arbitrary (custom) metrics.
+		return v.ds.queryEnriched(v, v.seq, v.dql)
 	}
 	// Canned charts: probe which of the spec's metrics exist first. The probe
 	// is the view's query until the chart query supersedes it (Echo, ctrl+q).
@@ -262,7 +278,24 @@ func (v *metricsView) onData(msg dataMsg) tea.Cmd {
 		v.rec = msg.records[0]
 		v.records = msg.records
 	}
+	if v.explore() {
+		v.applyMetricMeta(msg.metrics)
+	}
 	return nil
+}
+
+// applyMetricMeta picks the explored key's catalogue entry out of the
+// enriched response metadata. A response without one (enrichment unavailable,
+// query error) keeps the last known identity — the key doesn't change across
+// aggregation cycles or splits, so stale is better than blank.
+func (v *metricsView) applyMetricMeta(infos []exec.MetricInfo) {
+	for _, mi := range infos {
+		if mi.MetricKey != "" && mi.MetricKey != v.key {
+			continue
+		}
+		v.meta = metricMeta{unit: catalog.NormalizeUnit(mi.Unit), name: mi.DisplayName, desc: mi.Description}
+		return
+	}
 }
 
 // pickerKey drives the split-dimension picker overlay.
@@ -345,7 +378,7 @@ func (v *metricsView) charts() (out []chartData, more int) {
 			if title == "" {
 				continue // by-splits emit one null-key record for series without the dim
 			}
-			out = append(out, chartData{title: title, values: floatSeries(rec["value"])})
+			out = append(out, chartData{title: title, unit: v.meta.unit, values: floatSeries(rec["value"])})
 		}
 		// Rank by average so the busiest series surface first.
 		sort.SliceStable(out, func(i, j int) bool {
@@ -365,7 +398,11 @@ func (v *metricsView) charts() (out []chartData, more int) {
 		if unavail[s.Title] {
 			continue
 		}
-		out = append(out, chartData{title: s.Title, unit: s.Unit, values: floatSeries(v.rec[s.Alias])})
+		unit := s.Unit
+		if v.explore() {
+			unit = v.meta.unit // ExploreMetricsSpec carries none; the enriched response does
+		}
+		out = append(out, chartData{title: s.Title, unit: unit, values: floatSeries(v.rec[s.Alias])})
 	}
 	return out, 0
 }
@@ -407,6 +444,12 @@ func (v *metricsView) View(width, height int) string {
 		return b.String() + "\n" + v.renderDimPicker(width, height-2)
 	}
 
+	head := 2 // title + shared time axis
+	if line := v.metaLine(); line != "" {
+		b.WriteString(theme.Dim.Render(ansi.Truncate(line, width-1, "…")) + "\n")
+		head++
+	}
+
 	switch {
 	case v.loading:
 		b.WriteString(" " + theme.Spinner.Render(theme.Spin()+" loading…"))
@@ -432,9 +475,10 @@ func (v *metricsView) View(width, height int) string {
 	if chartW < 10 {
 		chartW = 10
 	}
-	// Charts share the body height btop-style: title + per-series header
-	// lines + one time-axis line are fixed, the rest divides into chart rows.
-	chartRows := (height - 2 - 2*n) / n
+	// Charts share the body height btop-style: title (+ catalogue line) +
+	// per-series header lines + one time-axis line are fixed, the rest
+	// divides into chart rows.
+	chartRows := (height - head - 2*n) / n
 	if chartRows < 2 {
 		chartRows = 2
 	}
@@ -505,6 +549,27 @@ func (v *metricsView) View(width, height int) string {
 		b.WriteString("\n" + theme.Dim.Render(ansi.Truncate(" "+strings.Join(notes, "   "), width, "…")))
 	}
 	return b.String()
+}
+
+// metaLine is the dim catalogue-identity line under the explorer title:
+// "displayName — description" from metric-metadata enrichment. Empty for
+// canned charts, for keys the catalogue doesn't know, and when the display
+// name merely repeats the key.
+func (v *metricsView) metaLine() string {
+	if !v.explore() {
+		return ""
+	}
+	var parts []string
+	if v.meta.name != "" && v.meta.name != v.key {
+		parts = append(parts, v.meta.name)
+	}
+	if v.meta.desc != "" {
+		parts = append(parts, v.meta.desc)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " " + strings.Join(parts, " — ")
 }
 
 // renderDimPicker draws the split-dimension overlay: the metric's dimensions

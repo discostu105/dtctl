@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/dynatrace-oss/dtctl/pkg/exec"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
 
@@ -194,6 +195,49 @@ func TestSplitByDimension(t *testing.T) {
 	}
 	if !strings.Contains(body, "+2 more series") {
 		t.Errorf("split view missing +n more note:\n%s", body)
+	}
+}
+
+func TestExplorerChartUsesEnrichedMetricMetadata(t *testing.T) {
+	ds := &dataSource{runFn: func(string) ([]map[string]any, error) { return nil, nil }}
+	mv := newMetricChartView(ds, "dt.host.cpu.idle", catalog.Entity{}, catalog.DefaultTimeframe)
+	mv.Init()()
+
+	mv.Update(dataMsg{owner: mv, seq: mv.seq,
+		records: []map[string]any{{"value": []any{42.0, 55.5}}},
+		metrics: []exec.MetricInfo{{MetricKey: "dt.host.cpu.idle", FieldName: "value", Aggregation: "avg",
+			DisplayName: "CPU idle", Description: "Percentage of idle CPU time.", Unit: "Percent"}}})
+
+	body := mv.View(100, 30)
+	// The catalogue unit renders the values as percent…
+	if !strings.Contains(body, "55.50%") {
+		t.Errorf("last value should render with the enriched %% unit:\n%s", body)
+	}
+	// …and pins the y-axis to a true 0–100 gauge.
+	if !strings.Contains(body, "100%") {
+		t.Errorf("percent chart should scale to a 0-100 gauge:\n%s", body)
+	}
+	// displayName and description show as a catalogue-identity line.
+	if !strings.Contains(body, "CPU idle — Percentage of idle CPU time.") {
+		t.Errorf("catalogue metadata line missing:\n%s", body)
+	}
+
+	// An aggregation cycle refetches the same key; a response without
+	// metadata (enrichment unavailable) must keep the known identity.
+	mv.Update(key("a"))
+	mv.Update(dataMsg{owner: mv, seq: mv.seq, records: []map[string]any{{"value": []any{60.0}}}})
+	if body := mv.View(100, 30); !strings.Contains(body, "60%") || !strings.Contains(body, "CPU idle") {
+		t.Errorf("metric identity should survive a metadata-less refetch:\n%s", body)
+	}
+
+	// Split charts inherit the unit too.
+	mv.splitDim = "host.name"
+	mv.seq++
+	mv.Update(dataMsg{owner: mv, seq: mv.seq, records: []map[string]any{
+		{"host.name": "node-a", "value": []any{10.0, 20.0}},
+	}})
+	if body := mv.View(100, 30); !strings.Contains(body, "20%") {
+		t.Errorf("split chart should render with the enriched unit:\n%s", body)
 	}
 }
 

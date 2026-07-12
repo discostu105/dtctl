@@ -250,8 +250,9 @@ func SparkColumn(title, alias string, width int, unit string) Column {
 }
 
 // FormatUnit renders a metric value in its series unit ("B" gets IEC bytes,
-// "B/s" a rate, durations ("µs", "ms", "s") scale adaptively, "%" attaches
-// its suffix, anything else appends the unit label).
+// "B/s" a rate, durations ("ns", "µs", "ms", "s") scale adaptively, "%"
+// attaches its suffix, anything else appends the unit label ("/x" rates
+// without the space).
 func FormatUnit(f float64, unit string) string {
 	switch unit {
 	case "%":
@@ -266,6 +267,8 @@ func FormatUnit(f float64, unit string) string {
 			return FormatBytes(int64(f)) + "/s"
 		}
 		return formatMetric(f) + " B/s"
+	case "ns":
+		return fmtSeconds(f / 1e9)
 	case "µs":
 		return fmtSeconds(f / 1e6)
 	case "ms":
@@ -275,8 +278,68 @@ func FormatUnit(f float64, unit string) string {
 	case "":
 		return formatMetric(f)
 	default:
+		if strings.HasPrefix(unit, "/") {
+			return formatMetric(f) + unit
+		}
 		return formatMetric(f) + " " + unit
 	}
+}
+
+// catalogueUnits maps metric-catalogue unit names — what the query API's
+// enrich=metric-metadata returns in metadata.metrics[].unit ("Percent",
+// "MicroSecond", "BytePerSecond", …) — onto FormatUnit's compact tokens.
+// Lookup is case-insensitive. Dimensionless names map to "" (bare magnitude).
+var catalogueUnits = map[string]string{
+	"percent":       "%",
+	"promille":      "‰",
+	"ratio":         "",
+	"count":         "",
+	"state":         "",
+	"unspecified":   "",
+	"notapplicable": "",
+
+	"bit":               "bit",
+	"bitpersecond":      "bit/s",
+	"byte":              "B",
+	"kilobyte":          "kB",
+	"megabyte":          "MB",
+	"gigabyte":          "GB",
+	"kibibyte":          "KiB",
+	"mebibyte":          "MiB",
+	"gibibyte":          "GiB",
+	"bytepersecond":     "B/s",
+	"byteperminute":     "B/min",
+	"kilobytepersecond": "kB/s",
+	"megabytepersecond": "MB/s",
+	"mebibytepersecond": "MiB/s",
+
+	"nanosecond":  "ns",
+	"microsecond": "µs",
+	"millisecond": "ms",
+	"second":      "s",
+	"minute":      "min",
+	"hour":        "h",
+	"day":         "d",
+
+	"millicores": "mCores",
+	"cores":      "Cores",
+	"persecond":  "/s",
+	"perminute":  "/min",
+	"perhour":    "/h",
+
+	"decibelmilliwatt": "dBm",
+	"pixel":            "px",
+}
+
+// NormalizeUnit converts a metric-catalogue unit name to FormatUnit's token
+// vocabulary ("Percent" → "%", "MicroSecond" → "µs", "Count" → ""). Unknown
+// names pass through unchanged — FormatUnit appends them as a plain label,
+// which is still better than dropping the unit.
+func NormalizeUnit(u string) string {
+	if t, ok := catalogueUnits[strings.ToLower(u)]; ok {
+		return t
+	}
+	return u
 }
 
 // FormatUnitShort is FormatUnit for dense table cells: percent keeps one
@@ -312,8 +375,10 @@ func fmtSeconds(f float64) string {
 		return formatMetric(f) + " s"
 	case abs >= 1e-3:
 		return formatMetric(f*1e3) + " ms"
-	default:
+	case abs >= 1e-6:
 		return formatMetric(f*1e6) + " µs"
+	default:
+		return formatMetric(f*1e9) + " ns"
 	}
 }
 

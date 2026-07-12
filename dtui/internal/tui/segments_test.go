@@ -65,15 +65,27 @@ func testAppSeeded(t *testing.T, opts Options) *app {
 
 func TestExecOptsCarriesSegments(t *testing.T) {
 	d := &dataSource{segments: []exec.FilterSegmentRef{{ID: "uid-a"}}}
-	opts := d.execOpts(500)
+	opts := d.execOpts(500, false)
 	if opts.MaxResultRecords != 500 || opts.FetchTimeoutSeconds != 60 {
 		t.Errorf("execOpts basics changed: %+v", opts)
 	}
 	if len(opts.Segments) != 1 || opts.Segments[0].ID != "uid-a" {
 		t.Errorf("Segments = %+v, want the dataSource's", opts.Segments)
 	}
-	if got := (&dataSource{}).execOpts(1000).Segments; got != nil {
+	if got := (&dataSource{}).execOpts(1000, false).Segments; got != nil {
 		t.Errorf("unsegmented execOpts carries %+v", got)
+	}
+}
+
+func TestExecOptsMetricEnrichment(t *testing.T) {
+	// enrichMetrics requests the metrics metadata field — pkg/exec translates
+	// it to the query API's enrich=metric-metadata parameter.
+	got := (&dataSource{}).execOpts(1000, true).MetadataFields
+	if len(got) != 1 || got[0] != "metrics" {
+		t.Errorf("enriched MetadataFields = %v, want [metrics]", got)
+	}
+	if got := (&dataSource{}).execOpts(1000, false).MetadataFields; got != nil {
+		t.Errorf("plain query must not request metadata, got %v", got)
 	}
 }
 

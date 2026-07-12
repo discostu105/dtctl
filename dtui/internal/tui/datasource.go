@@ -44,14 +44,21 @@ type dataSource struct {
 
 // execOpts builds one query's execution options — extracted so tests can
 // assert the segment injection without HTTP (the runFn seam skips it).
-func (d *dataSource) execOpts(maxRecords int64) exec.DQLExecuteOptions {
-	return exec.DQLExecuteOptions{
+// enrichMetrics requests metric-catalogue enrichment (metadata.metrics[]
+// with displayName/description/unit) — set for explorer chart queries only,
+// as the extra catalogue lookup is wasted on non-timeseries queries.
+func (d *dataSource) execOpts(maxRecords int64, enrichMetrics bool) exec.DQLExecuteOptions {
+	opts := exec.DQLExecuteOptions{
 		MaxResultRecords:    maxRecords,
 		FetchTimeoutSeconds: 60,
 		Segments:            d.segments,
 		// ShowProgress stays false: the progress bar draws on stderr and
 		// would tear the TUI's alternate screen.
 	}
+	if enrichMetrics {
+		opts.MetadataFields = []string{"metrics"}
+	}
+	return opts
 }
 
 // echoQuery renders a view's copyable CLI equivalent of a DQL fetch,
@@ -90,11 +97,14 @@ func (d *dataSource) fieldDoc(key string) (catalog.FieldDoc, bool) {
 
 // dataMsg is the result of an async query. owner identifies the view that
 // issued it (results for popped or superseded views are discarded by seq).
+// metrics is the response's metric-catalogue metadata (metadata.metrics[]);
+// it is populated only for queries issued via queryEnriched.
 type dataMsg struct {
 	owner   any
 	seq     int
 	dql     string
 	records []map[string]any
+	metrics []exec.MetricInfo
 	elapsed time.Duration
 	err     error
 }
@@ -121,25 +131,38 @@ func (d *dataSource) call(owner any, seq int, name string, scope catalog.Scope, 
 // which would corrupt the alternate screen); stale results are dropped via
 // seq instead.
 func (d *dataSource) query(owner any, seq int, dql string) tea.Cmd {
-	return d.queryCapped(owner, seq, dql, 1000)
+	return d.run(owner, seq, dql, 1000, false)
+}
+
+// queryEnriched is query with metric-catalogue enrichment: the response's
+// metadata.metrics[] (displayName/description/unit) is delivered on the
+// dataMsg. Used by explorer chart queries, where the unit is unknowable
+// client-side.
+func (d *dataSource) queryEnriched(owner any, seq int, dql string) tea.Cmd {
+	return d.run(owner, seq, dql, 1000, true)
 }
 
 // queryCapped is query with an explicit result-record cap (the dictionary
 // fetch needs more than the default view page).
 func (d *dataSource) queryCapped(owner any, seq int, dql string, maxRecords int64) tea.Cmd {
+	return d.run(owner, seq, dql, maxRecords, false)
+}
+
+func (d *dataSource) run(owner any, seq int, dql string, maxRecords int64, enrichMetrics bool) tea.Cmd {
 	return func() tea.Msg {
 		start := time.Now()
 		if d.runFn != nil {
 			records, err := d.runFn(dql)
 			return dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), records: records, err: err}
 		}
-		resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, d.execOpts(maxRecords))
+		resp, err := d.exec.ExecuteQueryWithContext(context.Background(), dql, d.execOpts(maxRecords, enrichMetrics))
 		msg := dataMsg{owner: owner, seq: seq, dql: dql, elapsed: time.Since(start), err: rewriteSegmentVarError(err)}
 		if err == nil {
 			if resp == nil {
 				msg.err = errors.New("query cancelled")
 			} else {
 				msg.records = resp.GetRecords()
+				msg.metrics = resp.GetMetrics()
 			}
 		}
 		return msg

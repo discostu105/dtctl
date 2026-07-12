@@ -89,9 +89,11 @@ func MetricScopeFilter(e Entity) string {
 var ChartAggs = []string{"avg", "sum", "min", "max"}
 
 // ExploreMetricsSpec builds the single-chart spec behind enter on an explorer
-// row. Without metadata there is no unit to attach — values render with the
-// generic magnitude formatter. The entity filter composes only when the chart
-// is scoped (e.ID != "": the explorer was itself entity-scoped).
+// row. The series carries no unit here — the chart query runs with
+// metric-metadata enrichment and the view attaches the catalogue unit
+// (metadata.metrics[].unit, via NormalizeUnit) from the response. The entity
+// filter composes only when the chart is scoped (e.ID != "": the explorer was
+// itself entity-scoped).
 func ExploreMetricsSpec(key, agg string) *MetricsSpec {
 	return &MetricsSpec{
 		Series: []MetricSeries{{Alias: "value", Title: agg + "(" + key + ")", Key: key, Agg: agg}},
