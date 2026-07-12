@@ -192,11 +192,13 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 			title: "open vulnerabilities (24h)",
 			dot:   theme.SeriesAt(2).Render("●"),
 			query: func(catalog.Timeframe) string {
+				// VULNERABILITY level only — entity-level rows would pollute
+				// the rollup (same filter as the vulnerabilities view).
 				return `fetch security.events, from:now() - 24h
-| filter event.type == "VULNERABILITY_STATE_REPORT_EVENT"
+| filter event.type == "VULNERABILITY_STATE_REPORT_EVENT" and event.level == "VULNERABILITY"
 | sort timestamp asc
-| summarize { title = takeLast(vulnerability.title), display_id = takeLast(vulnerability.display_id), level = takeLast(vulnerability.risk.level), score = takeLast(vulnerability.risk.score), status = takeLast(vulnerability.resolution.status) }, by:{vulnerability.id}
-| filter status == "OPEN"
+| summarize { title = takeLast(vulnerability.title), display_id = takeLast(vulnerability.display_id), level = takeLast(vulnerability.risk.level), score = takeLast(vulnerability.risk.score), status = takeLast(vulnerability.resolution.status), muted = takeLast(vulnerability.mute.status) }, by:{vulnerability.id}
+| filter status == "OPEN" and muted != "MUTED"
 | sort score desc
 | limit 8`
 			},
@@ -211,6 +213,45 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 					scope: catalog.Scope{Timeframe: tf}, filter: catalog.Str(rec, "display_id")}
 			},
 			yank: func(rec map[string]any) string { return catalog.Str(rec, "display_id") },
+		},
+		{
+			title: "attack detections (24h)",
+			dot:   theme.SeriesAt(4).Render("●"),
+			query: func(catalog.Timeframe) string {
+				return `fetch security.events, from:now() - 24h
+| filter event.type == "DETECTION_FINDING" and product.name == "Runtime Application Protection"
+| sort timestamp desc
+| limit 8`
+			},
+			line: func(rec map[string]any) (string, string) {
+				action := catalog.Str(rec, "finding.action")
+				class := "warn"
+				if action == "Blocked" {
+					class = "ok"
+				}
+				return fmt.Sprintf("%-5s %-14s %-7s %s",
+					catalog.FormatTime(catalog.Str(rec, "timestamp")), catalog.Str(rec, "finding.type"),
+					action, catalog.Str(rec, "k8s.workload.name")), class
+			},
+			action: func(rec map[string]any, tf catalog.Timeframe) tea.Msg {
+				// The panel looks back 24h — the jump must too, or a finding
+				// older than the shorter window filters to an empty list.
+				day := catalog.Timeframe{Label: "24h", Dur: 24 * time.Hour}
+				if tf.Dur > day.Dur {
+					day = tf
+				}
+				return pushViewMsg{spec: catalog.Lookup("attacks"),
+					scope: catalog.Scope{Timeframe: day}, filter: catalog.Str(rec, "finding.id")}
+			},
+			entity: func(rec map[string]any) *catalog.Entity {
+				id := catalog.Str(rec, "dt.smartscape_source.id")
+				if id == "" {
+					return nil
+				}
+				return &catalog.Entity{ID: id, Name: catalog.Str(rec, "k8s.workload.name"),
+					Type: catalog.Str(rec, "dt.smartscape_source.type")}
+			},
+			yank: func(rec map[string]any) string { return catalog.Str(rec, "finding.id") },
 		},
 	}
 	return v

@@ -233,6 +233,10 @@ func TestPriorityFieldsPerKind(t *testing.T) {
 		{"problem", map[string]any{"event.kind": "DAVIS_PROBLEM"}, "display_id"},
 		{"davis event", map[string]any{"event.kind": "DAVIS_EVENT"}, "event.name"},
 		{"vulnerability", map[string]any{"vulnerability.id": "V-1"}, "title"},
+		// An attack carries vulnerability.code_location.name but must hit its
+		// own arm, not the vulnerability one.
+		{"attack", map[string]any{"finding.id": "A-1",
+			"vulnerability.code_location.name": "Proxy.run():89"}, "finding.title"},
 		{"span", map[string]any{"span.kind": "server"}, "span.name"},
 		{"session", map[string]any{"user_action_count": "5"}, "start_time"},
 		{"rum event", map[string]any{"characteristics.classifier": "Request"}, "start_time"},

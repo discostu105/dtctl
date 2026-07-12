@@ -65,10 +65,18 @@ func PreviewTitle(rec map[string]any) string {
 		return userEventDetail(rec)
 	case isSyntheticRecord(rec):
 		return Str(rec, "monitor.name")
+	case isAttackRecord(rec):
+		return Str(rec, "finding.title")
 	case isBizEventRecord(rec):
 		return firstNonEmpty(Str(rec, "event.name"), Str(rec, "event.type"))
 	}
 	return ""
+}
+
+// isAttackRecord matches security detection findings (Runtime Application
+// Protection attacks and other DETECTION_FINDING producers).
+func isAttackRecord(rec map[string]any) bool {
+	return Str(rec, "finding.id") != "" || Str(rec, "finding.title") != ""
 }
 
 // PreviewFacts returns the curated preview lines for a record, nil for kinds
@@ -80,6 +88,10 @@ func PreviewFacts(rec map[string]any) []PreviewFact {
 		return problemPreview(rec)
 	case Str(rec, "event.kind") == "DAVIS_EVENT":
 		return davisEventPreview(rec)
+	case isAttackRecord(rec):
+		// Before the vulnerability arm: attack records carry
+		// vulnerability.code_location.name but are detections, not vulns.
+		return attackPreview(rec)
 	case rec["vulnerability.id"] != nil || Str(rec, "vulnerability.display_id") != "":
 		return vulnPreview(rec)
 	case isSpanRecord(rec):
@@ -407,11 +419,45 @@ func vulnPreview(rec map[string]any) []PreviewFact {
 		class = classRiskScore(score)
 	}
 	b.classed("risk", joinNonEmpty(" · ", level, score), class)
-	b.add("status", firstNonEmpty(Str(rec, "status"), Str(rec, "vulnerability.resolution.status")))
+	status := firstNonEmpty(Str(rec, "status"), Str(rec, "vulnerability.resolution.status"))
+	if muted := firstNonEmpty(Str(rec, "muted"), Str(rec, "vulnerability.mute.status")); muted == "MUTED" {
+		status = joinNonEmpty(" · ", status, "MUTED")
+	}
+	b.add("status", status)
+	exposure := exposureBadge(firstNonEmpty(Str(rec, "exposure"), Str(rec, "vulnerability.davis_assessment.exposure_status")))
+	b.classed("exposure", exposure, classExposure(exposure))
+	if firstNonEmpty(Str(rec, "exploit"), Str(rec, "vulnerability.davis_assessment.exploit_status")) == "AVAILABLE" {
+		b.classed("exploit", "publicly available", "error")
+	}
+	if fixAvailable(rec) {
+		b.classed("fix", "available", "ok")
+	}
+	b.add("stack", vulnStack(firstNonEmpty(Str(rec, "stack"), Str(rec, "vulnerability.stack"))))
 	b.add("affected", firstNonEmpty(FormatValue(rec["affected"]), FormatValue(rec["affected_entities.count"])))
+	b.add("component", firstNonEmpty(Str(rec, "component"), Str(rec, "affected_entity.vulnerable_component.name")))
 	b.add("tech", firstNonEmpty(Str(rec, "tech"), Str(rec, "vulnerability.technology")))
 	b.add("cve", firstNonEmpty(StrFirst(rec, "cve"), StrFirst(rec, "vulnerability.references.cve")))
 	b.classed("url", firstNonEmpty(Str(rec, "url"), Str(rec, "vulnerability.url")), "dim")
+	return b.facts
+}
+
+// attackPreview tells one detection's story: was it blocked, what was
+// injected, where it entered, who sent it.
+func attackPreview(rec map[string]any) []PreviewFact {
+	var b previewBuilder
+	action := Str(rec, "finding.action")
+	b.classed("action", action, classAttackAction(action))
+	sev := Str(rec, "finding.severity")
+	b.classed("severity", sev, classRiskLevel(sev))
+	b.add("type", Str(rec, "finding.type"))
+	b.wrapped("payload", Str(rec, "entry_point.payload"))
+	b.add("entry point", Str(rec, "entry_point.function.name"))
+	b.add("path", Str(rec, "entry_point.url.path"))
+	b.add("target", Str(rec, "dt.security.rap.target.name"))
+	b.add("source", FormatValue(rec["actor.ips"]))
+	b.add("process", attackProcess(rec))
+	b.classed("trace", Str(rec, "trace.id"), "dim")
+	b.add("at", FormatTime(Str(rec, "timestamp")))
 	return b.facts
 }
 

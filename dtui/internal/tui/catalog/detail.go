@@ -46,12 +46,24 @@ func PriorityFields(rec map[string]any) []string {
 		return []string{"event.name", "event.type", "event.status", "event.severity",
 			"event.description", "event.start", "event.end",
 			"dt.davis.is_rootcause_relevant", "dt_source_entity_name"}
+	case isAttackRecord(rec):
+		// Before the vulnerability arm: attack records carry
+		// vulnerability.code_location.name but are detections, not vulns.
+		return []string{"finding.title", "finding.type", "finding.severity",
+			"finding.action", "timestamp", "entry_point.payload",
+			"entry_point.url.path", "entry_point.function.name", "actor.ips",
+			"dt.security.rap.target.name", "vulnerability.code_location.name",
+			"trace.id"}
 	case rec["vulnerability.id"] != nil || Str(rec, "vulnerability.display_id") != "":
 		// The vulns view summarizes into short aliases (title, level, score…);
 		// raw security.events records keep the vulnerability.* names.
 		return []string{"title", "display_id", "level", "score", "status", "tech",
-			"cve", "url", "affected", "vulnerability.title", "vulnerability.risk.level",
-			"vulnerability.risk.score", "vulnerability.resolution.status"}
+			"cve", "url", "affected", "exposure", "exploit", "fix", "stack",
+			"component", "vulnerability.title", "vulnerability.risk.level",
+			"vulnerability.risk.score", "vulnerability.resolution.status",
+			"vulnerability.davis_assessment.exposure_status",
+			"vulnerability.davis_assessment.exploit_status",
+			"vulnerability.description", "vulnerability.remediation.description"}
 	case rec["span.kind"] != nil || Str(rec, "span.name") != "":
 		// Whichever service-name attribute this span carries (see SpanService);
 		// listing both would render the same value twice on OneAgent spans.

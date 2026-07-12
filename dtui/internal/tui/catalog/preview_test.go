@@ -321,6 +321,56 @@ func TestPreviewFactsVuln(t *testing.T) {
 	}
 }
 
+// TestPreviewFactsAttack: a detection finding previews its verdict and
+// payload — and must NOT fall into the vulnerability arm even though it
+// carries vulnerability.code_location.name.
+func TestPreviewFactsAttack(t *testing.T) {
+	facts := PreviewFacts(map[string]any{
+		"finding.id": "A-1", "finding.title": "SSRF attempt at Proxy.run():89",
+		"finding.type": "SSRF", "finding.severity": "CRITICAL", "finding.action": "Blocked",
+		"entry_point.payload": "https://evil.example/", "entry_point.url.path": "/",
+		"actor.ips": []any{"10.0.0.9"}, "trace.id": "abc123",
+		"vulnerability.code_location.name": "org.example.Proxy.run(String):89",
+	})
+	if f := factByLabel(facts, "action"); f.Value != "Blocked" || f.Class != "ok" {
+		t.Errorf("action = %+v", f)
+	}
+	if f := factByLabel(facts, "payload"); f.Value != "https://evil.example/" || !f.Wrap {
+		t.Errorf("payload = %+v", f)
+	}
+	if f := factByLabel(facts, "risk"); f.Value != "" {
+		t.Errorf("attack record must not preview as a vulnerability, got risk = %+v", f)
+	}
+	if got := PreviewTitle(map[string]any{"finding.id": "A-1", "finding.title": "SSRF attempt"}); got != "SSRF attempt" {
+		t.Errorf("attack PreviewTitle = %q", got)
+	}
+}
+
+// TestPreviewFactsVulnAssessment: the new Davis assessment aliases surface as
+// classed facts on both row shapes.
+func TestPreviewFactsVulnAssessment(t *testing.T) {
+	facts := PreviewFacts(map[string]any{
+		"vulnerability.id": "V-1", "title": "RCE in libfoo", "level": "CRITICAL",
+		"exposure": "PUBLIC_NETWORK", "exploit": "AVAILABLE", "fix": true,
+		"stack": "CODE_LIBRARY", "status": "OPEN", "muted": "MUTED",
+	})
+	if f := factByLabel(facts, "exposure"); f.Value != "public" || f.Class != "error" {
+		t.Errorf("exposure = %+v", f)
+	}
+	if f := factByLabel(facts, "exploit"); f.Value != "publicly available" || f.Class != "error" {
+		t.Errorf("exploit = %+v", f)
+	}
+	if f := factByLabel(facts, "fix"); f.Value != "available" || f.Class != "ok" {
+		t.Errorf("fix = %+v", f)
+	}
+	if f := factByLabel(facts, "status"); f.Value != "OPEN · MUTED" {
+		t.Errorf("status = %+v", f)
+	}
+	if f := factByLabel(facts, "stack"); f.Value != "library" {
+		t.Errorf("stack = %+v", f)
+	}
+}
+
 // TestPreviewFactsGenericFallback: unknown records get no curated facts —
 // the caller keeps the priority-field rendering; PreviewValue humanizes its
 // known time/duration fields there.

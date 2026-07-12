@@ -105,12 +105,17 @@ func vulnColumns(slot Column) []Column {
 	}
 }
 
-// exposureCell compresses the Davis exposure status into a triage badge:
-// reachable from where? NOT_DETECTED is a positive verdict (assessed, not
-// exposed) and renders as a dim dash; NOT_AVAILABLE (not assessed) stays
-// blank — absence of a verdict must not read like one.
+// exposureCell compresses the Davis exposure status into a triage badge.
 func exposureCell(rec map[string]any) string {
-	switch Str(rec, "exposure") {
+	return exposureBadge(Str(rec, "exposure"))
+}
+
+// exposureBadge maps the Davis exposure enum to a short verdict: reachable
+// from where? NOT_DETECTED is a positive verdict (assessed, not exposed) and
+// renders as a dim dash; NOT_AVAILABLE (not assessed) stays blank — absence
+// of a verdict must not read like one.
+func exposureBadge(status string) string {
+	switch status {
 	case "PUBLIC_NETWORK":
 		return "public"
 	case "ADJACENT_NETWORK":
@@ -150,10 +155,20 @@ func classExploit(val string) string {
 
 // fixCell marks vulnerabilities a component upgrade would fix.
 func fixCell(rec map[string]any) string {
-	if b, _ := rec["fix"].(bool); b {
+	if fixAvailable(rec) {
 		return "yes"
 	}
 	return ""
+}
+
+// fixAvailable coalesces the summarize alias and the raw record's
+// fix-availability flag.
+func fixAvailable(rec map[string]any) bool {
+	if b, ok := rec["fix"].(bool); ok {
+		return b
+	}
+	b, _ := rec["vulnerability.is_fix_available"].(bool)
+	return b
 }
 
 // vulnStack shortens the vulnerability.stack enum for a narrow column.
@@ -201,6 +216,101 @@ func pgiID(id string) string {
 		return "PROCESS_GROUP_INSTANCE-" + hex
 	}
 	return id
+}
+
+// --- attacks ------------------------------------------------------------
+
+// attacksSpec lists Runtime Application Protection detections — actual
+// exploit attempts observed at runtime (SSRF, SQL/JNDI/CMD injection), each
+// carrying the entry point, the payload, the actor IPs, and a trace id. No
+// lookback floor: attacks are timely events and an empty short window is a
+// truthful answer. Third-party detections (GuardDuty etc.) are deliberately
+// excluded for now — their rows carry none of the entry-point substance this
+// view is built around (a "cloud" lens is the natural follow-up).
+//
+// Scope.Arg carries a vulnerability.code_location.name: the vulnerability
+// page's attacks tab scopes by exact code location — the precise attack↔vuln
+// linkage for code-level vulnerabilities (attack records carry no
+// vulnerability.id; validated live).
+var attacksSpec = &Spec{
+	Name:    "attacks",
+	Aliases: []string{"attack", "exploits", "rap"},
+	Kind:    KindSignal,
+	Desc:    "Attack detections (Runtime Application Protection)",
+	Query: func(s Scope) string {
+		var b strings.Builder
+		fmt.Fprintf(&b, "fetch security.events, from:%s\n", s.Timeframe.DQL())
+		b.WriteString("| filter event.type == \"DETECTION_FINDING\" and product.name == \"Runtime Application Protection\"\n")
+		if s.Arg != "" {
+			fmt.Fprintf(&b, "| filter vulnerability.code_location.name == %q\n", s.Arg)
+		} else if f := ScopeSignalFilter(s); f != "" {
+			fmt.Fprintf(&b, "| filter %s\n", f)
+		}
+		b.WriteString("| sort timestamp desc\n| limit 300")
+		return b.String()
+	},
+	Columns: []Column{
+		{Title: "TIME", Width: 12,
+			Value: func(rec map[string]any) string { return FormatTime(Str(rec, "timestamp")) },
+			Sort:  func(rec map[string]any) any { return Str(rec, "timestamp") }},
+		{Title: "TYPE", Field: "finding.type", Width: 14},
+		{Title: "ACTION", Field: "finding.action", Width: 7, Class: classAttackAction},
+		{Title: "SEVERITY", Field: "finding.severity", Width: 8, Class: classRiskLevel},
+		{Title: "SOURCE", Width: 15, Value: func(rec map[string]any) string { return StrFirst(rec, "actor.ips") }},
+		{Title: "PROCESS", Width: 24, Value: attackProcess},
+		{Title: "LOCATION", Value: func(rec map[string]any) string {
+			return ShortCodeLocation(Str(rec, "vulnerability.code_location.name"))
+		}},
+	},
+	Entity: signalSourceEntity,
+	Trace:  func(rec map[string]any) string { return Str(rec, "trace.id") },
+	// A SERVICE pin widens to the service's runtime entities first — attack
+	// records carry process/container ids, not service ids (same story as
+	// logs).
+	Hop:    &HopSpec{Query: LogHopQuery, Apply: LogHopEntities},
+	Drills: map[string]string{"s": "trace", "l": "logs", "p": "problems", "v": "events", "m": "metrics"},
+	Scopable: func(e Entity) bool {
+		switch e.Type {
+		case "SERVICE", "HOST", "PROCESS", "CONTAINER", "PROCESS_GROUP":
+			return true
+		}
+		return strings.HasPrefix(e.Type, "K8S_")
+	},
+}
+
+// classAttackAction colors the blocked/observed verdict: a Blocked attack is
+// the system working, an Audited one reached the vulnerable code.
+func classAttackAction(val string) string {
+	switch val {
+	case "Blocked":
+		return "ok"
+	case "Audited":
+		return "warn"
+	}
+	return ""
+}
+
+// attackProcess names the attacked workload, preferring the K8s name over the
+// verbose detected process-group name.
+func attackProcess(rec map[string]any) string {
+	return firstNonEmpty(Str(rec, "k8s.workload.name"), Str(rec, "dt.process_group.detected_name"))
+}
+
+// ShortCodeLocation trims a fully-qualified code location to Class.method:
+// "org.dynatrace.ssrf.ProxyController.proxyUrl(String):89" reads as
+// "ProxyController.proxyUrl(String):89" — the package path adds width, not
+// information, in a table cell.
+func ShortCodeLocation(loc string) string {
+	head := loc
+	if i := strings.Index(loc, "("); i >= 0 {
+		head = loc[:i]
+	}
+	parts := strings.Split(head, ".")
+	if len(parts) <= 2 {
+		return loc
+	}
+	prefix := strings.Join(parts[:len(parts)-2], ".") + "."
+	return strings.TrimPrefix(loc, prefix)
 }
 
 func classRiskScore(val string) string {

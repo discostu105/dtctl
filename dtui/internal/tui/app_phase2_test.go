@@ -347,7 +347,7 @@ func TestHomePanelsLoadIndependently(t *testing.T) {
 	if !ok {
 		t.Fatalf("home initial view, top = %T", a.top())
 	}
-	if len(hv.panels) != 5 {
+	if len(hv.panels) != 6 {
 		t.Fatalf("panels = %d", len(hv.panels))
 	}
 	// Each panel got its own DQL.

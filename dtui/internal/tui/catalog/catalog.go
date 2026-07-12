@@ -104,8 +104,9 @@ type Scope struct {
 	Entities []Entity
 	// Arg is a view-specific argument: the node type for the generic entity
 	// browser ("AWS_EC2_INSTANCE"), the table/bucket/file for the record
-	// sampler, the model for the dictionary fields view, or the monitor id
-	// for synthetic executions — set by EnterArg drill-downs.
+	// sampler, the model for the dictionary fields view, the monitor id
+	// for synthetic executions — set by EnterArg drill-downs — or the
+	// vulnerable code location scoping the attacks view.
 	Arg string
 	// TraceID scopes logs/traces to one distributed trace (log↔trace jumps).
 	TraceID string
@@ -324,7 +325,7 @@ var specs = []*Spec{
 	problemsSpec, servicesSpec, hostsSpec, processesSpec, logsSpec, tracesSpec, eventsSpec,
 	podsSpec, containersSpec, workloadsSpec, namespacesSpec, nodesSpec, clustersSpec,
 	awsSpec, entitiesSpec, resourcesSpec,
-	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, metricsSpec,
+	frontendsSpec, databasesSpec, genaiSpec, vulnsSpec, attacksSpec, metricsSpec,
 	sessionsSpec, userEventsSpec, bizeventsSpec,
 	patternsSpec, slosSpec, detectorsSpec,
 	syntheticSpec, executionsSpec,

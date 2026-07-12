@@ -143,6 +143,72 @@ func TestVulnTriageCells(t *testing.T) {
 	}
 }
 
+// --- attacks ------------------------------------------------------------
+
+func TestAttacksQueryComposition(t *testing.T) {
+	unscoped := attacksSpec.Query(fixtureScope(nil))
+	for _, want := range []string{
+		"fetch security.events, from:now() - 2h", // no floor: attacks are timely events
+		`event.type == "DETECTION_FINDING" and product.name == "Runtime Application Protection"`,
+		"| sort timestamp desc",
+	} {
+		if !strings.Contains(unscoped, want) {
+			t.Errorf("attacks query missing %q:\n%s", want, unscoped)
+		}
+	}
+
+	// A code location (Scope.Arg — the vulnerability page's attacks tab) wins
+	// over entity scoping: it IS the exact attack↔vulnerability linkage.
+	located := attacksSpec.Query(Scope{Timeframe: Timeframe{Label: "2h", Dur: 2 * time.Hour},
+		Arg: "Proxy.run(String):89", Entity: &Entity{ID: "HOST-1", Type: "HOST"}})
+	if !strings.Contains(located, `| filter vulnerability.code_location.name == "Proxy.run(String):89"`) {
+		t.Errorf("code-location arm missing:\n%s", located)
+	}
+	if strings.Contains(located, "dt.smartscape.host") {
+		t.Errorf("code-location scope must not also compose the entity filter:\n%s", located)
+	}
+
+	scoped := attacksSpec.Query(fixtureScope(&Entity{ID: "PROCESS_GROUP-77", Type: "PROCESS_GROUP"}))
+	if !strings.Contains(scoped, `dt.entity.process_group == "PROCESS_GROUP-77"`) {
+		t.Errorf("PROCESS_GROUP pin must match the legacy field attacks carry:\n%s", scoped)
+	}
+}
+
+func TestAttacksScopable(t *testing.T) {
+	for _, typ := range []string{"SERVICE", "HOST", "PROCESS", "CONTAINER", "PROCESS_GROUP", "K8S_POD", "K8S_DEPLOYMENT"} {
+		if !attacksSpec.Scopable(Entity{Type: typ}) {
+			t.Errorf("attacks must accept a %s pin", typ)
+		}
+	}
+	for _, typ := range []string{"FRONTEND", "DB_INSTANCE_POSTGRES", "GENAI_MODEL"} {
+		if attacksSpec.Scopable(Entity{Type: typ}) {
+			t.Errorf("attacks must refuse a %s pin", typ)
+		}
+	}
+}
+
+func TestShortCodeLocation(t *testing.T) {
+	cases := map[string]string{
+		"org.dynatrace.ssrfservice.ProxyController.proxyUrlWithCurl(String):163": "ProxyController.proxyUrlWithCurl(String):163",
+		// .NET async state machines keep their +<Method>d__N segment.
+		"MembershipService.Controllers.MembershipController+<GetMembershipStatus>d__3.MoveNext()": "MembershipController+<GetMembershipStatus>d__3.MoveNext()",
+		"Class.method():5": "Class.method():5",
+		"noDotsAtAll":      "noDotsAtAll",
+		"":                 "",
+	}
+	for in, want := range cases {
+		if got := ShortCodeLocation(in); got != want {
+			t.Errorf("ShortCodeLocation(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestClassAttackAction(t *testing.T) {
+	if classAttackAction("Blocked") != "ok" || classAttackAction("Audited") != "warn" || classAttackAction("") != "" {
+		t.Error("attack action classes: Blocked→ok, Audited→warn, else none")
+	}
+}
+
 func TestPGIIDPrefixSwap(t *testing.T) {
 	if got := pgiID("PROCESS-EBC4A25674545389"); got != "PROCESS_GROUP_INSTANCE-EBC4A25674545389" {
 		t.Errorf("pgiID = %q", got)
