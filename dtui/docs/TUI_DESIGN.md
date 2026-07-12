@@ -148,7 +148,8 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 | Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · rpc · messaging · genai · all, tab/[/] cycle — digits stay global at the top level); trace-ID lookup (`:trace <id>`); waterfall view |
 | Metrics | `:metrics` | `timeseries` | metric browser for the scoped entity; braille/sparkline charts |
 | Events | `:events` | `events`, `dt.davis.events` | deployments, K8s events, Davis events; filterable by kind |
-| Security | `:security`, `:vulns` | `security.events` | vulnerabilities (CVE, DSS score, affected entities), detections (MITRE), posture findings |
+| Security | `:security`, `:vulns` | `security.events` | vulnerabilities: DSS score + Davis badges (exposure/exploit/fix), open·muted·all lenses, entity pins; enter → tabbed page (overview · entities · attacks · entry points · timeline · details), markdown description via glamour |
+| Attacks | `:attacks`, `:rap` | `security.events` | Runtime Application Protection detections: Blocked/Audited verdicts, payloads, source IPs, `s` → trace waterfall, entity drills |
 | RUM sessions | `:sessions` | `user.sessions` | per-app user sessions, duration, errors; session detail = action timeline |
 | Costs | `:costs`, `:dps` | `dt.system.events` | DPS consumption by capability/entity, trend |
 
@@ -1100,6 +1101,49 @@ what the numbers on screen say; no numbers visible → global bookmarks.**
   timeline — one unmodified key for the most common slice-switch (`[`/`]`
   are AltGr chords on German-layout keyboards). The brackets remain the
   explicit lens-cycling keys everywhere.
+
+### Phase 3.11 — Security workspace ✅ implemented
+
+The vulnerability view grew from a flat list into a workspace; every field
+and filter shape below was validated live against a demo tenant.
+
+- **Enriched `:vulns` list**: the summarize rollup now reads only
+  VULNERABILITY-level state reports (entity-level rows silently polluted
+  the old rollup) and adds the Davis assessment triage badges — EXPOSURE
+  (`public` red / `adjacent` yellow / `-` assessed-clear / blank
+  unassessed), EXPLOIT (`avail` red), FIX (`yes` green) — plus stack/tech
+  and lenses (open · muted · all; muted vulns leave the default lens).
+- **Entity → vulnerabilities pinning works**: a SERVICE/HOST/PROCESS pin
+  switches the query to the ENTITY-level reports (the level that carries
+  ids) — `in("<id>", related_entities.services.ids)` array membership,
+  era-identical HOST ids, and the PROCESS↔PROCESS_GROUP_INSTANCE hex-suffix
+  prefix swap — and swaps AFFECTED for the COMPONENT column. K8s types
+  honestly refuse (their ids don't match the `related_entities` era).
+- **Vulnerability page** (enter on a vuln; `d` keeps the raw record):
+  tabbed like the problem page. `overview` refetches the latest full state
+  report and renders the Davis assessment facts (risk vs CVSS, exposure,
+  data assets, vulnerable-function usage, exploit, mute audit trail),
+  remediation, and the vendor's markdown description via glamour (style
+  from lipgloss' cached dark/light verdict — no mid-session terminal
+  query; plain-text fallback). `entities` lists the affected entities with
+  component/processes/data assets and l/v/p/m drills (PROCESS_GROUP rows
+  drill through their first process instance). `attacks` shows RAP
+  detections — exact `vulnerability.code_location.name` match for
+  code-level vulns, affected-entity hop for library vulns (`filter false`
+  keeps it honestly empty when nothing matches: attacks carry no
+  vulnerability.id). `entry points` (code vulns) expands the entry-point
+  JSON docs into paths/payloads/malicious-input flags. `timeline` lists
+  status/assessment change events (30d floor). Enter on tab rows inspects
+  (the `inspect` EnterTarget sentinel) instead of re-opening the page.
+- **`:attacks` view**: Runtime Application Protection detections with
+  Blocked (green) / Audited (yellow) verdicts, source IPs, target process,
+  trimmed code location; preview shows the payload and entry point; rows
+  carry `trace.id` (`s` → waterfall) and a PROCESS source entity; SERVICE
+  pins widen through the log hop. GuardDuty/third-party detections and a
+  `:findings` view for third-party scanners stay deferred.
+- **Home**: an `attack detections (24h)` panel joins the triage page; the
+  vulnerabilities panel filters like the list (VULNERABILITY level,
+  unmuted).
 
 ### Phase 4 — Assets & mutations
 

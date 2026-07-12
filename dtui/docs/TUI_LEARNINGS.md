@@ -807,3 +807,53 @@ for validated-query / fields / gotchas output. Rules that made it reliable:
 
 This front-loaded exploration is why nearly every query worked on first live
 drive — the traps were already known before a line of view code was written.
+
+## 7. security.events (validated live, demo tenant)
+
+The facts behind the security workspace (`catalog/security.go`):
+
+- **Two report levels, two jobs.** `VULNERABILITY_STATE_REPORT_EVENT`
+  records exist at `event.level == "VULNERABILITY"` (the rollup: full
+  markdown description, complete `davis_assessment.*`, remediation,
+  references — but **counts only**, no entity ids) and `"ENTITY"` (one row
+  per affected entity: `affected_entity.*`, the vulnerable component,
+  process-instance ids, `related_entities.*.{ids,names}`, and — for CODE
+  vulns — `entry_points.entry_point_jsons`). Any rollup query MUST filter
+  the level: summarizing both levels into one `by:{vulnerability.id}`
+  bucket lets `takeLast` pick fields from either row shape.
+- **Array membership pins**: `in("SERVICE-…", related_entities.services.ids)`
+  works with plain strings (legacy-era ids — no `toSmartscapeId`).
+  SERVICE and HOST ids are identical strings across both ID eras;
+  `PROCESS-<hex>` ↔ `PROCESS_GROUP_INSTANCE-<hex>` share the hex suffix
+  (checked across every distinct PGI in 7d of attack records), so a
+  modern PROCESS pin swaps the prefix. K8s workload/cluster ids in
+  `related_entities` do NOT match Smartscape ids (`CLOUD_APPLICATION-…` /
+  legacy `KUBERNETES_CLUSTER-…`) — K8s pins refuse honestly.
+- **Attacks carry no `vulnerability.id`.** RAP `DETECTION_FINDING` records
+  link to code-level vulns only via `vulnerability.code_location.name`
+  (exact string match). For library vulns the only linkage is
+  entity-based (detections on the affected process groups) — the page's
+  attacks tab labels nothing causal and `filter false` keeps it honestly
+  empty when the hop resolves no matchable entities (an unfiltered fetch
+  would present the tenant's whole attack stream as "this vuln's
+  attacks"). `filter false` is legal DQL (constant-filter warning, empty
+  result).
+- **Attack records are fat and well-stamped**: `finding.*`
+  (type/severity/action Blocked|Audited), `entry_point.payload` +
+  `url.path` + `function.name` + structured `user_controlled_inputs`
+  (with `is_malicious` spans), `actor.ips`, full `http.request.header.*`,
+  `trace.id`/`span.id`, `dt.smartscape_source.id` (=`PROCESS-…`), both-era
+  process/host ids, and `dt.entity.process_group` — which is why
+  `legacyField` grew a PROCESS_GROUP arm.
+- **`expand entry_points.entry_point_jsons` works** (one row per entry
+  point; each element is a JSON *string* — parse client-side, tolerant of
+  malformed docs). Payload user-input values arrive masked (`*****`).
+- **State reports are periodic snapshots** (24h floor still right); a
+  resolved vuln stops being re-reported, so the page's detail fetch looks
+  back 7d. Change events (`VULNERABILITY_STATUS_CHANGE_EVENT` /
+  `…ASSESSMENT_CHANGE_EVENT`) are sparse — the timeline floors at 30d.
+- **glamour in bubbletea**: don't use `glamour.WithAutoStyle()` — it
+  issues a fresh OSC background query mid-session (bubbletea eats the
+  reply; ~100ms stall + stray input risk). Pick
+  `WithStandardStyle("dark"/"light")` from `lipgloss.HasDarkBackground()`,
+  whose verdict is already cached from the first styled frame.
