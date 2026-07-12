@@ -97,6 +97,12 @@ type problemMsg struct {
 	rec map[string]any
 }
 
+// vulnMsg opens the tabbed vulnerability page for a security.events
+// vulnerability record (summarized list row or raw state report).
+type vulnMsg struct {
+	rec map[string]any
+}
+
 // metricsMsg opens the canned metrics charts for an entity.
 type metricsMsg struct {
 	entity catalog.Entity

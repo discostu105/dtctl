@@ -770,6 +770,9 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		if catalog.IsProblem(rec) {
 			return func() tea.Msg { return problemMsg{rec: rec} }
 		}
+		if catalog.IsVulnerability(rec) {
+			return func() tea.Msg { return vulnMsg{rec: rec} }
+		}
 		return v.inspect(rec)
 	case "d":
 		rec := v.selected()

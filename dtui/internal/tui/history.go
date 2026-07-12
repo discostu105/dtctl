@@ -86,6 +86,9 @@ func (e historyEntry) signature() string {
 		if ref.Kind == "inspector" || ref.Kind == "problem" {
 			fmt.Fprintf(&b, "/%s/%s/%s", ref.Title, catalog.Str(ref.Rec, "timestamp"), catalog.Str(ref.Rec, "display_id"))
 		}
+		if ref.Kind == "vulnerability" {
+			fmt.Fprintf(&b, "/%s", catalog.Str(ref.Rec, "vulnerability.id"))
+		}
 	}
 	return b.String()
 }
@@ -258,6 +261,8 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 		return pageRef{Kind: "timeline", Crumb: v.Crumb(), Arg: v.sessionID, Lens: v.lens}, true
 	case *problemView:
 		return pageRef{Kind: "problem", Crumb: v.Crumb(), Rec: v.rec}, true
+	case *vulnerabilityView:
+		return pageRef{Kind: "vulnerability", Crumb: v.Crumb(), Rec: v.rec}, true
 	case *inspectorView:
 		return pageRef{Kind: "inspector", Crumb: v.Crumb(), Title: v.title, Rec: v.rec}, true
 	}
@@ -344,6 +349,11 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 			return nil, fmt.Errorf("problem page without record")
 		}
 		return newProblemView(a.ds, ref.Rec, time.Now()), nil
+	case "vulnerability":
+		if ref.Rec == nil {
+			return nil, fmt.Errorf("vulnerability page without record")
+		}
+		return newVulnerabilityView(a.ds, ref.Rec, tf), nil
 	case "inspector":
 		return newInspectorView(a.ds, ref.Title, ref.Rec), nil
 	}

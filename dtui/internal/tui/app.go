@@ -323,6 +323,9 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 	case problemMsg:
 		return a.navigate(newProblemView(a.ds, msg.rec, time.Now()), false)
 
+	case vulnMsg:
+		return a.navigate(newVulnerabilityView(a.ds, msg.rec, a.tf), false)
+
 	case metricsMsg:
 		return a.navigate(newMetricsView(a.ds, msg.entity, a.tf), false)
 

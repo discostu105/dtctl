@@ -205,7 +205,7 @@ func newHomeView(ds *dataSource, tf catalog.Timeframe) *homeView {
 			line: func(rec map[string]any) (string, string) {
 				level := catalog.Str(rec, "level")
 				return fmt.Sprintf("%-5s %4s %-8s %s",
-					catalog.Str(rec, "display_id"), catalog.FormatValue(rec["score"]), level,
+					catalog.Str(rec, "display_id"), catalog.FormatScore(rec["score"]), level,
 					catalog.Str(rec, "title")), classRisk(level)
 			},
 			action: func(rec map[string]any, tf catalog.Timeframe) tea.Msg {

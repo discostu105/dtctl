@@ -413,7 +413,7 @@ func affectedNames(rec map[string]any) string {
 func vulnPreview(rec map[string]any) []PreviewFact {
 	var b previewBuilder
 	level := firstNonEmpty(Str(rec, "level"), Str(rec, "vulnerability.risk.level"))
-	score := firstNonEmpty(FormatValue(rec["score"]), FormatValue(rec["vulnerability.risk.score"]))
+	score := firstNonEmpty(FormatScore(rec["score"]), FormatScore(rec["vulnerability.risk.score"]))
 	class := classRiskLevel(level)
 	if class == "" {
 		class = classRiskScore(score)

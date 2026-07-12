@@ -87,7 +87,9 @@ var vulnAffectedColumn = Column{Title: "AFFECTED", Field: "affected", Width: 8, 
 func vulnColumns(slot Column) []Column {
 	return []Column{
 		{Title: "ID", Field: "display_id", Width: 6},
-		{Title: "SCORE", Field: "score", Width: 5, Right: true, Class: classRiskScore},
+		{Title: "SCORE", Width: 5, Right: true, Class: classRiskScore,
+			Value: func(rec map[string]any) string { return FormatScore(rec["score"]) },
+			Sort:  func(rec map[string]any) any { return rec["score"] }},
 		{Title: "LEVEL", Field: "level", Width: 8, Class: classRiskLevel},
 		{Title: "EXPOSURE", Width: 8, Value: exposureCell, Class: classExposure},
 		{Title: "EXPLOIT", Width: 7, Value: exploitCell, Class: classExploit},
@@ -218,6 +220,27 @@ func pgiID(id string) string {
 	return id
 }
 
+// IsVulnerability reports whether a record stands for a vulnerability —
+// those route to the vulnerability page instead of the flat record
+// inspector. The list's summarized rows keep vulnerability.id (the summarize
+// by: key) and raw state/change records carry it natively; attack records
+// don't (they carry finding.* plus only a code location) and keep the
+// inspector.
+func IsVulnerability(rec map[string]any) bool {
+	return Str(rec, "vulnerability.id") != "" && !isAttackRecord(rec)
+}
+
+// VulnDetailQuery fetches the latest full VULNERABILITY-level state report
+// for one vulnerability — the page's overview facts and markdown description.
+// Fixed 7d lookback: a just-resolved vulnerability stops being re-reported,
+// but its page must still resolve for a while.
+func VulnDetailQuery(id string) string {
+	return fmt.Sprintf(`fetch security.events, from:now() - 7d
+| filter event.type == "VULNERABILITY_STATE_REPORT_EVENT" and event.level == "VULNERABILITY" and vulnerability.id == %q
+| sort timestamp desc
+| limit 1`, id)
+}
+
 // --- attacks ------------------------------------------------------------
 
 // attacksSpec lists Runtime Application Protection detections — actual
@@ -311,6 +334,19 @@ func ShortCodeLocation(loc string) string {
 	}
 	prefix := strings.Join(parts[:len(parts)-2], ".") + "."
 	return strings.TrimPrefix(loc, prefix)
+}
+
+// FormatScore renders a risk score the way security scores read ("9.8",
+// "10") — FormatValue's generic two decimals would print "9.80".
+func FormatScore(v any) string {
+	f, ok := FloatValue(v)
+	if !ok {
+		return FormatValue(v)
+	}
+	if f == float64(int64(f)) {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	return strconv.FormatFloat(f, 'f', 1, 64)
 }
 
 func classRiskScore(val string) string {
