@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 	"github.com/dynatrace-oss/dtctl/pkg/workspace"
+	"github.com/dynatrace-oss/dtctl/sdk/session"
 )
 
 func TestFindContextByEnvironment(t *testing.T) {
-	cfg := &config.Config{
-		Contexts: []config.NamedContext{
-			{Name: "prod", Context: config.Context{Environment: "https://abc12345.apps.dynatrace.com"}},
-			{Name: "dev", Context: config.Context{Environment: "https://dev67890.apps.dynatrace.com/"}},
+	cfg := &session.Config{
+		Contexts: []session.NamedContext{
+			{Name: "prod", Context: session.Context{Environment: "https://abc12345.apps.dynatrace.com"}},
+			{Name: "dev", Context: session.Context{Environment: "https://dev67890.apps.dynatrace.com/"}},
 		},
 	}
 	cases := []struct {

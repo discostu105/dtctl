@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dynatrace-oss/dtctl/pkg/client"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/analyzer"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/anomalydetector"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/segment"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/slo"
+	"github.com/dynatrace-oss/dtctl/sdk/session"
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
 )
@@ -21,7 +21,7 @@ import (
 // tuiSources wires the TUI's API-backed views (catalog.Spec.API) to dtctl's
 // resource handlers. All sources are read-only; construction here keeps
 // internal/tui free of HTTP, mirroring how main.go passes the DQL executor.
-func tuiSources(c *client.Client) map[string]tui.Source {
+func tuiSources(c *session.Client) map[string]tui.Source {
 	return map[string]tui.Source{
 		"slos":              sloSource(slo.NewHandler(c)),
 		"anomaly-detectors": detectorSource(anomalydetector.NewHandler(c)),

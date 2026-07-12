@@ -3,10 +3,10 @@
 //
 // dtui is a pure consumer of dtctl's configuration: contexts and credentials
 // are created and managed with dtctl (`dtctl ctx create`), and dtui reads the
-// same config file and keyring through the same packages
-// (docs/dev/DTUI_SPLIT_DESIGN.md, Decision 3). It never writes the shared
-// config; a --context override is session-local. Installed as `dtctl-tui`,
-// `dtctl tui` forwards here.
+// same config file and keyring through the shared session layer
+// (sdk/session; docs/dev/DTUI_SPLIT_DESIGN.md, Decisions 2+3). It never
+// writes the shared config; a --context override is session-local. Installed
+// as `dtctl-tui`, `dtctl tui` forwards here.
 package main
 
 import (
@@ -21,11 +21,10 @@ import (
 	"golang.org/x/term"
 
 	"github.com/dynatrace-oss/dtctl/pkg/aidetect"
-	"github.com/dynatrace-oss/dtctl/pkg/client"
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 	"github.com/dynatrace-oss/dtctl/pkg/exec"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/segment"
 	"github.com/dynatrace-oss/dtctl/pkg/workspace"
+	"github.com/dynatrace-oss/dtctl/sdk/session"
 
 	"github.com/dynatrace-oss/dtui/internal/tui"
 	"github.com/dynatrace-oss/dtui/internal/tui/catalog"
@@ -132,7 +131,9 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 		if err != nil {
 			return err
 		}
-		c, err := client.NewFromConfig(cfg)
+		// dtui ships its own client identity (DTUI_SPLIT_DESIGN.md Landmine 5):
+		// tenant-side request logs must distinguish dtui from dtctl.
+		c, err := session.NewClientFromConfig(cfg, session.WithUserAgentProduct("dtui", version))
 		if err != nil {
 			return err
 		}
@@ -166,13 +167,13 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 // flag or DTCTL_CONTEXT env var) is applied in memory only — dtui never
 // writes the shared config, so an open TUI cannot repoint scripts and agents
 // using dtctl on the same machine.
-func loadConfig() (*config.Config, error) {
-	var cfg *config.Config
+func loadConfig() (*session.Config, error) {
+	var cfg *session.Config
 	var err error
 	if cfgFile != "" {
-		cfg, err = config.LoadFrom(cfgFile)
+		cfg, err = session.LoadFrom(cfgFile)
 	} else {
-		cfg, err = config.Load()
+		cfg, err = session.Load()
 	}
 	if err != nil {
 		return nil, err
@@ -198,14 +199,14 @@ func contextOverride() string {
 // When the OAuth token expires during a long-running query poll (which can
 // exceed the 5-minute token lifetime), the executor automatically fetches a
 // fresh token and retries without aborting the query.
-func newDQLExecutor(cfg *config.Config, c *client.Client) *exec.DQLExecutor {
+func newDQLExecutor(cfg *session.Config, c *session.Client) *exec.DQLExecutor {
 	executor := exec.NewDQLExecutor(c)
-	if config.IsOAuthStorageAvailable() {
+	if session.IsOAuthStorageAvailable() {
 		ctx, err := cfg.CurrentContextObj()
 		if err == nil && ctx.TokenRef != "" {
 			tokenRef := ctx.TokenRef
 			executor = executor.WithTokenRefresher(func() (string, error) {
-				return client.GetTokenWithOAuthSupport(cfg, tokenRef)
+				return session.GetTokenWithOAuthSupport(cfg, tokenRef)
 			})
 		}
 	}
@@ -220,7 +221,7 @@ func historyPath() string {
 	if _, err := os.Stat(path); err == nil {
 		return path
 	}
-	old := filepath.Join(config.StateDir(), "tui-history.json")
+	old := filepath.Join(session.StateDir(), "tui-history.json")
 	if data, err := os.ReadFile(old); err == nil {
 		if err := os.MkdirAll(filepath.Dir(path), 0o700); err == nil {
 			_ = os.WriteFile(path, data, 0o600)
@@ -282,7 +283,7 @@ func workspaceNotice(ws *workspace.Workspace) string {
 
 // findContextByEnvironment returns the first context whose environment URL
 // matches env (case-insensitive; scheme and trailing slash ignored).
-func findContextByEnvironment(cfg *config.Config, env string) (string, bool) {
+func findContextByEnvironment(cfg *session.Config, env string) (string, bool) {
 	want := envKey(env)
 	if want == "" {
 		return "", false
