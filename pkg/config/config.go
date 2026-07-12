@@ -352,7 +352,29 @@ func loadFrom(path string, expandEnv bool) (*Config, error) {
 		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
+	if !isSupportedAPIVersion(cfg.APIVersion) {
+		return nil, fmt.Errorf("config file %s has schema version %q; this build understands %q — upgrade dtctl (or dtui) to read this config", path, cfg.APIVersion, CurrentAPIVersion)
+	}
+
 	return &cfg, nil
+}
+
+// CurrentAPIVersion is the config schema version this build reads and writes.
+// The schema evolves additively within a version: unknown fields are ignored
+// on load and preserved on save (see SaveTo), so the version only changes on
+// a breaking redefinition of existing fields. See docs/dev/CONFIG_CONTRACT.md.
+const CurrentAPIVersion = "v1"
+
+// isSupportedAPIVersion reports whether this build can read a config with the
+// given apiVersion. Three spellings denote schema v1 in the wild: the empty
+// string (configs predating enforcement), "v1" (NewConfig), and
+// "dtctl.io/v1" (the k8s-style form written by `dtctl config init`).
+func isSupportedAPIVersion(v string) bool {
+	switch v {
+	case "", CurrentAPIVersion, "dtctl.io/" + CurrentAPIVersion:
+		return true
+	}
+	return false
 }
 
 // expandEnvPreservingShellParams expands $VAR and ${VAR} references using
@@ -493,7 +515,11 @@ func (c *Config) Save() error {
 	return c.SaveTo(DefaultConfigPath())
 }
 
-// SaveTo saves the configuration to a specific path
+// SaveTo saves the configuration to a specific path.
+//
+// Contract rule (docs/dev/CONFIG_CONTRACT.md): fields unknown to this build —
+// written by a newer dtctl or another schema-v1 writer — are grafted back
+// from the file being overwritten, so an older writer never destroys them.
 func (c *Config) SaveTo(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -503,6 +529,10 @@ func (c *Config) SaveTo(path string) error {
 	data, err := yaml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if existing, err := os.ReadFile(path); err == nil {
+		data = preserveUnknownFields(existing, data)
 	}
 
 	if err := os.WriteFile(path, data, 0600); err != nil {
@@ -838,7 +868,7 @@ func (c *Config) setTokenWithKeyring(name, token string, kr keyringBackend, file
 // NewConfig creates a new default configuration
 func NewConfig() *Config {
 	return &Config{
-		APIVersion: "v1",
+		APIVersion: CurrentAPIVersion,
 		Kind:       "Config",
 		Contexts:   []NamedContext{},
 		Tokens:     []NamedToken{},

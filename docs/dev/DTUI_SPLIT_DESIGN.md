@@ -3,8 +3,13 @@
 **Status:** Phase 1 executed 2026-07-10 — in-repo split: the TUI lives in its
 own Go module and binary (`dtui/`, module `github.com/dynatrace-oss/dtui`),
 `dtctl tui` forwards to the `dtui` binary on PATH, and the root module is
-charmbracelet-free (guarded by `make dtctl-check-lean`). The repo split and
-the remaining contract work below are still pending.
+charmbracelet-free (guarded by `make dtctl-check-lean`). Contract hardening
+executed 2026-07-12 — `DTCTL_CONTEXT` is a production env override in both
+binaries, the config schema version is enforced on load, unknown fields
+survive load-modify-save, and the contract is specified in
+[CONFIG_CONTRACT.md](CONFIG_CONTRACT.md) with golden fixtures (Sequencing
+steps 1-partial and 2 below). The sdk session-layer promotion, the plugin
+dispatcher, and the repo split are still pending.
 **Created:** 2026-07-08
 **Author:** dtctl team
 
@@ -91,6 +96,10 @@ These measurements ground the plan; re-verify before executing.
 - **`DTCTL_CONTEXT` exists only in tests** — there is no production env-var
   context override today (precedent for env config exists:
   `DTCTL_DISABLE_KEYRING`, `DTCTL_TOKEN_STORAGE`, `DTCTL_SPILL*`).
+  ✅ **Resolved 2026-07-12**: `DTCTL_CONTEXT` is a production override in
+  dtctl (`LoadConfig`) and dtui (flag > env > workspace match > file), always
+  session-local. `DTCTL_OUTPUT`, documented in QUICK_START but previously
+  dead (the viper bindings were never read), now works too.
 - **Dispatch hook point exists**: `cmd/root.go` already intercepts
   unknown-command errors to add suggestions.
 
@@ -222,12 +231,26 @@ repo.
    every script and agent using dtctl on that machine. dtui context switches
    must be **session-local**; the persisting `--context` behavior in dtctl
    itself deserves rethinking (see `DTCTL_CONTEXT` below).
+   ✅ **Resolved 2026-07-12** (and the claim corrected: verified against
+   current code, `--context` no longer persists — only `dtctl ctx <name>`
+   writes the switch). `--context` and the new `DTCTL_CONTEXT` env override
+   are session-local in both binaries; the rule is written into
+   [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md) §Write rules.
 3. **Config schema versioning.** Before two independent readers exist: add a
    schema version field, tolerant parsing of unknown fields, and
    round-trip preservation on write.
+   ✅ **Fixed 2026-07-12**: `apiVersion` is enforced on load (`""`, `v1`, and
+   the `dtctl.io/v1` spelling from `dtctl config init` all mean v1; anything
+   else is a hard error naming the version), unknown fields are ignored on
+   load, and `SaveTo` grafts unknown keys back from the file being
+   overwritten (`pkg/config/preserve.go`) so an older writer never destroys
+   a newer writer's fields — deletions of known keys still stick.
 4. **Write the contract down.** A short spec: file path, schema + version,
    keyring service name, OAuth store layout, write rules — with golden
    fixtures both repos test against.
+   ✅ **Done 2026-07-12**: [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md), enforced
+   by `pkg/config/contract_test.go` against golden fixtures in
+   `pkg/config/testdata/contract/`.
 5. **Client identity.** dtui needs its own `User-Agent` (`pkg/version` is
    dtctl-branded); parameterize the app name in the sdk client.
 6. **macOS keychain UX**: a second binary means a second keychain-access
@@ -305,8 +328,8 @@ authenticate are useless.
   one design mistake that is hard to walk back.
 - Prerequisite worth doing regardless: make `DTCTL_CONTEXT` a **real
   production env override** (today it exists only in tests). It is
-  independently valuable for CI/scripting, it is the natural plugin contract,
-  and it fixes the `--context`-persists-to-disk trap for one-shot invocations.
+  independently valuable for CI/scripting and it is the natural plugin
+  contract. ✅ Done 2026-07-12 (dtctl and dtui; session-local by contract).
 
 **Management surface (v1, complete):**
 
@@ -341,11 +364,14 @@ dtui ships.
 
 ## Sequencing
 
-1. **sdk session layer** (contexts, credentials + OAuth-store locking fix,
-   client-from-context, safety semantics) + `DTCTL_CONTEXT` production env
-   override. Keep aliases/hooks/spill CLI-side.
-2. **Config contract hardening**: schema version, tolerant parsing, contract
-   spec + golden fixtures.
+1. **sdk session layer** (contexts, credentials + OAuth-store locking fix
+   ✅ 2026-07-10, client-from-context, safety semantics) + `DTCTL_CONTEXT`
+   production env override ✅ 2026-07-12. Keep aliases/hooks/spill CLI-side.
+   The session-layer promotion itself is the remaining piece.
+2. **Config contract hardening** — ✅ done 2026-07-12: schema version
+   enforced, tolerant parsing + round-trip preservation of unknown fields,
+   contract spec ([CONFIG_CONTRACT.md](CONFIG_CONTRACT.md)) + golden
+   fixtures (`pkg/config/testdata/contract/`).
 3. **Plugin dispatcher** + `dtctl plugin list` + conventions doc (one small
    PR; only after step 1).
 4. **Enforce the seam** — ✅ done 2026-07-10 (Phase 1, pulled ahead of steps
@@ -389,6 +415,8 @@ dtui ships.
 
 ## References
 
+- [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md) — the config/state contract
+  (Landmine 4), normative since 2026-07-12
 - `dtui/docs/TUI_DESIGN.md` — the TUI design this proposal extracts
 - `dtui/docs/TUI_LEARNINGS.md` — field notes; moved to dtui with the code
   2026-07-10 (as did `TUI_SMARTSCAPE_NAVIGATOR.md`)
