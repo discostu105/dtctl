@@ -76,7 +76,7 @@ These measurements ground the plan; re-verify before executing.
 - **TUI size**: ~12k LOC excluding tests (~17k including) across `pkg/tui/`
   and `cmd/tui*.go`. (Since Phase 1 the code lives in `dtui/internal/tui/`
   plus the `dtui` main package.)
-- **Coupling surface is already thin** (by design — see TUI_DESIGN.md
+- **Coupling surface is already thin** (by design — see the dtui design doc
   "Reuse, don't fork" via narrow adapters in `datasource.go`). Outside its own
   packages the TUI imports only:
   - `pkg/exec` (DQL execution; itself delegates polling to `sdk/api/query`)
@@ -161,7 +161,7 @@ them". Split when the contract is real, not before.
   401-retry, rate limiting, pagination (today split across `pkg/client` and
   `sdk/httpclient`).
 - **Safety-level semantics.** If a `readonly` context must mean the same thing
-  in both tools (TUI_DESIGN.md says it does), safety is part of the shared
+  in both tools (the dtui design doc says it does), safety is part of the shared
   contract, not a CLI feature.
 
 **Stays out of the sdk:**
@@ -170,7 +170,7 @@ them". Split when the contract is real, not before.
 - **Terminal renderers** (sparkline/braille/chart) — the "no display logic in
   the sdk" rule is correct. Options: extract a tiny standalone terminal-viz
   module with zero Dynatrace coupling, or let dtui fork them and diverge
-  toward lipgloss-native implementations (TUI_DESIGN.md already flags the
+  toward lipgloss-native implementations (the dtui design doc already flags the
   two-styling-systems tension; divergence may be healthy).
 - Resource display-field metadata; the TUI's ViewSpec catalog is dtui-domain.
 
@@ -449,9 +449,9 @@ dtui ships.
 
 - [CONFIG_CONTRACT.md](CONFIG_CONTRACT.md) — the config/state contract
   (Landmine 4), normative since 2026-07-12
-- `dtui/docs/TUI_DESIGN.md` — the TUI design this proposal extracts
-- `dtui/docs/TUI_LEARNINGS.md` — field notes; moved to dtui with the code
-  2026-07-10 (as did `TUI_SMARTSCAPE_NAVIGATOR.md`)
+- `dtui/docs/design/tui.md` — the TUI design this proposal extracts
+- `dtui/docs/dev/learnings.md` — field notes; moved to dtui with the code
+  2026-07-10 (dtui docs restructured into design/adr/dev 2026-07-12)
 - `docs/dev/ARCHITECTURE.md` — Phase-2 "Plugin System" line superseded here
 - `docs/dev/context-safety-levels.md`, `pkg/safety/` — safety semantics that
   become part of the shared contract

@@ -19,7 +19,7 @@ import (
 
 // inspectorView shows a full record grouped by field namespace — records
 // routinely carry 50+ dotted fields, so grouping beats flat YAML
-// (TUI_DESIGN.md, "Log record inspector"). The most relevant fields render
+// (docs/design/tui.md, "Log record inspector"). The most relevant fields render
 // first as a highlighted block, and '/' narrows the property list by key or
 // value substring.
 //

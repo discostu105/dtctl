@@ -13,7 +13,7 @@ import (
 )
 
 // problemView is the tabbed page behind enter on a Davis problem — the front
-// door of an investigation (TUI_DESIGN.md, "Problem detail"). The overview
+// door of an investigation (docs/design/tui.md, "Problem detail"). The overview
 // leads with Davis's own explanation and the affected entities as navigable
 // rows; the evidence tab lists the constituent Davis events; and the signal
 // tabs open logs/traces/events pre-scoped to the affected entities AND the

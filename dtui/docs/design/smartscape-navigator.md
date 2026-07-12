@@ -11,7 +11,7 @@
 > `uses`); they group generically and rank as structure. The schema query's
 > lazy-projection + summarize combination is now **validated live**. A full
 > edge page renders as "N+ relations (edge limit)" so truncation never reads
-> as completeness. Code: `pkg/tui/navigator.go`, `pkg/tui/catalog/smartscape.go`.
+> as completeness. Code: `internal/tui/navigator.go`, `internal/tui/catalog/smartscape.go`.
 
 ## Summary
 
@@ -31,7 +31,7 @@ their relationships* (level 1), *walking those relationships* (level 3),
 
 **Explicitly rejected: drawing the graph.** A force-directed hairball is the
 part of web Smartscape that does *not* work, and lipgloss v1 cannot composite
-overlays anyway (TUI_LEARNINGS §3b). The terminal-native answer is grouped
+overlays anyway (../dev/learnings.md §3b). The terminal-native answer is grouped
 lists, trees, and a trail — the ranger/Miller-column idiom, not ASCII art.
 
 ---
@@ -51,7 +51,7 @@ topology exploration. Each feature below exists to kill one of these:
 
 ## Prior art in this repo — and the gap
 
-- `pkg/tui/relations.go` — `relationsView` behind global `x`: one-hop edge
+- `internal/tui/relations.go` — `relationsView` behind global `x`: one-hop edge
   list, both directions in one query, batched name resolution, structure-first
   ranking. **This is the navigator's data seed.** Its limitation is UX: every
   hop pushes a detail page onto the app stack, so a 10-hop walk is 10 stack
@@ -59,7 +59,7 @@ topology exploration. Each feature below exists to kill one of these:
 - `entitiesSpec` (`:topo` / `:census`, `catalog/cloud.go:35`) — type census
   table. Counts only; no relationships (half of level 1).
 - `detailView`'s "related" tab (`detail.go:276`) — embedded one-hop relations.
-- `TUI_DESIGN.md` Open Question 6 defers Smartscape topology *drawing*. This
+- `tui.md` Open Question 6 defers Smartscape topology *drawing*. This
   concept resolves it: don't draw; navigate.
 
 The gap is not data access — it is a **walking surface**: trail, peek,
@@ -204,7 +204,7 @@ the whole TUI. `o` on any node opens the Smartscape intent link
 (`view_topology_in_context`, `links.go:78`) for the true visual graph when
 the terminal isn't enough. `ctrl+q` reveals the edges DQL — the navigator
 doubles as a `smartscapeEdges` teaching tool, consistent with "DQL is the
-substrate" (TUI_DESIGN.md).
+substrate" (tui.md).
 
 ---
 
@@ -224,7 +224,7 @@ smartscapeNodes "*" | summarize count = count(), by:{type} | sort count desc
 
 ```dql
 smartscapeEdges "*"
-| fieldsAdd source_type, target_type   // lazy projections — must materialize (TUI_LEARNINGS §1.8)
+| fieldsAdd source_type, target_type   // lazy projections — must materialize (../dev/learnings.md §1.8)
 | summarize count = count(), by:{source_type, type, target_type}
 | sort count desc
 ```
@@ -256,7 +256,7 @@ rendered through `catalog.KeyFacts`.
 `catalog.ActiveProblems` (`problem.go:105`), then intersect client-side
 against visible node ids — matching **both id eras**: Smartscape ids in
 `smartscape.affected_entities[].id` *and* legacy ids in
-`affected_entity_ids` (the dual-era hazard, TUI_LEARNINGS §1.3/§1.7). No
+`affected_entity_ids` (the dual-era hazard, ../dev/learnings.md §1.3/§1.7). No
 per-node problem queries, ever.
 
 ### Session cache
@@ -284,30 +284,30 @@ group header when the edge limit was hit.
 ### Known data sharp edges (inherit, don't fight)
 
 - **Nodeless edge endpoints** (`K8S_SECRET`, `K8S_CONFIGMAP` — edges but no
-  node record, TUI_LEARNINGS §1.8): render dimmed with the raw id; hop
+  node record, ../dev/learnings.md §1.8): render dimmed with the raw id; hop
   allowed, preview says "no node record".
 - **No relationship metadata API**: verbs are discovered empirically; unknown
   verbs land in a generic group and still work.
 - **Management zones don't exist in Grail Smartscape** — out of scope; would
   require the classic Monitored Entities API v2, which this concept
   deliberately does not add (DQL-only keeps the TUI seam thin for the dtui
-  split — see DTUI_SPLIT_DESIGN.md).
+  split — see the dtctl repo’s DTUI_SPLIT_DESIGN.md).
 
 ---
 
 ## Implementation shape
 
 Follows the bespoke-top-level-view pattern (`home`/`query`), per the
-extension model in TUI_LEARNINGS §2:
+extension model in ../dev/learnings.md §2:
 
 | File | Change |
 |---|---|
-| `pkg/tui/navigator.go` (new) | `navView` implementing `viewModel` + `busyReporter` + `selectionProvider` + `dqlProvider`. One type, three modes; each *level* is a separate pushed instance (overview → browser → walk), so `esc` pops levels naturally. Cursor model: flattened tree rows. Rendering models: `relations.go` (grouping), `waterfall.go` (tree), `home.go` (panels). |
-| `pkg/tui/catalog/smartscape.go` (new) | Query builders as testable data: `CensusQuery`, `SchemaQuery`, `TypeInstancesQuery`, plus `EdgesQuery`/`NamesQuery` moved from `relations.go` (which becomes a consumer). |
-| `pkg/tui/view.go` | `navMsg{mode, root Entity, arg string}` + helper. |
-| `pkg/tui/app.go` | `viewFor` case, cmdbar special, `dispatch` case, global `X` key next to `x` (`app.go:417`). |
-| `cmd/tui.go` | Arg validation + completion for `nav`. |
-| `pkg/tui/history.go` | `pageRefOf`/`viewFromRef` for `{mode, type, root, trail}` — a restored walk keeps its trail. |
+| `internal/tui/navigator.go` (new) | `navView` implementing `viewModel` + `busyReporter` + `selectionProvider` + `dqlProvider`. One type, three modes; each *level* is a separate pushed instance (overview → browser → walk), so `esc` pops levels naturally. Cursor model: flattened tree rows. Rendering models: `relations.go` (grouping), `waterfall.go` (tree), `home.go` (panels). |
+| `internal/tui/catalog/smartscape.go` (new) | Query builders as testable data: `CensusQuery`, `SchemaQuery`, `TypeInstancesQuery`, plus `EdgesQuery`/`NamesQuery` moved from `relations.go` (which becomes a consumer). |
+| `internal/tui/view.go` | `navMsg{mode, root Entity, arg string}` + helper. |
+| `internal/tui/app.go` | `viewFor` case, cmdbar special, `dispatch` case, global `X` key next to `x` (`app.go:417`). |
+| `main.go` | Arg validation + completion for `nav`. |
+| `internal/tui/history.go` | `pageRefOf`/`viewFromRef` for `{mode, type, root, trail}` — a restored walk keeps its trail. |
 
 No changes to `datasource.go`, `theme/`, `pkg/output`, `pkg/`, or `sdk/` —
 a pure-TUI feature that does not widen the dtui split seam.
@@ -364,12 +364,12 @@ the actual edge list).
 
 ## References
 
-- `pkg/tui/relations.go` — data seed (ego edges, names, edge ranking)
-- `pkg/tui/waterfall.go` — tree rendering model
-- `docs/TUI_DESIGN.md` — Open Question 6 (topology view), scope system,
+- `internal/tui/relations.go` — data seed (ego edges, names, edge ranking)
+- `internal/tui/waterfall.go` — tree rendering model
+- `tui.md` — Open Question 6 (topology view), scope system,
   "DQL is the substrate"
-- `docs/TUI_LEARNINGS.md` — §1.1/§1.2/§1.8 Smartscape DQL facts,
+- `../dev/learnings.md` — §1.1/§1.2/§1.8 Smartscape DQL facts,
   §2 extension model, §3 message-flow patterns, §5 live verification
-- `docs/dev/DTUI_SPLIT_DESIGN.md` — seam discipline this feature respects
+- [dtctl DTUI_SPLIT_DESIGN.md](../../../docs/dev/DTUI_SPLIT_DESIGN.md) — seam discipline this feature respects
 - [ranger](https://github.com/ranger/ranger) — Miller-column walking idiom
 - k9s `related` views — precedent for grouped one-hop lists in a TUI

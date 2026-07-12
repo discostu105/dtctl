@@ -1,6 +1,6 @@
 // Package tui implements the interactive terminal UI behind the dtui binary
 // (`dtctl tui` forwards to it) — a k9s-style navigator over observability
-// primitives (see docs/TUI_DESIGN.md). It is a presentation layer over
+// primitives (see docs/design/tui.md). It is a presentation layer over
 // dtctl's pkg/exec and the catalog's DQL templates; nothing outside the dtui
 // main package imports it.
 package tui

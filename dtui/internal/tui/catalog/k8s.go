@@ -9,7 +9,7 @@ import (
 // Kubernetes entity views. All queries validated live against a tenant:
 // smartscapeNodes is a starting command (no fetch), k8s.object is a JSON
 // string parsed with the DPL JSON matcher, and the numbers it yields are
-// strings (toLong() where math is needed). See docs/TUI_DESIGN.md.
+// strings (toLong() where math is needed). See docs/design/tui.md.
 
 // k8sScopeFilter narrows a K8s list to the entity the user drilled in from:
 // pods of a namespace, pods on a node, pods of a workload, anything of a

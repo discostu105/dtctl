@@ -6,7 +6,7 @@ import (
 )
 
 // All queries below were validated live against a tenant (field names, filter
-// syntax, and toSmartscapeId usage); see docs/TUI_DESIGN.md "Detail Pages"
+// syntax, and toSmartscapeId usage); see docs/design/tui.md "Detail Pages"
 // for the exploration notes.
 
 var problemsSpec = &Spec{
@@ -251,7 +251,7 @@ func signalSourceEntity(rec map[string]any) *Entity {
 
 // eventLenses slice the events hub. The first three lens the Davis events
 // table; system and audit swap the query to dt.system.events — one view is
-// the front door for every event-shaped record (TUI_DESIGN.md promised a
+// the front door for every event-shaped record (docs/design/tui.md promised a
 // filterable events view; the lenses are that filter).
 var eventLenses = []Lens{
 	{Name: "all", Desc: "every Davis event record"},

@@ -2,7 +2,7 @@
 //
 // Each view is a Spec: a scope-aware DQL query template plus curated columns
 // and drill-down targets. Adding a view is configuration, not plumbing (see
-// docs/TUI_DESIGN.md, "The ViewSpec catalog"). The package is free of any
+// docs/design/tui.md, "The ViewSpec catalog"). The package is free of any
 // TUI framework dependency so query composition can be tested as plain data.
 package catalog
 
@@ -426,7 +426,7 @@ func smartscapeField(entityType string) string {
 
 // legacyField returns the deprecated dt.entity.* field for an entity type.
 // Records carry both ID eras during the Smartscape migration, so scope
-// filters must match either (TUI_DESIGN.md, "Dual entity-ID eras").
+// filters must match either (docs/design/tui.md, "Dual entity-ID eras").
 func legacyField(entityType string) string {
 	switch entityType {
 	case "HOST":

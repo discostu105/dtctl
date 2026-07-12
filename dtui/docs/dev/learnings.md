@@ -1,10 +1,10 @@
-# TUI Implementation — Field Notes & Learnings
+# Field Notes & Learnings
 
-Working notes captured while implementing Phases 2–3 of the interactive TUI
-(`dtctl tui`). This complements [TUI_DESIGN.md](TUI_DESIGN.md) (the design) and
-[ARCHITECTURE.md](ARCHITECTURE.md): it records the **DQL/Grail facts validated
-against a live tenant**, the **TUI extension model**, and the **traps** that
-cost time — the things you cannot infer from reading the code alone.
+Working notes captured while implementing dtui. This complements
+[the design doc](../design/tui.md): it records the **DQL/Grail facts
+validated against a live tenant**, the **TUI extension model**, and the
+**traps** that cost time — the things you cannot infer from reading the
+code alone.
 
 > **Privacy:** all identifiers below are illustrative placeholders. Never paste
 > real environment IDs, entity IDs, or tenant/app names into the repo.
@@ -13,7 +13,7 @@ cost time — the things you cannot infer from reading the code alone.
 
 ## 1. The DQL substrate — facts validated live
 
-Every query in `pkg/tui/catalog/` was checked against a real tenant. Grail is
+Every query in `internal/tui/catalog/` was checked against a real tenant. Grail is
 introspectable, but it **fails silently**: a wrong field, wrong id type, or
 wrong data-object name returns `{"records": []}` with exit 0 — *no error*. This
 is the single most important thing to internalize. Always confirm a query
@@ -236,7 +236,7 @@ Affected-entity id arrays differ by era: `smartscape.affected_entity.ids` uses
 
 ### 1.10 search & fieldsSummary — the facet substrate
 
-All validated live; implementation in `pkg/tui/catalog/facets.go`.
+All validated live; implementation in `internal/tui/catalog/facets.go`.
 
 - **`| search "text"` placement is constrained.** It works after the source
   command (`fetch`, `smartscapeNodes`) and after `filter`/`fieldsRemove`, but
@@ -402,8 +402,8 @@ Validated live for Phase 3.5 (box tenant; synthetic on the demo tenant):
 
 Views without a DQL substrate (SLOs, anomaly detectors) or with a non-DQL
 execution engine (log patterns) set `Spec.API` to a source name; sources are
-`func(ctx, scope, dql)` closures built in `cmd/tui_sources.go` from the
-existing resource handlers and injected via `tui.Options.Sources` — pkg/tui
+`func(ctx, scope, dql)` closures built in `sources.go` from the
+existing resource handlers and injected via `tui.Options.Sources` — `internal/tui`
 stays HTTP-free. Rules learned:
 
 - The composed `Spec.Query` output (when present) is handed to the source as
@@ -570,7 +570,7 @@ Key design points learned:
 ### Bespoke screens (not table-driven)
 
 `home`, `query` (DQL escape hatch), `nav` (smartscape navigator — overview /
-type browser / walk, see TUI_SMARTSCAPE_NAVIGATOR.md), `waterfall`,
+type browser / walk, see ../design/smartscape-navigator.md), `waterfall`,
 `relations`, `detail`, `inspector`, `metrics` each implement the `viewModel`
 interface directly.
 Optional capability interfaces let the app treat them uniformly:
@@ -644,7 +644,7 @@ the user intended.
 ## 3b. Visual design (theme package)
 
 - **The palette is adaptive with explicit fallbacks.** Every color in
-  `pkg/tui/theme` is a `lipgloss.CompleteAdaptiveColor`: truecolor hex
+  `internal/tui/theme` is a `lipgloss.CompleteAdaptiveColor`: truecolor hex
   (Catppuccin Mocha/Latte) plus hand-picked ANSI-256 and ANSI-16 fallbacks per
   background flavor. lipgloss picks the variant for the terminal's capability
   and background — never rely on automatic downsampling for the 16-color tier,

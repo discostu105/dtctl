@@ -61,8 +61,8 @@ Command alias system design:
 
 ---
 
-### [TUI_DESIGN.md](../../dtui/docs/TUI_DESIGN.md)
-Interactive terminal UI design — a k9s-style navigator over observability primitives. Lives in `dtui/docs/` with the rest of the TUI docs since the TUI became its own module and binary (`dtui/`, reached via `dtctl tui` forwarding — see [DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md)):
+### [dtui design docs](../../dtui/docs/README.md)
+Interactive terminal UI design — a k9s-style navigator over observability primitives. Lives in `dtui/docs/` (design docs, ADRs, contributor notes) since the TUI became its own module and binary (`dtui/`, reached via `dtctl tui` forwarding — see [DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md)). The core design doc is [dtui/docs/design/tui.md](../../dtui/docs/design/tui.md):
 - **View Catalog** - Services, hosts, K8s, cloud infra, frontends, logs, traces, problems, security, costs as declarative ViewSpecs
 - **Navigation Model** - Command-bar aliases, a universal drill-down key vocabulary, topology hops via Smartscape, scope pinning
 - **Investigation Flows** - Problem → entities → logs → traces with automatic scoping; DQL as substrate with a reveal-query escape hatch

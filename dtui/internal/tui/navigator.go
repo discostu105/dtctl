@@ -16,7 +16,7 @@ import (
 )
 
 // navView is the smartscape navigator (:nav) — a dedicated app for exploring
-// the topology graph (docs/TUI_SMARTSCAPE_NAVIGATOR.md). Three levels,
+// the topology graph (docs/design/smartscape-navigator.md). Three levels,
 // one layout language (list left, preview right):
 //
 //   - overview: entity-type census plus the type-level relationship schema

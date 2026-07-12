@@ -9,7 +9,7 @@ import (
 
 // Smartscape topology helpers: the queries and record accessors behind the
 // relations panel ('x') and the smartscape navigator (:nav). Facts validated
-// live (see docs/TUI_LEARNINGS.md §1): smartscapeNodes/smartscapeEdges are
+// live (see docs/dev/learnings.md §1): smartscapeNodes/smartscapeEdges are
 // commands, not tables; ids must be compared via toSmartscapeId() (a plain
 // string comparison silently matches nothing); edge records carry no names
 // (resolve them with a second batched nodes query); source_type/target_type

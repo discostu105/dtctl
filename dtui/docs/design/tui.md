@@ -1,17 +1,20 @@
-# TUI (Interactive Mode) Design Proposal
+# dtui — Design
 
-**Status:** Phases 1–3 implemented; Phase 4 (assets & mutations) proposed
-**Location:** Since 2026-07-10 the TUI lives in its own Go module and binary —
-`dtui/` (`main.go`, `internal/tui/`, this document under `docs/`); `dtctl tui`
-forwards to the `dtui` binary on PATH. Older path references in this document
-(`pkg/tui/`, `cmd/tui.go`) map to `internal/tui/` and `main.go`. See
-[DTUI_SPLIT_DESIGN.md](../../docs/dev/DTUI_SPLIT_DESIGN.md) in the dtctl repo.
-**Created:** 2026-07-05
-**Author:** dtctl team
+**Status:** Phases 1–3 implemented (see [../dev/phases.md](../dev/phases.md));
+Phase 4 (assets & mutations) proposed
+**Created:** 2026-07-05 · **Author:** dtctl team
+
+dtui is its own Go module and binary; `dtctl tui` forwards to the `dtui`
+binary on PATH ([ADR-0004](../adr/0004-separate-module-and-binary.md),
+[DTUI_SPLIT_DESIGN.md](../../../docs/dev/DTUI_SPLIT_DESIGN.md) in the dtctl
+repo). Code paths in this document are relative to the dtui module
+(`main.go`, `internal/tui/…`); `pkg/…` and `sdk/…` refer to the dtctl root
+module it consumes.
 
 ## Overview
 
-This document proposes an interactive terminal UI for dtctl — `dtctl tui` — in the
+dtui is an interactive terminal UI for Dynatrace — launched as `dtui` or
+`dtctl tui` — in the
 spirit of [k9s](https://k9scli.io/) for Kubernetes: a persistent, keyboard-driven
 navigator over the **primitives of an observability platform**. The user thinks
 in nouns — services, hosts, pods, logs, traces, problems, frontends, cloud
@@ -34,8 +37,9 @@ The design is grounded in two inputs:
    surface area (the view catalog below mirrors its skill domains) and encodes
    the canonical investigation flows (problem → entities → logs → traces).
 
-`ARCHITECTURE.md` already lists "Interactive Mode: TUI using bubbletea/lipgloss"
-as a future idea; this document turns that line into a concrete design.
+dtctl's `ARCHITECTURE.md` already listed "Interactive Mode: TUI using
+bubbletea/lipgloss" as a future idea; this document turns that line into a
+concrete design.
 
 ---
 
@@ -575,7 +579,7 @@ without a new page implementation.
 Confirmed span fields: `span.name`, `span.kind`, `span.parent_id`, `duration`,
 `start_time`, `request.is_failed` / `transaction.is_failed`, `endpoint.name`,
 `http.route`, `db.system.name` / `db.query.text`, `code.function`, `trace.id`.
-Category attributes come in two semconv eras per tenant (see TUI_LEARNINGS
+Category attributes come in two semconv eras per tenant (see ../dev/learnings.md
 §1.11) — filters and columns coalesce both. The kind column badges db
 (`⛁ db`) and messaging (`✉ msg`) spans the way GenAI ops already replace it.
 
@@ -686,10 +690,11 @@ hand-rolled ANSI layer (`live.go`, `progress.go`) into a framework (rejected —
 input handling, focus, and compositing are exactly what a framework should
 own). Consequence to accept: two styling systems — `pkg/output/styles.go` raw
 ANSI for CLI output, lipgloss in the TUI. The chart/sparkline/braille renderers
-emit plain strings and embed cleanly in either; a `pkg/tui/theme` adapter keeps
+emit plain strings and embed cleanly in either; a `internal/tui/theme` adapter keeps
 the palette consistent and delegates capability detection to the existing
-`ColorEnabled()` logic. New dependencies go in the root module only — **the SDK
-stays TUI-free**.
+`ColorEnabled()` logic. charmbracelet dependencies live in the dtui module
+only — **dtctl's root module and the SDK stay TUI-free** (enforced by
+`make dtctl-check-lean`).
 
 ### The ViewSpec catalog — declarative views
 
@@ -745,32 +750,30 @@ everywhere else.
 ### Package layout
 
 ```text
-cmd/
-  tui.go                 # cobra command: guards, flag wiring, launches tui.App
-pkg/tui/
+main.go                  # guards, flag wiring, workspace file, launches tui.App
+sources.go               # API-backed view sources (SLOs, detectors, analyzers)
+internal/tui/
   app.go                 # root tea.Model: view stack, command bar, routing, global keys
   theme/                 # lipgloss styles; adapter over output.ColorEnabled()
-  catalog/               # ViewSpec definitions (one file per domain:
-                         #   k8s.go, hosts.go, services.go, cloud_aws.go, rum.go, …)
-  views/                 # the generic engines, not per-noun screens:
-    table.go             #   entity/signal/asset table shell driven by ViewSpec
-    detail.go            #   panel-composed detail view driven by DetailSpec
-    problems.go          #   problem detail (bespoke: evidence timeline)
-    waterfall.go         #   trace waterfall (bespoke)
-    logs.go              #   log stream + record inspector (bespoke: follow mode)
-    query.go             #   DQL escape hatch
-    home.go, ctx.go, help.go
-  components/            # statusbar, cmdbar, confirm modal, timeframe picker,
-                         #   relations panel, dql-progress bar, chart pane
-  scope.go               # Scope{Entity, Entities, Timeframe, Pins}; renders DQL fragments
-  topo.go                # Smartscape relation resolution for the relations panel
-  datasource.go          # async adapters: pkg/exec + pkg/resources calls → tea.Cmd/tea.Msg
+  catalog/               # the declarative view catalog: Specs, query builders,
+                         #   scope composition, facets, enrichment (one file per domain)
+  table.go               # generic entity/signal table engine driven by Spec
+  detail.go              # tabbed entity detail page driven by DetailSpec
+  problem.go, vulnerability.go   # bespoke tabbed pages
+  waterfall.go, timeline.go      # trace waterfall, RUM session timeline
+  inspector.go, render.go        # record inspector + typed value rendering
+  navigator.go           # smartscape navigator (overview / browser / walk)
+  home.go, query.go, metrics.go, relations.go, segments.go, links.go
+  view.go, history.go    # view registry, navigation messages, persisted history
+  datasource.go          # async adapters: pkg/exec + resource calls → tea.Cmd/tea.Msg
 ```
 
-Rules, mirroring existing layering: `pkg/tui` imports `pkg/resources`,
-`pkg/exec`, `pkg/output` (renderers), `pkg/safety`, `pkg/config`; nothing
-imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
-`tea.Cmd` goroutine with `context.Context` cancellation tied to view lifetime.
+Rules, mirroring existing layering: `internal/tui` imports dtctl's
+`pkg/resources`, `pkg/exec`, `pkg/output` (renderers) and the SDK's
+`sdk/session` (config, credentials, client, safety); nothing imports
+`internal/tui` except the `dtui` main package; no HTTP in `internal/tui`;
+every API call is a `tea.Cmd` goroutine with `context.Context` cancellation
+tied to view lifetime.
 
 ### Refresh & data handling
 
@@ -800,361 +803,13 @@ imports `pkg/tui` except `cmd/tui.go`; no HTTP in `pkg/tui`; every API call is a
 
 ---
 
-## Implementation Phases
+## Implementation Status
 
-### Phase 1 — Shell + the core map (services, hosts, problems, logs) ✅ implemented
-
-- `cmd/tui.go` guards; app shell: command bar, breadcrumbs, footer, help,
-  theme adapter, timeframe picker.
-- ViewSpec engine (table shell + detail shell) with the first catalog slice:
-  **problems, services, hosts, logs** — enough for the core triage loop.
-- Drill-down vocabulary (`l m p v d o enter esc -`), command echo, refresh.
-- Tabbed entity detail page (`enter` on an entity row): curated key-facts
-  panel + full properties, a **related** tab (the entity's Smartscape
-  neighbors — a host's processes/containers/K8s node — embedded relations
-  view; enter navigates, the highlighted neighbor drives pin/x/o), a
-  containment tab where one exists (K8S_NODE → its pods, completing
-  host → related → node → pods; pods edge to the node, never the host),
-  and metrics / logs / events / problems as lazily-loaded pre-scoped tabs
-  (`tab` to switch, drill letters jump to their tab). Record inspector with a highlights block and
-  `/` property search.
-- Read-only. Success criterion: the incident-triage journey works end to end.
-
-### Phase 2 — Topology + traces + Kubernetes ✅ implemented
-
-- Relations panel (`x`) over `smartscapeEdges` (both directions in one
-  query, batched name resolution, raw-id fallback for nodeless types);
-  scope pinning (`.` / `ctrl-x`).
-- Traces view (direct span fetch sliced by lenses — roots · errors ·
-  server · client · db · genai · all; no aggregation, so queries stay fast
-  and every span attribute reaches the inspector and the facet picker;
-  root heuristic `isNull(span.parent_id)`) + span waterfall
-  (`toUid()` cast, tree from `span.parent_id`, proportional bars, failed
-  markers, auto-widening window); log ↔ trace jumps in both directions
-  (`s` on a log record, `l` on a waterfall — log `trace_id` is a plain
-  string, span `trace.id` is a UID).
-- Kubernetes catalog: clusters, nodes, namespaces, workloads
-  (deployments + statefulsets + daemonsets in one multi-type query with
-  coalesced ready/desired), pods (READY/RST/PHASE from `parse
-  k8s.object, "JSON:obj"`); containment navigation (enter on a workload
-  → its pods; detail on `d`). Live-validated gotcha baked into
-  `SignalFilter`: log records carry `k8s.*` name attributes but **no**
-  `dt.smartscape.k8s_*` fields, so K8s log scoping matches by name.
-- Metric-column enrichment (batched `timeseries ... by:{...}, filter:
-  in(...)` per page, braille sparkline cells, blank-cell degradation),
-  column sorting (`J`/`K`, smart default direction, empties last),
-  digit hotkeys (0 home … 9 aws).
-
-### Phase 3 — Breadth: cloud, frontends, security, escape hatch ✅ implemented
-
-- AWS inventory (census by type → typed list with `tags:aws` Name-tag
-  display fallback) and the generic `:entities` browser over any
-  Smartscape type via one `resources` view; Postgres databases; web
-  frontends with request/error sparklines and Web-Vitals charts; GenAI
-  agents/services/models/providers; security vulnerabilities
-  (deduplicated `security.events` state reports, 24h lookback floor).
-  Azure/GCP inventories and DPS costs remain open (no data on the
-  exploration tenant).
-- DQL escape hatch (`:query`) with `ctrl-q` reveal-query from every
-  view, dynamic result columns, and `o` opening the query as a notebook.
-  Live progress/history remain open.
-- Home triage view: active problems, failing services (from failed
-  spans), Kubernetes warning events, open vulnerabilities — panels load
-  independently, enter jumps into the full view pre-filtered.
-- Browser deep links (`o`) via intent URLs: problems → Davis problems
-  app, traces → Distributed Tracing, K8s/services/databases → their
-  apps by `nodeId`, anything else → Smartscape topology; `y`/`c` yank
-  ids and CLI commands over OSC 52.
-
-### Phase 3.5 — Data & analysis breadth ✅ implemented
-
-- **RUM**: `:sessions` (24h-floored window — sessions are sparse; lenses
-  all · errors · bounced; enter = the session's event timeline) and
-  `:userevents` (lenses all · errors · actions · views · requests, the
-  views lens carrying Core Web Vitals columns with threshold coloring;
-  `s` jumps request events to their trace waterfall). Frontends gained
-  `u`/`e` drills into both. Home gained a "frontend errors (24h)" panel.
-- **Business events**: `:bizevents` (24h floor, type/provider facets, a
-  best-effort content column — producers name payloads inconsistently).
-- **Semantic dictionary**: one `:dictionary` view (aliases `models`,
-  `fields`, `dict`) whose lens strip carries models · fields · stable ·
-  experimental · deprecated — the same tabs every other lensed view has.
-  Enter on a model opens its fields (fields lens, `Arg` = model, via the
-  expand + leftOuter-join pipeline — fields.model_id is dead, see
-  TUI_LEARNINGS); enter on a field opens the full definition (examples,
-  enums) in the inspector.
-- **Data explorer**: `:tables` (19 tables / 344 views, fieldsSnapshot-only
-  objects refuse entry), `:buckets` (records/size/retention; enter samples
-  the bucket via `dt.system.bucket ==`), `:files` (Grail lookup data;
-  enter runs `load "<path>"`), all feeding the generic `:records` sampler
-  with derived columns.
-- **Synthetic**: `:synthetic` (classic-entity union of browser + HTTP
-  monitors with an availability-sparkline enrichment across both metric
-  families) → enter → `:executions` (dt.synthetic.events; lenses
-  runs · steps · failed).
-- **Log patterns**: `a` on any logs view runs the Davis
-  `LogPatternExtractor` analyzer over exactly the visible query (scope +
-  server searches + facets); enter on a pattern drills back into the
-  matching records via `matchesPattern`.
-- **API-backed views**: the catalog gained `Spec.API` — named non-DQL
-  sources wired in `cmd/tui.go` (`tui.Options.Sources`) — powering
-  `:slos` (definitions + parallel per-SLO live evaluation for
-  status/SLI/error-budget columns) and `:detectors` (Settings API), with
-  facets/server-search honestly disabled where no DQL exists.
-
-### Phase 3.6 — Connection & polish ✅ implemented
-
-- **Session timeline (the RUM waterfall)**: enter on a session renders its
-  events proportionally on the session's time axis, nested by time
-  containment (views → user actions → requests/errors), colored by kind,
-  with journey · requests · errors · all lenses (a busy session is 16k
-  requests vs ~65 actions — the journey skeleton is the default). `s` on a
-  request row jumps into its backend trace waterfall; `u` on any RUM event
-  row jumps back to its session's timeline; `e` keeps the flat sortable
-  events table. Sessions ↔ events ↔ traces are two keystrokes apart in
-  every direction.
-- **GenAI is about prompts and tool calls**: the traces genai lens leads
-  with the operation (chat · tool · agent), the last user prompt or the
-  tool call (name + arguments), model, and token usage (cache-read tokens
-  folded into "in"). The waterfall badges GenAI spans (✦ chat, ⚙ tool,
-  ◈ agent) and swaps their labels for the prompt/tool text plus a
-  `⟨in→out⟩` token annotation. The span inspector renders the whole
-  exchange as a first-class **conversation** section — system prompt,
-  every turn role-colored, reasoning marked, tool calls/results — instead
-  of opaque JSON. GenAI entities scope traces/logs/metrics through the
-  `dt.smartscape.gen_ai.*` fields (dot namespace — see TUI_LEARNINGS).
-- **Pattern drill parses**: enter on a log pattern now also applies the
-  extractor's DPL expression via `| parse content, "<pattern>"` — the
-  pattern's named tokens (`f_1`, `f_2`, …) become real table columns
-  (and facet/sort targets), so a pattern's variables are analyzable, not
-  just visible.
-- **Open-with picker**: `o` gathers every browser target the selection
-  supports — the record's native app, URLs the record itself carries
-  (`vulnerability.url` fixed the dead vulnerability page), the trace, the
-  entity's app, the Smartscape topology, the query as a notebook — opening
-  directly when there is one and raising a numbered picker when several
-  apply (`y` yanks the URL instead).
-- **Semantic dictionary everywhere**: one session-cached fetch of
-  `dt.semantic_dictionary.fields` powers an `ⓘ` footer in every record
-  inspector describing the field under the cursor (description · unit ·
-  stability) — the data model explains itself in place.
-- **Auth that survives the session**: OAuth access tokens expire under a
-  long-running TUI; `pkg/client` now retries a 401 once with a re-resolved
-  (force-refreshed) token, covering the initial query execute (the SDK's
-  `OnUnauthorized` only guarded the poll loop) and every REST-backed
-  source.
-- **Brand header**: the Dynatrace-gradient wordmark (`▛▞▟ dtctl`, lime →
-  teal → blue → purple) plus the environment host next to the context
-  name.
-- **Frontends wired into RUM**: a frontend's detail page carries sessions
-  and userevents tabs (replacing logs/traces, which frontends never
-  match); enter on a session row inside the tab drills straight into the
-  session timeline, and `d` there opens the session's own record — the
-  event → session navigation.
-- **Nested lens strips**: when a detail tab shows its own lens strip
-  (traces, sessions), `[`/`]` drive that strip; tab/shift+tab keep cycling
-  the page tabs. (Superseded refinement — see "One owner per key" below:
-  digits stayed global hotkeys and the brackets stopped falling back to
-  the tab bar.)
-- **Both GenAI instrumentation eras**: the genai lens, badges, detail
-  column, tokens, and the conversation section understand the semconv
-  convention (`gen_ai.operation.name`, JSON message blobs) *and* the
-  traceloop/LangChain one (`llm.request.type`, flat numbered
-  `gen_ai.prompt.N.*` / `gen_ai.completion.N.*` attributes) — and a GenAI
-  entity's traces tab/drill opens on the genai lens, since agent spans
-  rarely include trace roots.
-
-### Phase 3.7 — Actionable detail pages ✅ implemented
-
-- **Pulse header on entity pages**: the identity header gained a second line
-  answering "is this thing on fire?" on every tab — active-problem count
-  (one `dt.davis.problems` query per page open, lookback floored at 24h,
-  update-records deduped by `display_id`), the list row's enrichment
-  sparklines re-rendered for free (`__enrich.*` already rode in on the
-  record), and the entity's age. Tab labels badge their row count once a
-  tab has loaded (`logs (312)`, `evidence (4)`) — no speculative count
-  queries.
-- **Signals block on the details tab**: between the key facts and the
-  properties, navigable rows for the entity's active problems (enter → the
-  problem page) and its latest change-ish event (deployments, config
-  changes, restarts, SDLC events, and the CUSTOM_INFO-typed "Deployment
-  spec change" K8s workload events — validated live on both tenants; fixed
-  7d lookback), enter → the event record. Quiet entities show nothing —
-  the pulse line already tells that story.
-- **The problem page**: enter on a Davis problem opens a bespoke tabbed
-  page instead of the flat inspector ('d' keeps the raw record; the full
-  record also stays one tab away on "details"). Overview = curated facts,
-  the affected entities as navigable rows, and `event.description` wrapped
-  ("Davis says"). Evidence = the constituent `dt.davis.events` fetched by
-  `dt.davis.event_ids` (update-records collapsed per event id, root-cause
-  relevance marked ✱). Logs/traces/events tabs are pre-scoped to **all**
-  affected entities and the problem's own window (`event.start` →
-  `event.end`/now, ±5m context pad) — the global timeframe picker
-  deliberately does not reach into the page. Catalog got two extensions
-  for this: `Scope.Entities` (or-joined signal/span filters; span filter
-  keeps only span-scopable types and the traces tab is omitted when none
-  qualify) and absolute `Timeframe.From/To` windows rendered as
-  `toTimestamp("…"), to:toTimestamp("…")` through the same `from:%s` slot
-  every query template uses (validated live).
-- **Per-kind record highlights**: the inspector's priority block is now
-  `catalog.PriorityFields(rec)` — problems, Davis events, vulnerabilities
-  (both the summarized aliases and raw `vulnerability.*` names), spans,
-  RUM sessions/events, and synthetic executions each hoist their own
-  essentials; log-shaped records keep the original list.
-- **Links block in record inspectors**: the record's exits — trace ids,
-  entity ids (arrays exploded), URLs — hoist into one `▍ links` section
-  between the highlights and the namespace groups, ranked traces →
-  entities → URLs, capped at 8 rows (an overflowing key stays whole in its
-  group), names resolved by the existing batched lookup. Entity pages keep
-  facts + related instead.
-- **KeyFacts gaps**: GENAI_* (provider — the nodes are otherwise bare) and
-  K8S_NAMESPACE (cluster) gained curated facts.
-
-### Phase 3.8 — Smartscape navigator ✅ implemented
-
-Full design: `docs/TUI_SMARTSCAPE_NAVIGATOR.md`.
-
-- **`:nav`** (aliases `smartscape`, `navigator`): a dedicated topology app in
-  three stacked levels — overview (type census + type-level relationship
-  schema from one `smartscapeEdges` summarize, lazy `source_type`/
-  `target_type` materialized via `fieldsAdd`, validated live on box),
-  type browser (instances with health dots), and **walk mode**: an
-  ego-centric neighbor tree grouped by (direction, verb), structure ranked
-  before mesh, per-group render cap with explicit `+N more`, and a
-  breadcrumb **trail** — hops re-root in place (← backtracks), so a
-  15-hop walk is one stack entry and esc keeps its page-back meaning.
-- **Global `X`**: walk the topology from any selected entity — the capital
-  sibling of `x` (quick one-hop panel). `:nav <TYPE>` browses a type,
-  `:nav <entity-id>` walks from it.
-- **Health overlay**: one tenant-wide `dt.davis.problems` query per refresh
-  (24h floor), deduped and intersected client-side against visible nodes in
-  **both id eras** — problem dots on every node, per-type counts on the
-  census, never a per-node query.
-- **Preview pane**: cursor-following (debounced 250 ms, session-cached
-  `DetailQuery`) identity + health + curated `KeyFacts`; on by default
-  (`P` is the app-wide preview toggle), auto-hidden under 100 columns.
-  Nodeless edge endpoints (`K8S_SECRET` et al.) render dimmed raw ids and
-  preview as "no node record".
-- **Session topo cache**: edges and details cache per navigator instance —
-  backtracks and re-visits are zero-query; `r` clears and refetches.
-- The shared query builders (`EdgesQuery`, `NamesQuery`, `BuildEdges`,
-  `EdgeRank`) moved from `relations.go` into `catalog/smartscape.go`;
-  the relations panel consumes them unchanged. Live-observed verbs beyond
-  the documented four — `belongs_to`, `uses` — group generically and rank
-  as structure.
-- Deliberate key deviations from the design doc: the mesh toggle is `M`
-  (`t` is the global timeframe picker) and `g`/`G` stay cursor home/end
-  (overview is esc or `:nav` away) — consistency with the app vocabulary
-  beat the draft bindings.
-
-### Phase 3.9 — One owner per key ✅ implemented
-
-Digits used to mean five different things by context (lens, tab, hotkey,
-picker); tab meant three. Every key now has exactly one owner, matching the
-visual hierarchy:
-
-- **Digits 0-9**: global hotkeys, on every screen. Lens strips and tab bars
-  never claim them. (Refined by "Entering rescopes the keyboard" below:
-  entered pages reclaimed 1-9 for their numbered tab bars.)
-- **`[` / `]`**: the lens strip, and only the lens strip — including a strip
-  nested inside a detail tab. On a view without lenses the brackets say so
-  instead of silently doing something else (the old fallback to tab cycling
-  is gone: the same key must not change meaning between tabs).
-- **`tab` / `shift+tab`**: the tab bar (detail pages, problem page) and the
-  home panels. Nothing anywhere else. (Refined below: tab now cycles the
-  view's primary strip, which on a plain table is the lens strip.)
-- **Drill letters** (`l s v p m u e`): pre-scoped signal views; on tabbed
-  pages they jump to the same-named tab unless the active tab's rows drill
-  by that key (per-row meaning wins).
-- **Peek pane on by default**: tables and the navigator render the selected
-  row's highlights (PriorityFields / KeyFacts — client-side, zero queries)
-  in a side pane at ≥110 columns, a bottom panel on narrower-but-tall
-  screens, auto-hidden when cramped (bottom panel needs ≥30 rows). **`P`**
-  flips the preference app-wide — one sticky setting, not per-view state —
-  so enter is reserved for committing to a page, not for peeking.
-- Same rework shipped the shared severity rendering (ITIL `event.severity`
-  as SEV1–SEV5 badges — 1 is worst; the old word mapping was inverted),
-  the `:events` hub with all/alerts/changes/system/audit lenses (system
-  and audit surface `dt.system.events`), `x`=`X`= navigator walk, and
-  `:aws` as an `:entities` census preset.
-
-### Phase 3.10 — Entering rescopes the keyboard ✅ implemented
-
-Phase 3.9's "digits global everywhere" treated the symptom (invisible key
-scope) by banning context. The durable rule is visibility-based: **digits do
-what the numbers on screen say; no numbers visible → global bookmarks.**
-
-- **Exactly one strip on screen is numbered — the innermost one — and the
-  digits address it.** Detail and problem pages show digit labels on their
-  tab bar (`1 details  2 processes … 7 related`) and `1`–`9` switch tabs directly.
-  When the active tab's table shows its own lens strip, the numbering
-  moves down to it (`1 roots  2 errors … 9 all` — the tab bar drops its
-  numbers) and the digits pick lenses; tab/shift+tab and the drill
-  letters still switch tabs. A digit the numbered strip doesn't show is
-  swallowed with a teaching status, never a hidden jump; `0` stays the
-  jump home from anywhere (it never appears on a strip), and `esc` pops
-  out to where all ten keys are global again. Top-level tables, home, and
-  the navigator show no numbers, so digits stay global bookmarks there —
-  the original lens-strip/hotkey overlap stays fixed where users roam.
-- **`tab` cycles the view's primary strip**: page tabs when entered,
-  panels on home, and the lens strip on plain tables and the session
-  timeline — one unmodified key for the most common slice-switch (`[`/`]`
-  are AltGr chords on German-layout keyboards). The brackets remain the
-  explicit lens-cycling keys everywhere.
-
-### Phase 3.11 — Security workspace ✅ implemented
-
-The vulnerability view grew from a flat list into a workspace; every field
-and filter shape below was validated live against a demo tenant.
-
-- **Enriched `:vulns` list**: the summarize rollup now reads only
-  VULNERABILITY-level state reports (entity-level rows silently polluted
-  the old rollup) and adds the Davis assessment triage badges — EXPOSURE
-  (`public` red / `adjacent` yellow / `-` assessed-clear / blank
-  unassessed), EXPLOIT (`avail` red), FIX (`yes` green) — plus stack/tech
-  and lenses (open · muted · all; muted vulns leave the default lens).
-- **Entity → vulnerabilities pinning works**: a SERVICE/HOST/PROCESS pin
-  switches the query to the ENTITY-level reports (the level that carries
-  ids) — `in("<id>", related_entities.services.ids)` array membership,
-  era-identical HOST ids, and the PROCESS↔PROCESS_GROUP_INSTANCE hex-suffix
-  prefix swap — and swaps AFFECTED for the COMPONENT column. K8s types
-  honestly refuse (their ids don't match the `related_entities` era).
-- **Vulnerability page** (enter on a vuln; `d` keeps the raw record):
-  tabbed like the problem page. `overview` refetches the latest full state
-  report and renders the Davis assessment facts (risk vs CVSS, exposure,
-  data assets, vulnerable-function usage, exploit, mute audit trail),
-  remediation, and the vendor's markdown description via glamour (style
-  from lipgloss' cached dark/light verdict — no mid-session terminal
-  query; plain-text fallback). `entities` lists the affected entities with
-  component/processes/data assets and l/v/p/m drills (PROCESS_GROUP rows
-  drill through their first process instance). `attacks` shows RAP
-  detections — exact `vulnerability.code_location.name` match for
-  code-level vulns, affected-entity hop for library vulns (`filter false`
-  keeps it honestly empty when nothing matches: attacks carry no
-  vulnerability.id). `entry points` (code vulns) expands the entry-point
-  JSON docs into paths/payloads/malicious-input flags. `timeline` lists
-  status/assessment change events (30d floor). Enter on tab rows inspects
-  (the `inspect` EnterTarget sentinel) instead of re-opening the page.
-- **`:attacks` view**: Runtime Application Protection detections with
-  Blocked (green) / Audited (yellow) verdicts, source IPs, target process,
-  trimmed code location; preview shows the payload and entry point; rows
-  carry `trace.id` (`s` → waterfall) and a PROCESS source entity; SERVICE
-  pins widen through the log hop. GuardDuty/third-party detections and a
-  `:findings` view for third-party scanners stay deferred.
-- **Home**: an `attack detections (24h)` panel joins the triage page; the
-  vulnerabilities panel filters like the list (VULNERABILITY level,
-  unmuted).
-
-### Phase 4 — Assets & mutations
-
-- Management resource browser for the full existing CRUD surface; workflow
-  executions with live log follow.
-- Safety-gated edit (`$EDITOR` suspend/restore), delete confirms, workflow
-  execute. Clipboard for command echo. Stretch: export a breadcrumb trail as
-  a notebook.
-
-Each phase ships independently; Phase 1 alone is a usable "k9s for Dynatrace
-triage".
+Phases 1–3 (shell, topology, traces, Kubernetes, cloud, RUM, security,
+Smartscape navigator, DQL escape hatch) are implemented; Phase 4 (management
+assets & safety-gated mutations) is proposed. The phase-by-phase shipped log —
+including design refinements that superseded sections above — lives in
+[../dev/phases.md](../dev/phases.md).
 
 ---
 
@@ -1178,17 +833,17 @@ triage".
    `console_windows.go` VT enablement must run before bubbletea init).
 6. **Smartscape topology *visualization*** (graph drawing) — resolved by
    Phase 3.8: don't draw, navigate. The smartscape navigator (`:nav`,
-   `docs/TUI_SMARTSCAPE_NAVIGATOR.md`) covers overview, browsing, and
+   `smartscape-navigator.md`) covers overview, browsing, and
    walking; graph *drawing* stays rejected (hairball + lipgloss compositing
    limits).
 
 ## References
 
-- `docs/TUI_LEARNINGS.md` — field notes: live-validated DQL/Grail facts, the view extension model, bubbletea message-flow patterns, and how to verify the TUI
-- `docs/dev/ARCHITECTURE.md` — prior "Interactive Mode" future idea
-- `docs/dev/WATCH_MODE_DESIGN.md` — existing live/watch semantics
+- `../dev/learnings.md` — field notes: live-validated DQL/Grail facts, the view extension model, bubbletea message-flow patterns, and how to verify the TUI
+- [dtctl ARCHITECTURE.md](../../../docs/dev/ARCHITECTURE.md) — prior "Interactive Mode" future idea
+- [dtctl WATCH_MODE_DESIGN.md](../../../docs/dev/WATCH_MODE_DESIGN.md) — existing live/watch semantics
 - `pkg/output/progress.go`, `live.go`, `watch.go` — current live rendering
 - `pkg/output/sparkline.go`, `braille.go`, `chart.go`, `barchart.go` — reusable chart renderers
-- `pkg/safety/checker.go`, `docs/dev/context-safety-levels.md` — safety model
+- `pkg/safety/checker.go`, [dtctl context-safety-levels.md](../../../docs/dev/context-safety-levels.md) — safety model
 - [dynatrace-for-ai](https://github.com/Dynatrace/dynatrace-for-ai) — skills & workflow prompts that informed the catalog and flows
 - [k9s](https://k9scli.io/) — navigation-model inspiration (aliases, hotkeys, drill-downs)

@@ -32,7 +32,7 @@ sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
   ├── credstore/   # Deprecated — superseded by sdk/session (was never wired up)
   └── agentmode/   # AI agent environment detection
 dtui/           # Separate Go module + binary (github.com/dynatrace-oss/dtui): the interactive TUI
-  ├── docs/          # TUI design docs (TUI_DESIGN.md, TUI_LEARNINGS.md, TUI_SMARTSCAPE_NAVIGATOR.md)
+  ├── docs/          # TUI docs: design/ (tui.md, smartscape-navigator.md), adr/, dev/ (learnings.md, phases.md)
   └── internal/tui/  # k9s-style navigator; `dtctl tui` forwards to the dtui binary on PATH
 ```
 

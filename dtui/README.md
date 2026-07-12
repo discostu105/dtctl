@@ -84,11 +84,12 @@ requirement.
 
 ## Documentation
 
-- [docs/TUI_DESIGN.md](docs/TUI_DESIGN.md) — design: view catalog, navigation
+See [docs/](docs/README.md) for the full index:
+
+- [docs/design/tui.md](docs/design/tui.md) — design: view catalog, navigation
   model, investigation flows, detail pages, architecture
-- [docs/TUI_LEARNINGS.md](docs/TUI_LEARNINGS.md) — field notes and
+- [docs/adr/](docs/adr/README.md) — architecture decision records
+- [docs/dev/learnings.md](docs/dev/learnings.md) — field notes and
   tenant-validated DQL facts
-- [docs/TUI_SMARTSCAPE_NAVIGATOR.md](docs/TUI_SMARTSCAPE_NAVIGATOR.md) — the
-  topology navigator (`:nav`)
 
 Press `?` inside the TUI for the full key reference.
