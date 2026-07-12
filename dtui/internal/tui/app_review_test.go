@@ -113,12 +113,23 @@ func TestTracesPinGuardsNonSpanScopableTypes(t *testing.T) {
 	}
 }
 
-// CanScope is honest for a view that ignores scope entirely (vulnerabilities).
-func TestVulnsIgnoreScopeSoPinIsNotClaimed(t *testing.T) {
+// CanScope stays honest on the vulnerabilities view: SERVICE/HOST/PROCESS
+// pins compose an ENTITY-level filter now, while K8s types — whose ids don't
+// match the related_entities id era — must still refuse the pin.
+func TestVulnsScopeClaimsMatchTheFilter(t *testing.T) {
 	spec := catalog.Lookup("vulnerabilities")
 	tf := catalog.Timeframe{Label: "2h", Dur: 2 * time.Hour}
-	if spec.CanScope(tf, catalog.Entity{ID: "HOST-1", Type: "HOST"}) {
-		t.Error("vulnerabilities query ignores the entity — CanScope must be false")
+	for _, e := range []catalog.Entity{
+		{ID: "HOST-1", Type: "HOST"},
+		{ID: "SERVICE-1", Type: "SERVICE"},
+		{ID: "PROCESS-AB12", Type: "PROCESS"},
+	} {
+		if !spec.CanScope(tf, e) {
+			t.Errorf("vulnerabilities must accept a %s pin now", e.Type)
+		}
+	}
+	if spec.CanScope(tf, catalog.Entity{ID: "K8S_DEPLOYMENT-1", Name: "checkout", Type: "K8S_DEPLOYMENT"}) {
+		t.Error("K8s ids don't match the related_entities id era — the pin must be refused")
 	}
 }
 

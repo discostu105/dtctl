@@ -434,6 +434,11 @@ func legacyField(entityType string) string {
 		return "dt.entity.service"
 	case "PROCESS":
 		return "dt.entity.process_group_instance"
+	case "PROCESS_GROUP":
+		// Not a Smartscape node type — the security views hand PROCESS_GROUP
+		// pseudo-entities to SignalFilter because security.events stamp
+		// dt.entity.process_group (validated live on attack records).
+		return "dt.entity.process_group"
 	}
 	return ""
 }

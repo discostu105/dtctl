@@ -610,8 +610,9 @@ compose the pinned entity. Two ways the naïve `if UsesScope() { scope.Entity =
 pin }` lies:
 
 1. The query **ignores** the entity for that type (a `SERVICE` pin on `:pods` —
-   `k8sScopeFilter` returns `""`; any pin on `:vulnerabilities` — the query
-   never references `s.Entity`). The list is unfiltered but the breadcrumb reads
+   `k8sScopeFilter` returns `""`; a K8s pin on `:vulnerabilities` —
+   `VulnEntityFilter` returns `""` because K8s ids don't match the
+   `related_entities` id era). The list is unfiltered but the breadcrumb reads
    `pods (checkout)`: data presented as scoped that never was.
 2. The query **composes a filter that matches nothing** (a `HOST` pin on
    `:traces` — spans carry no `dt.smartscape.host` field). Silently empty,

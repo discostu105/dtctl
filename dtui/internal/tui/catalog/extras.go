@@ -2,15 +2,13 @@ package catalog
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
-	"time"
 )
 
-// Breadth views: RUM frontends, Postgres databases, GenAI entities, and
-// security vulnerabilities. All field names and scoping dimensions validated
-// live (dt.smartscape.frontend, dt.smartscape.db_instance_postgres,
-// gen_ai.provider.name, security.events vulnerability.* fields).
+// Breadth views: RUM frontends, Postgres databases, and GenAI entities. All
+// field names and scoping dimensions validated live (dt.smartscape.frontend,
+// dt.smartscape.db_instance_postgres, gen_ai.provider.name). The security
+// views live in security.go.
 
 var frontendsSpec = &Spec{
 	Name:    "frontends",
@@ -101,62 +99,6 @@ var genaiSpec = &Spec{
 	// spans of this agent/model/provider — the genai lens slices them); 'm'
 	// opens the metric explorer through the same dimensions.
 	Drills: map[string]string{"s": "traces", "m": "metrics", "p": "problems", "v": "events"},
-}
-
-var vulnsSpec = &Spec{
-	Name:    "vulnerabilities",
-	Aliases: []string{"vulns", "security", "sec"},
-	Kind:    KindSignal,
-	Desc:    "Security vulnerabilities (Davis Security Score)",
-	Query: func(s Scope) string {
-		// State reports are periodic snapshots — a short window would hide
-		// open vulnerabilities, so the lookback is floored at 24h.
-		tf := floorTimeframe(s.Timeframe, 24*time.Hour, "24h")
-		return fmt.Sprintf(`fetch security.events, from:%s
-| filter event.type == "VULNERABILITY_STATE_REPORT_EVENT"
-| sort timestamp asc
-| summarize { title = takeLast(vulnerability.title), display_id = takeLast(vulnerability.display_id), level = takeLast(vulnerability.risk.level), score = takeLast(vulnerability.risk.score), status = takeLast(vulnerability.resolution.status), affected = takeLast(affected_entities.count), tech = takeLast(vulnerability.technology), cve = takeLast(vulnerability.references.cve), url = takeLast(vulnerability.url) }, by:{vulnerability.id}
-| filter status == "OPEN"
-| sort score desc
-| limit 200`, tf)
-	},
-	Columns: []Column{
-		{Title: "ID", Field: "display_id", Width: 6},
-		{Title: "SCORE", Field: "score", Width: 5, Right: true, Class: classRiskScore},
-		{Title: "LEVEL", Field: "level", Width: 8, Class: classRiskLevel},
-		{Title: "TECH", Field: "tech", Width: 12},
-		{Title: "AFFECTED", Field: "affected", Width: 8, Right: true},
-		{Title: "CVE", Width: 16, Value: func(rec map[string]any) string { return StrFirst(rec, "cve") }},
-		{Title: "TITLE", Field: "title"},
-	},
-	Drills: map[string]string{},
-}
-
-func classRiskScore(val string) string {
-	score, err := strconv.ParseFloat(val, 64)
-	if err != nil {
-		return ""
-	}
-	switch {
-	case score >= 9:
-		return "error"
-	case score >= 7:
-		return "warn"
-	}
-	return ""
-}
-
-func classRiskLevel(val string) string {
-	switch val {
-	case "CRITICAL":
-		return "error"
-	case "HIGH":
-		return "warn"
-	case "MEDIUM":
-		return ""
-	default:
-		return "dim"
-	}
 }
 
 // idList renders Smartscape ids as toSmartscapeId("...") list elements for
