@@ -1,4 +1,4 @@
-package auth
+package session
 
 import (
 	"encoding/json"
@@ -9,8 +9,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 func storedJSON(t *testing.T, s StoredToken) string {
@@ -44,7 +42,7 @@ func TestTokenManagerDeleteToken(t *testing.T) {
 	t.Run("keyring available", func(t *testing.T) {
 		called := false
 		tm.deps.keyringAvailable = func() bool { return true }
-		tm.deps.deleteToken = func(ts *config.TokenStore, name string) error {
+		tm.deps.deleteToken = func(ts *TokenStore, name string) error {
 			called = true
 			return nil
 		}
@@ -62,7 +60,7 @@ func TestTokenManagerLoadAndSaveTokenBranches(t *testing.T) {
 	tm.deps.keyringAvailable = func() bool { return true }
 
 	t.Run("load parse error", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return "{invalid", nil
 		}
 		if _, err := tm.loadToken("abc"); err == nil {
@@ -72,7 +70,7 @@ func TestTokenManagerLoadAndSaveTokenBranches(t *testing.T) {
 
 	t.Run("save compact fallback success", func(t *testing.T) {
 		calls := 0
-		tm.deps.setToken = func(ts *config.TokenStore, name, token string) error {
+		tm.deps.setToken = func(ts *TokenStore, name, token string) error {
 			calls++
 			if calls == 1 {
 				return errors.New("too large")
@@ -89,7 +87,7 @@ func TestTokenManagerLoadAndSaveTokenBranches(t *testing.T) {
 	})
 
 	t.Run("save compact fallback fail", func(t *testing.T) {
-		tm.deps.setToken = func(ts *config.TokenStore, name, token string) error {
+		tm.deps.setToken = func(ts *TokenStore, name, token string) error {
 			return errors.New("still failing")
 		}
 		err := tm.saveToken("abc", &StoredToken{Name: "abc", TokenSet: TokenSet{RefreshToken: "r"}})
@@ -102,7 +100,7 @@ func TestTokenManagerLoadAndSaveTokenBranches(t *testing.T) {
 func TestTokenManagerGetToken_LoadError(t *testing.T) {
 	tm, _ := NewTokenManager(DefaultOAuthConfig())
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 		return "", errors.New("missing")
 	}
 
@@ -115,10 +113,10 @@ func TestTokenManagerGetToken_LoadError(t *testing.T) {
 func TestTokenManagerGetTokenAndRefreshPaths(t *testing.T) {
 	tm, _ := NewTokenManager(DefaultOAuthConfig())
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.setToken = func(ts *config.TokenStore, name, token string) error { return nil }
+	tm.deps.setToken = func(ts *TokenStore, name, token string) error { return nil }
 
 	t.Run("compact storage forces refresh", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{RefreshToken: "r1"}}), nil
 		}
 		tm.flow.httpDo = func(req *http.Request) (*http.Response, error) {
@@ -134,7 +132,7 @@ func TestTokenManagerGetTokenAndRefreshPaths(t *testing.T) {
 	})
 
 	t.Run("refresh fail but token not expired returns old", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{AccessToken: "old", RefreshToken: "r1", ExpiresAt: time.Now().Add(2 * time.Hour)}}), nil
 		}
 		tm.flow.httpDo = func(req *http.Request) (*http.Response, error) {
@@ -150,7 +148,7 @@ func TestTokenManagerGetTokenAndRefreshPaths(t *testing.T) {
 	})
 
 	t.Run("refresh fail and expired returns error", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{AccessToken: "old", RefreshToken: "r1", ExpiresAt: time.Now().Add(-1 * time.Minute)}}), nil
 		}
 		tm.flow.httpDo = func(req *http.Request) (*http.Response, error) {
@@ -170,7 +168,7 @@ func TestTokenManagerGetTokenAndRefreshPaths(t *testing.T) {
 		//
 		// After the fix, AccessToken == "" always triggers a refresh, regardless of
 		// ExpiresAt. This test now asserts that the refresh IS attempted.
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{RefreshToken: "r1", ExpiresAt: time.Now().Add(2 * time.Hour)}}), nil
 		}
 		refreshCalled := false
@@ -191,7 +189,7 @@ func TestTokenManagerGetTokenAndRefreshPaths(t *testing.T) {
 func TestTokenManagerRefreshTokenNoRefreshToken(t *testing.T) {
 	tm, _ := NewTokenManager(DefaultOAuthConfig())
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 		return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{AccessToken: "a"}}), nil
 	}
 
@@ -206,7 +204,7 @@ func TestTokenManagerRefreshTokenAdditionalBranches(t *testing.T) {
 	tm.deps.keyringAvailable = func() bool { return true }
 
 	t.Run("load token error", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return "", errors.New("cannot load")
 		}
 		_, err := tm.RefreshToken("abc")
@@ -216,7 +214,7 @@ func TestTokenManagerRefreshTokenAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("refresh request failure", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{RefreshToken: "r1"}}), nil
 		}
 		tm.flow.httpDo = func(req *http.Request) (*http.Response, error) {
@@ -229,10 +227,10 @@ func TestTokenManagerRefreshTokenAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("preserve old refresh token when provider omits it", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{RefreshToken: "old-refresh"}}), nil
 		}
-		tm.deps.setToken = func(ts *config.TokenStore, name, token string) error { return nil }
+		tm.deps.setToken = func(ts *TokenStore, name, token string) error { return nil }
 		tm.flow.httpDo = func(req *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"access_token":"a2","expires_in":60}`)), Header: make(http.Header)}, nil
 		}
@@ -246,10 +244,10 @@ func TestTokenManagerRefreshTokenAdditionalBranches(t *testing.T) {
 	})
 
 	t.Run("save refreshed token failure", func(t *testing.T) {
-		tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 			return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{RefreshToken: "r1"}}), nil
 		}
-		tm.deps.setToken = func(ts *config.TokenStore, name, token string) error { return errors.New("cannot save") }
+		tm.deps.setToken = func(ts *TokenStore, name, token string) error { return errors.New("cannot save") }
 		tm.flow.httpDo = func(req *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{"access_token":"a2","refresh_token":"r2","expires_in":60}`)), Header: make(http.Header)}, nil
 		}
@@ -263,10 +261,10 @@ func TestTokenManagerRefreshTokenAdditionalBranches(t *testing.T) {
 func TestTokenManagerRefreshToken_NilHTTPDoFallback(t *testing.T) {
 	tm, _ := NewTokenManager(DefaultOAuthConfig())
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 		return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{RefreshToken: "r1"}}), nil
 	}
-	tm.deps.setToken = func(ts *config.TokenStore, name, token string) error { return nil }
+	tm.deps.setToken = func(ts *TokenStore, name, token string) error { return nil }
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -292,7 +290,7 @@ func TestTokenManagerRefreshToken_NilHTTPDoFallback(t *testing.T) {
 func TestTokenManagerGetTokenInfo(t *testing.T) {
 	tm, _ := NewTokenManager(DefaultOAuthConfig())
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.getToken = func(ts *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(ts *TokenStore, name string) (string, error) {
 		return storedJSON(t, StoredToken{Name: name, TokenSet: TokenSet{AccessToken: "a", RefreshToken: "r"}}), nil
 	}
 
@@ -308,7 +306,7 @@ func TestTokenManagerGetTokenInfo(t *testing.T) {
 func TestTokenManagerSaveToken(t *testing.T) {
 	tm, _ := NewTokenManager(DefaultOAuthConfig())
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.setToken = func(ts *config.TokenStore, name, token string) error { return nil }
+	tm.deps.setToken = func(ts *TokenStore, name, token string) error { return nil }
 
 	err := tm.SaveToken("abc", &TokenSet{AccessToken: "a", RefreshToken: "r", ExpiresIn: 60})
 	if err != nil {

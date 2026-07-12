@@ -729,7 +729,7 @@ func NewClientFromConfig(cfg *config.Config) (*client.Client, error) {
 	}
 	// Propagate W3C trace context on every Dynatrace API request.
 	if tracingRootCtx != nil {
-		c.InjectTraceContext(tracingRootCtx)
+		client.InjectTraceContext(c, tracingRootCtx)
 	}
 	return c, nil
 }

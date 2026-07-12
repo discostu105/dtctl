@@ -1,4 +1,4 @@
-package auth
+package session
 
 import (
 	"encoding/base64"
@@ -8,8 +8,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 // ErrOAuthSessionRevoked indicates the cached OAuth refresh token has been
@@ -28,16 +26,16 @@ const (
 // TokenManager manages OAuth tokens including storage and refresh
 type TokenManager struct {
 	flow        *OAuthFlow
-	tokenStore  *config.TokenStore
+	tokenStore  *TokenStore
 	environment Environment
 	deps        tokenStoreDeps
 }
 
 type tokenStoreDeps struct {
 	keyringAvailable func() bool
-	getToken         func(ts *config.TokenStore, name string) (string, error)
-	setToken         func(ts *config.TokenStore, name, token string) error
-	deleteToken      func(ts *config.TokenStore, name string) error
+	getToken         func(ts *TokenStore, name string) (string, error)
+	setToken         func(ts *TokenStore, name, token string) error
+	deleteToken      func(ts *TokenStore, name string) error
 	// File-based storage fallback
 	fileStoreAvailable func() bool
 	fileGetToken       func(name string) (string, error)
@@ -51,18 +49,18 @@ func NewTokenManager(oauthConfig *OAuthConfig) (*TokenManager, error) {
 		oauthConfig = DefaultOAuthConfig()
 	}
 
-	fileStore := config.NewOAuthFileStore()
+	fileStore := NewOAuthFileStore()
 
 	return &TokenManager{
 		flow:        &OAuthFlow{config: oauthConfig, openURL: defaultOAuthOpenURL, httpDo: defaultOAuthHTTPDo},
-		tokenStore:  config.NewTokenStore(),
+		tokenStore:  NewTokenStore(),
 		environment: oauthConfig.Environment,
 		deps: tokenStoreDeps{
-			keyringAvailable:   config.IsKeyringAvailable,
-			getToken:           func(ts *config.TokenStore, name string) (string, error) { return ts.GetToken(name) },
-			setToken:           func(ts *config.TokenStore, name, token string) error { return ts.SetToken(name, token) },
-			deleteToken:        func(ts *config.TokenStore, name string) error { return ts.DeleteToken(name) },
-			fileStoreAvailable: func() bool { return !config.IsKeyringAvailable() && config.IsFileTokenStorage() },
+			keyringAvailable:   IsKeyringAvailable,
+			getToken:           func(ts *TokenStore, name string) (string, error) { return ts.GetToken(name) },
+			setToken:           func(ts *TokenStore, name, token string) error { return ts.SetToken(name, token) },
+			deleteToken:        func(ts *TokenStore, name string) error { return ts.DeleteToken(name) },
+			fileStoreAvailable: func() bool { return !IsKeyringAvailable() && IsFileTokenStorage() },
 			fileGetToken:       func(name string) (string, error) { return fileStore.GetToken(name) },
 			fileSetToken:       func(name, token string) error { return fileStore.SetToken(name, token) },
 			fileDeleteToken:    func(name string) error { return fileStore.DeleteToken(name) },
@@ -279,7 +277,7 @@ func (tm *TokenManager) DeleteToken(tokenName string) error {
 		return tm.deps.fileDeleteToken(keyringName)
 	}
 
-	return fmt.Errorf("OAuth token deletion requires a storage backend (keyring or file); set %s=file to use file-based storage", config.EnvTokenStorage)
+	return fmt.Errorf("OAuth token deletion requires a storage backend (keyring or file); set %s=file to use file-based storage", EnvTokenStorage)
 }
 
 // IsOAuthToken checks if a token name refers to an OAuth token
@@ -347,7 +345,7 @@ func (tm *TokenManager) loadToken(tokenName string) (*StoredToken, error) {
 		return &stored, nil
 	}
 
-	return nil, fmt.Errorf("OAuth tokens require a storage backend (keyring or file); set %s=file to use file-based storage", config.EnvTokenStorage)
+	return nil, fmt.Errorf("OAuth tokens require a storage backend (keyring or file); set %s=file to use file-based storage", EnvTokenStorage)
 }
 
 // saveToken saves a token to storage
@@ -404,7 +402,7 @@ func (tm *TokenManager) saveToken(tokenName string, stored *StoredToken) error {
 		return nil
 	}
 
-	return fmt.Errorf("OAuth tokens require a storage backend (keyring or file); set %s=file to use file-based storage", config.EnvTokenStorage)
+	return fmt.Errorf("OAuth tokens require a storage backend (keyring or file); set %s=file to use file-based storage", EnvTokenStorage)
 }
 
 // isKeyringTooLargeErr reports whether err is a keyring "data too large" error.

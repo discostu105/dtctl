@@ -1,17 +1,14 @@
-package client
+package session
 
 import (
 	"errors"
 	"fmt"
 	"testing"
-
-	"github.com/dynatrace-oss/dtctl/pkg/auth"
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 func TestErrOAuthSessionRevoked_IsRecognised(t *testing.T) {
-	wrapped := fmt.Errorf("token %q: %w; re-authenticate", "my-token", auth.ErrOAuthSessionRevoked)
-	if !errors.Is(wrapped, auth.ErrOAuthSessionRevoked) {
+	wrapped := fmt.Errorf("token %q: %w; re-authenticate", "my-token", ErrOAuthSessionRevoked)
+	if !errors.Is(wrapped, ErrOAuthSessionRevoked) {
 		t.Fatal("errors.Is should match wrapped ErrOAuthSessionRevoked")
 	}
 	// And it should NOT match isOAuthTokenNotFoundError (the message no longer says "not found").
@@ -43,9 +40,9 @@ func TestIsOAuthTokenNotFoundError(t *testing.T) {
 }
 
 func TestGetTokenWithOAuthSupport_FallsBackWithoutOAuthContext(t *testing.T) {
-	t.Setenv(config.EnvDisableKeyring, "1")
+	t.Setenv(EnvDisableKeyring, "1")
 
-	cfg := config.NewConfig()
+	cfg := NewConfig()
 	if err := cfg.SetToken("api-token", "dt0c01.test"); err != nil {
 		t.Fatalf("SetToken() error = %v", err)
 	}

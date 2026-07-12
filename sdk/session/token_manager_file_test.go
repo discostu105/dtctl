@@ -1,4 +1,4 @@
-package auth
+package session
 
 import (
 	"encoding/json"
@@ -6,17 +6,15 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 // TestTokenManager_FileStorageFallback verifies that when keyring is unavailable
 // but file storage is available, token operations work through the file store.
 func TestTokenManager_FileStorageFallback(t *testing.T) {
 	dir := t.TempDir()
-	fileStore := config.NewOAuthFileStoreWithDir(dir)
+	fileStore := NewOAuthFileStoreWithDir(dir)
 
-	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 	tm, err := NewTokenManager(oauthConfig)
 	if err != nil {
 		t.Fatalf("NewTokenManager() error: %v", err)
@@ -82,7 +80,7 @@ func TestTokenManager_FileStorageFallback(t *testing.T) {
 // TestTokenManager_NoStorageAvailable verifies that when neither keyring nor
 // file storage is available, a clear error is returned.
 func TestTokenManager_NoStorageAvailable(t *testing.T) {
-	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 	tm, err := NewTokenManager(oauthConfig)
 	if err != nil {
 		t.Fatalf("NewTokenManager() error: %v", err)
@@ -102,8 +100,8 @@ func TestTokenManager_NoStorageAvailable(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when no storage available, got nil")
 	}
-	if !containsStr(err.Error(), config.EnvTokenStorage) {
-		t.Errorf("error should mention %s, got: %v", config.EnvTokenStorage, err)
+	if !containsStr(err.Error(), EnvTokenStorage) {
+		t.Errorf("error should mention %s, got: %v", EnvTokenStorage, err)
 	}
 
 	// loadToken should fail
@@ -123,9 +121,9 @@ func TestTokenManager_NoStorageAvailable(t *testing.T) {
 // using file storage to verify JSON serialization round-trips correctly.
 func TestTokenManager_FileStorageRoundTrip(t *testing.T) {
 	dir := t.TempDir()
-	fileStore := config.NewOAuthFileStoreWithDir(dir)
+	fileStore := NewOAuthFileStoreWithDir(dir)
 
-	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 	tm, err := NewTokenManager(oauthConfig)
 	if err != nil {
 		t.Fatalf("NewTokenManager() error: %v", err)
@@ -197,9 +195,9 @@ func TestTokenManager_FileStorageRoundTrip(t *testing.T) {
 // through file storage.
 func TestTokenManager_GetTokenInfo_FileStorage(t *testing.T) {
 	dir := t.TempDir()
-	fileStore := config.NewOAuthFileStoreWithDir(dir)
+	fileStore := NewOAuthFileStoreWithDir(dir)
 
-	oauthConfig := OAuthConfigForEnvironment(EnvironmentDev, config.DefaultSafetyLevel)
+	oauthConfig := OAuthConfigForEnvironment(EnvironmentDev, DefaultSafetyLevel, nil)
 	tm, err := NewTokenManager(oauthConfig)
 	if err != nil {
 		t.Fatalf("NewTokenManager() error: %v", err)
@@ -244,23 +242,23 @@ func containsStr(s, substr string) bool {
 // saveToken should fall back to file storage and loadToken should find it there.
 func TestTokenManager_SaveToken_KeyringTooLarge(t *testing.T) {
 	dir := t.TempDir()
-	fileStore := config.NewOAuthFileStoreWithDir(dir)
+	fileStore := NewOAuthFileStoreWithDir(dir)
 
-	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	oauthConfig := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 	tm, err := NewTokenManager(oauthConfig)
 	if err != nil {
 		t.Fatalf("NewTokenManager() error: %v", err)
 	}
 
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.getToken = func(_ *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(_ *TokenStore, name string) (string, error) {
 		return "", fmt.Errorf("token %q not found in keyring", name)
 	}
 	// All keyring Set calls fail — simulates macOS "data passed to Set was too big".
-	tm.deps.setToken = func(_ *config.TokenStore, name, val string) error {
+	tm.deps.setToken = func(_ *TokenStore, name, val string) error {
 		return fmt.Errorf("failed to store token in keyring: data passed to Set was too big")
 	}
-	tm.deps.deleteToken = func(_ *config.TokenStore, name string) error { return nil }
+	tm.deps.deleteToken = func(_ *TokenStore, name string) error { return nil }
 	// fileStoreAvailable is false because keyring IS available (current system behaviour).
 	tm.deps.fileStoreAvailable = func() bool { return false }
 	tm.deps.fileGetToken = func(name string) (string, error) { return fileStore.GetToken(name) }

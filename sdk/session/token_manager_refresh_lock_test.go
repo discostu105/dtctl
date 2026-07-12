@@ -1,4 +1,4 @@
-package auth
+package session
 
 import (
 	"encoding/json"
@@ -11,8 +11,6 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 // freshTokenHTTPDo returns a fake httpDo that answers every refresh with the
@@ -211,7 +209,7 @@ func TestTokenManager_RefreshToken_ConcurrentRotation(t *testing.T) {
 	// The fake-keyring map is not goroutine-safe; the concurrent callers
 	// require synchronized storage.
 	var storeMu sync.Mutex
-	tm.deps.getToken = func(_ *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(_ *TokenStore, name string) (string, error) {
 		storeMu.Lock()
 		defer storeMu.Unlock()
 		v, ok := store[name]
@@ -220,7 +218,7 @@ func TestTokenManager_RefreshToken_ConcurrentRotation(t *testing.T) {
 		}
 		return v, nil
 	}
-	tm.deps.setToken = func(_ *config.TokenStore, name, val string) error {
+	tm.deps.setToken = func(_ *TokenStore, name, val string) error {
 		storeMu.Lock()
 		defer storeMu.Unlock()
 		store[name] = val

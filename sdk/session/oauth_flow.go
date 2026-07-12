@@ -1,4 +1,4 @@
-package auth
+package session
 
 import (
 	"context"
@@ -18,8 +18,6 @@ import (
 	"time"
 
 	"github.com/pkg/browser"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 const (
@@ -64,23 +62,20 @@ func defaultOAuthHTTPDo(req *http.Request) (*http.Response, error) {
 	return client.Do(req)
 }
 
-// GetScopesForSafetyLevel returns the OAuth scopes required for a given safety
-// level. The union is composed from the canonical ResourceScopes table plus the
-// non-resource scope groups in resource_scopes.go, so the per-command scopes
-// surfaced by `dtctl commands` cannot diverge from what login actually requests.
-func GetScopesForSafetyLevel(level config.SafetyLevel) []string {
-	return safetyLevelScopes(level)
-}
-
 type OAuthConfig struct {
-	AuthURL        string
-	TokenURL       string
-	UserInfoURL    string
-	ClientID       string
+	AuthURL     string
+	TokenURL    string
+	UserInfoURL string
+	ClientID    string
+	// Scopes are requested during the interactive login flow only; token
+	// refresh re-issues the original grant's scopes, so refresh-only
+	// consumers (the 401-retry path, TokenManager auto-refresh) may leave
+	// them empty. The scope-composition tables live in dtctl's pkg/auth —
+	// callers running a login flow pass the composed set in.
 	Scopes         []string
 	Port           int
 	Environment    Environment
-	SafetyLevel    config.SafetyLevel
+	SafetyLevel    SafetyLevel
 	EnvironmentURL string
 }
 
@@ -99,18 +94,22 @@ func DetectEnvironment(environmentURL string) Environment {
 	}
 }
 
-// DefaultOAuthConfig returns the default OAuth configuration for production with readwrite-all safety level
+// DefaultOAuthConfig returns the default OAuth configuration for production.
+// No scopes are set — sufficient for refresh-only use (see OAuthConfig.Scopes).
 func DefaultOAuthConfig() *OAuthConfig {
-	return OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	return OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 }
 
-// OAuthConfigForEnvironment creates an OAuth configuration for the specified environment and safety level
-func OAuthConfigForEnvironment(env Environment, safetyLevel config.SafetyLevel) *OAuthConfig {
+// OAuthConfigForEnvironment creates an OAuth configuration for the specified
+// environment. scopes may be nil for refresh-only use; login flows pass the
+// scope set composed for the safety level (dtctl's pkg/auth owns that
+// composition).
+func OAuthConfigForEnvironment(env Environment, safetyLevel SafetyLevel, scopes []string) *OAuthConfig {
 	var authURL, tokenURL, userInfoURL, clientID string
 
 	// Normalize empty safety level to default
 	if safetyLevel == "" {
-		safetyLevel = config.DefaultSafetyLevel
+		safetyLevel = DefaultSafetyLevel
 	}
 
 	switch env {
@@ -136,28 +135,20 @@ func OAuthConfigForEnvironment(env Environment, safetyLevel config.SafetyLevel) 
 		TokenURL:    tokenURL,
 		UserInfoURL: userInfoURL,
 		ClientID:    clientID,
-		Scopes:      GetScopesForSafetyLevel(safetyLevel),
+		Scopes:      scopes,
 		Port:        callbackPort,
 		Environment: env,
 		SafetyLevel: safetyLevel,
 	}
 }
 
-// OAuthConfigFromEnvironmentURL creates an OAuth configuration by detecting the environment from a URL
-// Uses the default safety level (readwrite-all)
-func OAuthConfigFromEnvironmentURL(environmentURL string) *OAuthConfig {
+// OAuthConfigFromEnvironmentURL creates an OAuth configuration by detecting
+// the environment from a URL. scopes may be nil for refresh-only use.
+func OAuthConfigFromEnvironmentURL(environmentURL string, safetyLevel SafetyLevel, scopes []string) *OAuthConfig {
 	env := DetectEnvironment(environmentURL)
-	config := OAuthConfigForEnvironment(env, config.DefaultSafetyLevel)
-	config.EnvironmentURL = environmentURL
-	return config
-}
-
-// OAuthConfigFromEnvironmentURLWithSafety creates an OAuth configuration with specific safety level
-func OAuthConfigFromEnvironmentURLWithSafety(environmentURL string, safetyLevel config.SafetyLevel) *OAuthConfig {
-	env := DetectEnvironment(environmentURL)
-	config := OAuthConfigForEnvironment(env, safetyLevel)
-	config.EnvironmentURL = environmentURL
-	return config
+	cfg := OAuthConfigForEnvironment(env, safetyLevel, scopes)
+	cfg.EnvironmentURL = environmentURL
+	return cfg
 }
 
 type TokenSet struct {
@@ -170,7 +161,9 @@ type TokenSet struct {
 	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 }
 
-type UserInfo struct {
+// OAuthUserInfo is the SSO userinfo-endpoint response (distinct from the
+// platform metadata UserInfo returned by Client.CurrentUser).
+type OAuthUserInfo struct {
 	Sub           string `json:"sub"`
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
@@ -293,7 +286,7 @@ func (f *OAuthFlow) RefreshToken(refreshToken string) (*TokenSet, error) {
 	return &tokens, nil
 }
 
-func (f *OAuthFlow) GetUserInfo(accessToken string) (*UserInfo, error) {
+func (f *OAuthFlow) GetUserInfo(accessToken string) (*OAuthUserInfo, error) {
 	req, err := http.NewRequest("GET", f.config.UserInfoURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -317,7 +310,7 @@ func (f *OAuthFlow) GetUserInfo(accessToken string) (*UserInfo, error) {
 		return nil, fmt.Errorf("failed to get user info: %s - %s", resp.Status, string(body))
 	}
 
-	var userInfo UserInfo
+	var userInfo OAuthUserInfo
 	if err := json.NewDecoder(resp.Body).Decode(&userInfo); err != nil {
 		return nil, fmt.Errorf("failed to decode user info: %w", err)
 	}

@@ -1,11 +1,9 @@
-package auth
+package session
 
 import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 // TestGeneratePKCE tests the PKCE code generation
@@ -90,12 +88,12 @@ func TestNewOAuthFlow(t *testing.T) {
 	}{
 		{
 			name:    "Valid production config",
-			config:  OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel),
+			config:  OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil),
 			wantErr: false,
 		},
 		{
 			name:    "Valid development config",
-			config:  OAuthConfigForEnvironment(EnvironmentDev, config.DefaultSafetyLevel),
+			config:  OAuthConfigForEnvironment(EnvironmentDev, DefaultSafetyLevel, nil),
 			wantErr: false,
 		},
 		{
@@ -162,7 +160,7 @@ func TestOAuthFlow_buildAuthURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := OAuthConfigForEnvironment(tt.env, config.DefaultSafetyLevel)
+			config := OAuthConfigForEnvironment(tt.env, DefaultSafetyLevel, nil)
 			flow, err := NewOAuthFlow(config)
 			if err != nil {
 				t.Fatalf("NewOAuthFlow() failed: %v", err)
@@ -402,7 +400,7 @@ func TestMultiEnvironmentScenario(t *testing.T) {
 			}
 
 			// Create config from URL
-			config := OAuthConfigFromEnvironmentURL(env.url)
+			config := OAuthConfigFromEnvironmentURL(env.url, "", nil)
 			if config.Environment != env.env {
 				t.Errorf("Config environment = %v, want %v", config.Environment, env.env)
 			}
@@ -423,39 +421,5 @@ func TestMultiEnvironmentScenario(t *testing.T) {
 				t.Errorf("Keyring name = %s, should start with %s", keyringName, expectedPrefix)
 			}
 		})
-	}
-}
-
-// TestOAuthConfigScopes tests that scopes are properly set
-func TestOAuthConfigScopes(t *testing.T) {
-	config := DefaultOAuthConfig()
-
-	if len(config.Scopes) == 0 {
-		t.Error("Scopes should not be empty")
-	}
-
-	// Verify some expected scopes are present
-	expectedScopes := []string{"openid", "storage:logs:read", "storage:buckets:read", "dev-obs:breakpoints:set"}
-
-	for _, expected := range expectedScopes {
-		found := false
-		for _, scope := range config.Scopes {
-			if scope == expected {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Errorf("Expected scope %s not found in: %v", expected, config.Scopes)
-		}
-	}
-
-	// Verify no duplicate scopes
-	seen := make(map[string]bool)
-	for _, scope := range config.Scopes {
-		if seen[scope] {
-			t.Errorf("Duplicate scope found: %s", scope)
-		}
-		seen[scope] = true
 	}
 }

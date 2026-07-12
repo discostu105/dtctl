@@ -1,9 +1,7 @@
-package auth
+package session
 
 import (
 	"testing"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 func TestDetectEnvironment(t *testing.T) {
@@ -91,7 +89,7 @@ func TestOAuthConfigForEnvironment(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := OAuthConfigForEnvironment(tt.env, config.DefaultSafetyLevel)
+			config := OAuthConfigForEnvironment(tt.env, DefaultSafetyLevel, nil)
 
 			if config.AuthURL != tt.wantAuthURL {
 				t.Errorf("AuthURL = %v, want %v", config.AuthURL, tt.wantAuthURL)
@@ -111,19 +109,10 @@ func TestOAuthConfigForEnvironment(t *testing.T) {
 			if config.Port != callbackPort {
 				t.Errorf("Port = %v, want %v", config.Port, callbackPort)
 			}
-			if len(config.Scopes) == 0 {
-				t.Error("Scopes should not be empty")
-			}
-
-			foundBreakpointScope := false
-			for _, scope := range config.Scopes {
-				if scope == "dev-obs:breakpoints:set" {
-					foundBreakpointScope = true
-					break
-				}
-			}
-			if !foundBreakpointScope {
-				t.Error("Scopes should include dev-obs:breakpoints:set")
+			// Scope composition lives CLI-side (dtctl's pkg/auth); the
+			// session constructors carry whatever the caller passes.
+			if config.Scopes != nil {
+				t.Errorf("Scopes = %v, want nil when none are passed", config.Scopes)
 			}
 		})
 	}
@@ -158,7 +147,7 @@ func TestOAuthConfigFromEnvironmentURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := OAuthConfigFromEnvironmentURL(tt.envURL)
+			config := OAuthConfigFromEnvironmentURL(tt.envURL, "", nil)
 
 			if config.Environment != tt.wantEnv {
 				t.Errorf("Environment = %v, want %v", config.Environment, tt.wantEnv)

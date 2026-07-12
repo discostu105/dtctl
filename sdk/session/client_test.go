@@ -1,24 +1,15 @@
-package client
+package session
 
 import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/sirupsen/logrus"
-
-	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/trace/noop"
-
-	"github.com/dynatrace-oss/dtctl/pkg/version"
 )
 
 func TestNew(t *testing.T) {
@@ -61,18 +52,18 @@ func TestNew(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel() // Enable parallel execution
-			client, err := New(tt.baseURL, tt.token)
+			client, err := NewClient(tt.baseURL, tt.token)
 			if (err != nil) != tt.wantErr {
-				t.Errorf("New() error = %v, wantErr %v", err, tt.wantErr)
+				t.Errorf("NewClient() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
 			if tt.wantErr && tt.errContains != "" {
 				if err == nil || !contains(err.Error(), tt.errContains) {
-					t.Errorf("New() error = %v, want error containing %q", err, tt.errContains)
+					t.Errorf("NewClient() error = %v, want error containing %q", err, tt.errContains)
 				}
 			}
 			if !tt.wantErr && client == nil {
-				t.Error("New() returned nil client without error")
+				t.Error("NewClient() returned nil client without error")
 			}
 			if !tt.wantErr {
 				if client.BaseURL() != tt.baseURL {
@@ -81,9 +72,6 @@ func TestNew(t *testing.T) {
 				// Verify client is properly configured
 				if client.HTTP() == nil {
 					t.Error("HTTP client not initialized")
-				}
-				if client.Logger() == nil {
-					t.Error("Logger not initialized")
 				}
 			}
 		})
@@ -106,9 +94,9 @@ func containsMiddle(s, substr string) bool {
 }
 
 func TestClient_HTTP(t *testing.T) {
-	client, err := New("https://example.dynatrace.com", "test-token")
+	client, err := NewClient("https://example.dynatrace.com", "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	httpClient := client.HTTP()
@@ -118,9 +106,9 @@ func TestClient_HTTP(t *testing.T) {
 }
 
 func TestClient_SetVerbosity(t *testing.T) {
-	client, err := New("https://example.dynatrace.com", "test-token")
+	client, err := NewClient("https://example.dynatrace.com", "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	// Test various verbosity levels - should not panic
@@ -129,27 +117,15 @@ func TestClient_SetVerbosity(t *testing.T) {
 	client.SetVerbosity(2)
 }
 
-func TestClient_Logger(t *testing.T) {
-	client, err := New("https://example.dynatrace.com", "test-token")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	logger := client.Logger()
-	if logger == nil {
-		t.Error("Logger() returned nil")
-	}
-}
-
 func TestIsRetryable(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "test-token")
+	client, err := NewClient(server.URL, "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	// Make a request to get a response object for testing
@@ -212,9 +188,9 @@ func TestClient_CurrentUser(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := New(server.URL, "test-token")
+			client, err := NewClient(server.URL, "test-token")
 			if err != nil {
-				t.Fatalf("New() error = %v", err)
+				t.Fatalf("NewClient() error = %v", err)
 			}
 			// Disable retries for faster tests
 			client.HTTP().SetRetryCount(0)
@@ -357,9 +333,9 @@ func TestClient_RetryBehavior(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "test-token")
+	client, err := NewClient(server.URL, "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	// Configure faster retries for testing
 	client.HTTP().SetRetryWaitTime(10 * time.Millisecond)
@@ -386,9 +362,9 @@ func TestClient_Timeout(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "test-token")
+	client, err := NewClient(server.URL, "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	// Set very short timeout
 	client.HTTP().SetTimeout(10 * time.Millisecond)
@@ -409,9 +385,9 @@ func TestClient_AuthHeader(t *testing.T) {
 	defer server.Close()
 
 	token := "my-secret-token"
-	client, err := New(server.URL, token)
+	client, err := NewClient(server.URL, token)
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	_, err = client.HTTP().R().Get("/test")
@@ -433,9 +409,9 @@ func TestClient_UserAgent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "test-token")
+	client, err := NewClient(server.URL, "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	_, err = client.HTTP().R().Get("/test")
@@ -443,30 +419,26 @@ func TestClient_UserAgent(t *testing.T) {
 		t.Fatalf("Request failed: %v", err)
 	}
 
-	// User-Agent should start with dtctl/version
-	expectedPrefix := fmt.Sprintf("dtctl/%s", version.Version)
-	if !strings.HasPrefix(receivedUA, expectedPrefix) {
-		t.Errorf("User-Agent = %v, want prefix %v", receivedUA, expectedPrefix)
+	// Without an identity option the UA falls back to the sdk default
+	if !strings.HasPrefix(receivedUA, "dtctl-sdk") {
+		t.Errorf("User-Agent = %v, want prefix dtctl-sdk", receivedUA)
+	}
+
+	// A consumer identity set via option must win (Landmine 5: dtctl and
+	// dtui are distinguishable in tenant-side request logs).
+	client, err = NewClient(server.URL, "test-token", WithUserAgentProduct("dtui", "9.9.9"))
+	if err != nil {
+		t.Fatalf("NewClient() error = %v", err)
+	}
+	if _, err = client.HTTP().R().Get("/test"); err != nil {
+		t.Fatalf("Request failed: %v", err)
+	}
+	if !strings.HasPrefix(receivedUA, "dtui/9.9.9") {
+		t.Errorf("User-Agent = %v, want prefix dtui/9.9.9", receivedUA)
 	}
 
 	// May include AI agent suffix like " (AI-Agent: opencode)" depending on environment
 	// Just verify the base format is correct
-}
-
-func TestClient_SetLogger(t *testing.T) {
-	t.Parallel()
-
-	client, err := New("https://example.dynatrace.com", "test-token")
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-
-	customLogger := &logrus.Logger{}
-	client.SetLogger(customLogger)
-
-	if client.Logger() != customLogger {
-		t.Error("SetLogger() did not set the custom logger")
-	}
 }
 
 func TestClient_BaseURL(t *testing.T) {
@@ -493,9 +465,9 @@ func TestClient_BaseURL(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client, err := New(tt.baseURL, "test-token")
+			client, err := NewClient(tt.baseURL, "test-token")
 			if err != nil {
-				t.Fatalf("New() error = %v", err)
+				t.Fatalf("NewClient() error = %v", err)
 			}
 			if client.BaseURL() != tt.baseURL {
 				t.Errorf("BaseURL() = %v, want %v", client.BaseURL(), tt.baseURL)
@@ -588,9 +560,9 @@ func TestClient_SetVerbosityLevels(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			client, err := New("https://example.dynatrace.com", "test-token")
+			client, err := NewClient("https://example.dynatrace.com", "test-token")
 			if err != nil {
-				t.Fatalf("New() error = %v", err)
+				t.Fatalf("NewClient() error = %v", err)
 			}
 			// Should not panic
 			client.SetVerbosity(tt.level)
@@ -671,9 +643,9 @@ func TestClient_CurrentUserID(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := New(server.URL, tt.token)
+			client, err := NewClient(server.URL, tt.token)
 			if err != nil {
-				t.Fatalf("New() error = %v", err)
+				t.Fatalf("NewClient() error = %v", err)
 			}
 			client.HTTP().SetRetryCount(0)
 
@@ -769,9 +741,9 @@ func TestIsRetryable_StatusCodes(t *testing.T) {
 			}))
 			defer server.Close()
 
-			client, err := New(server.URL, "test-token")
+			client, err := NewClient(server.URL, "test-token")
 			if err != nil {
-				t.Fatalf("New() error = %v", err)
+				t.Fatalf("NewClient() error = %v", err)
 			}
 			client.HTTP().SetRetryCount(0)
 
@@ -792,9 +764,9 @@ func TestClient_AcceptEncodingGzip(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "test-token")
+	client, err := NewClient(server.URL, "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 
 	_, err = client.HTTP().R().Get("/test")
@@ -822,9 +794,9 @@ func TestClient_GzipResponseDecompression(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client, err := New(server.URL, "test-token")
+	client, err := NewClient(server.URL, "test-token")
 	if err != nil {
-		t.Fatalf("New() error = %v", err)
+		t.Fatalf("NewClient() error = %v", err)
 	}
 	client.HTTP().SetRetryCount(0)
 
@@ -849,84 +821,4 @@ func TestReadRequestBodyForDebug_NilGetBodyReader(t *testing.T) {
 	if got != "" {
 		t.Fatalf("readRequestBodyForDebug() = %q, want empty string", got)
 	}
-}
-
-func TestInjectTraceContext_PropagatesHeaders(t *testing.T) {
-	// Set up OTel with a known TRACEPARENT so we can verify exact header values.
-	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-	t.Setenv("OTEL_SERVICE_NAME", "")
-
-	// Reset global OTel state after the test to avoid leaking into other tests.
-	t.Cleanup(func() {
-		otel.SetTracerProvider(noop.NewTracerProvider())
-		otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator())
-	})
-
-	// Import the tracing package to initialise OTel with a known trace context.
-	traceParent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-	t.Setenv("TRACEPARENT", traceParent)
-	t.Setenv("TRACESTATE", "vendor=test")
-
-	// Manually set up a minimal OTel environment for the test.
-	prop := propagation.NewCompositeTextMapPropagator(
-		propagation.TraceContext{},
-		propagation.Baggage{},
-	)
-	otel.SetTextMapPropagator(prop)
-
-	// Extract the trace context from environment into a context.
-	carrier := envMapCarrier{
-		"traceparent": traceParent,
-		"tracestate":  "vendor=test",
-	}
-	ctx := prop.Extract(context.Background(), carrier)
-
-	// Capture HTTP headers from the request.
-	var gotTraceparent, gotTracestate string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotTraceparent = r.Header.Get("Traceparent")
-		gotTracestate = r.Header.Get("Tracestate")
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
-
-	c, err := NewForTesting(server.URL, "test-token")
-	if err != nil {
-		t.Fatalf("NewForTesting() error = %v", err)
-	}
-
-	// Inject the trace context.
-	c.InjectTraceContext(ctx)
-
-	// Make a request.
-	_, err = c.HTTP().R().Get("/test")
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-
-	// Verify traceparent header is present and contains the expected trace ID.
-	if gotTraceparent == "" {
-		t.Fatal("expected traceparent header to be set, got empty")
-	}
-	if !strings.Contains(gotTraceparent, "4bf92f3577b34da6a3ce929d0e0e4736") {
-		t.Errorf("traceparent = %q, want it to contain the inherited trace ID", gotTraceparent)
-	}
-
-	// Verify tracestate header is propagated.
-	if !strings.Contains(gotTracestate, "vendor=test") {
-		t.Errorf("tracestate = %q, want it to contain 'vendor=test'", gotTracestate)
-	}
-}
-
-// envMapCarrier is a simple TextMapCarrier backed by a map, used in tests.
-type envMapCarrier map[string]string
-
-func (c envMapCarrier) Get(key string) string { return c[strings.ToLower(key)] }
-func (c envMapCarrier) Set(key, value string) { c[strings.ToLower(key)] = value }
-func (c envMapCarrier) Keys() []string {
-	keys := make([]string, 0, len(c))
-	for k := range c {
-		keys = append(keys, k)
-	}
-	return keys
 }

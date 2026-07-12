@@ -1,4 +1,4 @@
-package auth
+package session
 
 import (
 	"encoding/json"
@@ -12,8 +12,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 func TestTokenManager_getKeyringName(t *testing.T) {
@@ -52,7 +50,7 @@ func TestTokenManager_getKeyringName(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Create a token manager with the specified environment
-			config := OAuthConfigForEnvironment(tt.environment, config.DefaultSafetyLevel)
+			config := OAuthConfigForEnvironment(tt.environment, DefaultSafetyLevel, nil)
 			tm, err := NewTokenManager(config)
 			if err != nil {
 				t.Fatalf("Failed to create TokenManager: %v", err)
@@ -75,19 +73,19 @@ func TestNewTokenManager(t *testing.T) {
 	}{
 		{
 			name:    "Production config",
-			config:  OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel),
+			config:  OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil),
 			wantEnv: EnvironmentProd,
 			wantErr: false,
 		},
 		{
 			name:    "Development config",
-			config:  OAuthConfigForEnvironment(EnvironmentDev, config.DefaultSafetyLevel),
+			config:  OAuthConfigForEnvironment(EnvironmentDev, DefaultSafetyLevel, nil),
 			wantEnv: EnvironmentDev,
 			wantErr: false,
 		},
 		{
 			name:    "Hardening config",
-			config:  OAuthConfigForEnvironment(EnvironmentHard, config.DefaultSafetyLevel),
+			config:  OAuthConfigForEnvironment(EnvironmentHard, DefaultSafetyLevel, nil),
 			wantEnv: EnvironmentHard,
 			wantErr: false,
 		},
@@ -119,19 +117,19 @@ func TestTokenManager_EnvironmentIsolation(t *testing.T) {
 	// Test that tokens from different environments have different keyring names
 	tokenName := "same-token-name"
 
-	prodConfig := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	prodConfig := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 	prodTM, err := NewTokenManager(prodConfig)
 	if err != nil {
 		t.Fatalf("Failed to create prod TokenManager: %v", err)
 	}
 
-	devConfig := OAuthConfigForEnvironment(EnvironmentDev, config.DefaultSafetyLevel)
+	devConfig := OAuthConfigForEnvironment(EnvironmentDev, DefaultSafetyLevel, nil)
 	devTM, err := NewTokenManager(devConfig)
 	if err != nil {
 		t.Fatalf("Failed to create dev TokenManager: %v", err)
 	}
 
-	hardConfig := OAuthConfigForEnvironment(EnvironmentHard, config.DefaultSafetyLevel)
+	hardConfig := OAuthConfigForEnvironment(EnvironmentHard, DefaultSafetyLevel, nil)
 	hardTM, err := NewTokenManager(hardConfig)
 	if err != nil {
 		t.Fatalf("Failed to create hard TokenManager: %v", err)
@@ -300,25 +298,25 @@ func newTMWithFakeKeyring(t *testing.T) (*TokenManager, map[string]string) {
 	t.Helper()
 	store := make(map[string]string)
 
-	oauthCfg := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+	oauthCfg := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 	tm, err := NewTokenManager(oauthCfg)
 	if err != nil {
 		t.Fatalf("NewTokenManager() error: %v", err)
 	}
 
 	tm.deps.keyringAvailable = func() bool { return true }
-	tm.deps.getToken = func(_ *config.TokenStore, name string) (string, error) {
+	tm.deps.getToken = func(_ *TokenStore, name string) (string, error) {
 		v, ok := store[name]
 		if !ok {
 			return "", fmt.Errorf("token %q not found in keyring", name)
 		}
 		return v, nil
 	}
-	tm.deps.setToken = func(_ *config.TokenStore, name, val string) error {
+	tm.deps.setToken = func(_ *TokenStore, name, val string) error {
 		store[name] = val
 		return nil
 	}
-	tm.deps.deleteToken = func(_ *config.TokenStore, name string) error {
+	tm.deps.deleteToken = func(_ *TokenStore, name string) error {
 		delete(store, name)
 		return nil
 	}
@@ -452,7 +450,7 @@ func TestTokenManager_GetToken_ConcurrentCompact(t *testing.T) {
 	// share the same underlying store map, simulating separate processes that
 	// all talk to the same OS keychain.
 	newTM := func() *TokenManager {
-		oauthCfg := OAuthConfigForEnvironment(EnvironmentProd, config.DefaultSafetyLevel)
+		oauthCfg := OAuthConfigForEnvironment(EnvironmentProd, DefaultSafetyLevel, nil)
 		tm, err := NewTokenManager(oauthCfg)
 		if err != nil {
 			// Cannot use t.Fatalf here: calling t.Fatalf from a goroutine other
@@ -462,7 +460,7 @@ func TestTokenManager_GetToken_ConcurrentCompact(t *testing.T) {
 			return nil
 		}
 		tm.deps.keyringAvailable = func() bool { return true }
-		tm.deps.getToken = func(_ *config.TokenStore, name string) (string, error) {
+		tm.deps.getToken = func(_ *TokenStore, name string) (string, error) {
 			storeMu.Lock()
 			defer storeMu.Unlock()
 			v, ok := store[name]
@@ -471,13 +469,13 @@ func TestTokenManager_GetToken_ConcurrentCompact(t *testing.T) {
 			}
 			return v, nil
 		}
-		tm.deps.setToken = func(_ *config.TokenStore, name, val string) error {
+		tm.deps.setToken = func(_ *TokenStore, name, val string) error {
 			storeMu.Lock()
 			defer storeMu.Unlock()
 			store[name] = val
 			return nil
 		}
-		tm.deps.deleteToken = func(_ *config.TokenStore, name string) error {
+		tm.deps.deleteToken = func(_ *TokenStore, name string) error {
 			storeMu.Lock()
 			defer storeMu.Unlock()
 			delete(store, name)

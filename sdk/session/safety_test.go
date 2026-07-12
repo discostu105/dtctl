@@ -1,16 +1,14 @@
-package safety
+package session
 
 import (
 	"strings"
 	"testing"
-
-	"github.com/dynatrace-oss/dtctl/pkg/config"
 )
 
 func TestNewChecker(t *testing.T) {
-	ctx := &config.Context{
+	ctx := &Context{
 		Environment: "https://test.dt.com",
-		SafetyLevel: config.SafetyLevelReadOnly,
+		SafetyLevel: SafetyLevelReadOnly,
 	}
 
 	checker := NewChecker("test-context", ctx)
@@ -18,35 +16,35 @@ func TestNewChecker(t *testing.T) {
 	if checker.ContextName() != "test-context" {
 		t.Errorf("ContextName() = %v, want test-context", checker.ContextName())
 	}
-	if checker.SafetyLevel() != config.SafetyLevelReadOnly {
-		t.Errorf("SafetyLevel() = %v, want %v", checker.SafetyLevel(), config.SafetyLevelReadOnly)
+	if checker.SafetyLevel() != SafetyLevelReadOnly {
+		t.Errorf("SafetyLevel() = %v, want %v", checker.SafetyLevel(), SafetyLevelReadOnly)
 	}
 }
 
 func TestNewChecker_DefaultSafetyLevel(t *testing.T) {
-	ctx := &config.Context{
+	ctx := &Context{
 		Environment: "https://test.dt.com",
 		// No safety level set - should use default
 	}
 
 	checker := NewChecker("test-context", ctx)
 
-	if checker.SafetyLevel() != config.SafetyLevelReadWriteAll {
-		t.Errorf("SafetyLevel() = %v, want %v (default)", checker.SafetyLevel(), config.SafetyLevelReadWriteAll)
+	if checker.SafetyLevel() != SafetyLevelReadWriteAll {
+		t.Errorf("SafetyLevel() = %v, want %v (default)", checker.SafetyLevel(), SafetyLevelReadWriteAll)
 	}
 }
 
 func TestNewCheckerWithLevel(t *testing.T) {
-	checker := NewCheckerWithLevel("test", config.SafetyLevelDangerouslyUnrestricted)
+	checker := NewCheckerWithLevel("test", SafetyLevelDangerouslyUnrestricted)
 
-	if checker.SafetyLevel() != config.SafetyLevelDangerouslyUnrestricted {
-		t.Errorf("SafetyLevel() = %v, want %v", checker.SafetyLevel(), config.SafetyLevelDangerouslyUnrestricted)
+	if checker.SafetyLevel() != SafetyLevelDangerouslyUnrestricted {
+		t.Errorf("SafetyLevel() = %v, want %v", checker.SafetyLevel(), SafetyLevelDangerouslyUnrestricted)
 	}
 }
 
 // TestChecker_ReadOnly tests all operations under readonly safety level
 func TestChecker_ReadOnly(t *testing.T) {
-	checker := NewCheckerWithLevel("prod-viewer", config.SafetyLevelReadOnly)
+	checker := NewCheckerWithLevel("prod-viewer", SafetyLevelReadOnly)
 
 	tests := []struct {
 		name      string
@@ -81,7 +79,7 @@ func TestChecker_ReadOnly(t *testing.T) {
 
 // TestChecker_ReadWriteMine tests all operations under readwrite-mine safety level
 func TestChecker_ReadWriteMine(t *testing.T) {
-	checker := NewCheckerWithLevel("dev", config.SafetyLevelReadWriteMine)
+	checker := NewCheckerWithLevel("dev", SafetyLevelReadWriteMine)
 
 	tests := []struct {
 		name      string
@@ -112,7 +110,7 @@ func TestChecker_ReadWriteMine(t *testing.T) {
 
 // TestChecker_ReadWriteAll tests all operations under readwrite-all safety level
 func TestChecker_ReadWriteAll(t *testing.T) {
-	checker := NewCheckerWithLevel("staging", config.SafetyLevelReadWriteAll)
+	checker := NewCheckerWithLevel("staging", SafetyLevelReadWriteAll)
 
 	tests := []struct {
 		name      string
@@ -141,7 +139,7 @@ func TestChecker_ReadWriteAll(t *testing.T) {
 
 // TestChecker_DangerouslyUnrestricted tests all operations under dangerously-unrestricted safety level
 func TestChecker_DangerouslyUnrestricted(t *testing.T) {
-	checker := NewCheckerWithLevel("dev-full", config.SafetyLevelDangerouslyUnrestricted)
+	checker := NewCheckerWithLevel("dev-full", SafetyLevelDangerouslyUnrestricted)
 
 	tests := []struct {
 		name      string
@@ -170,7 +168,7 @@ func TestChecker_DangerouslyUnrestricted(t *testing.T) {
 
 // TestChecker_UnknownLevel tests behavior with unknown safety level (should default to readwrite-all)
 func TestChecker_UnknownLevel(t *testing.T) {
-	checker := NewCheckerWithLevel("unknown", config.SafetyLevel("unknown-level"))
+	checker := NewCheckerWithLevel("unknown", SafetyLevel("unknown-level"))
 
 	// Should behave like readwrite-all (the default)
 	result := checker.Check(OperationRead, OwnershipUnknown)
@@ -190,7 +188,7 @@ func TestChecker_UnknownLevel(t *testing.T) {
 }
 
 func TestChecker_FormatError(t *testing.T) {
-	checker := NewCheckerWithLevel("production", config.SafetyLevelReadOnly)
+	checker := NewCheckerWithLevel("production", SafetyLevelReadOnly)
 
 	result := checker.Check(OperationDelete, OwnershipUnknown)
 	if result.Allowed {
@@ -212,7 +210,7 @@ func TestChecker_FormatError(t *testing.T) {
 }
 
 func TestChecker_FormatError_Allowed(t *testing.T) {
-	checker := NewCheckerWithLevel("test", config.SafetyLevelReadOnly)
+	checker := NewCheckerWithLevel("test", SafetyLevelReadOnly)
 
 	result := checker.Check(OperationRead, OwnershipUnknown)
 	if !result.Allowed {
@@ -226,7 +224,7 @@ func TestChecker_FormatError_Allowed(t *testing.T) {
 }
 
 func TestChecker_CheckError(t *testing.T) {
-	checker := NewCheckerWithLevel("production", config.SafetyLevelReadOnly)
+	checker := NewCheckerWithLevel("production", SafetyLevelReadOnly)
 
 	// Allowed operation should return nil
 	err := checker.CheckError(OperationRead, OwnershipUnknown)
@@ -247,7 +245,7 @@ func TestChecker_CheckError(t *testing.T) {
 func TestSafetyError_Error(t *testing.T) {
 	err := &SafetyError{
 		ContextName: "production",
-		SafetyLevel: config.SafetyLevelReadOnly,
+		SafetyLevel: SafetyLevelReadOnly,
 		Operation:   OperationDelete,
 		Reason:      "Delete not allowed",
 		Suggestions: []string{"Switch context"},
@@ -272,7 +270,7 @@ func TestSafetyError_Error(t *testing.T) {
 func TestSafetyError_NoSuggestions(t *testing.T) {
 	err := &SafetyError{
 		ContextName: "test",
-		SafetyLevel: config.SafetyLevelReadOnly,
+		SafetyLevel: SafetyLevelReadOnly,
 		Operation:   OperationDelete,
 		Reason:      "Not allowed",
 		Suggestions: nil,
@@ -347,7 +345,7 @@ func TestPermissionMatrix(t *testing.T) {
 	// | dangerously-unrestricted  | ✅    | ✅      | ✅          | ✅             | ✅          | ✅             | ✅             |
 
 	type testCase struct {
-		level       config.SafetyLevel
+		level       SafetyLevel
 		op          Operation
 		ownership   ResourceOwnership
 		shouldAllow bool
@@ -356,42 +354,42 @@ func TestPermissionMatrix(t *testing.T) {
 
 	tests := []testCase{
 		// readonly
-		{config.SafetyLevelReadOnly, OperationRead, OwnershipUnknown, true, "readonly: read"},
-		{config.SafetyLevelReadOnly, OperationCreate, OwnershipUnknown, false, "readonly: create"},
-		{config.SafetyLevelReadOnly, OperationUpdate, OwnershipOwn, false, "readonly: update own"},
-		{config.SafetyLevelReadOnly, OperationUpdate, OwnershipShared, false, "readonly: update shared"},
-		{config.SafetyLevelReadOnly, OperationDelete, OwnershipOwn, false, "readonly: delete own"},
-		{config.SafetyLevelReadOnly, OperationDelete, OwnershipShared, false, "readonly: delete shared"},
-		{config.SafetyLevelReadOnly, OperationDeleteBucket, OwnershipUnknown, false, "readonly: delete bucket"},
+		{SafetyLevelReadOnly, OperationRead, OwnershipUnknown, true, "readonly: read"},
+		{SafetyLevelReadOnly, OperationCreate, OwnershipUnknown, false, "readonly: create"},
+		{SafetyLevelReadOnly, OperationUpdate, OwnershipOwn, false, "readonly: update own"},
+		{SafetyLevelReadOnly, OperationUpdate, OwnershipShared, false, "readonly: update shared"},
+		{SafetyLevelReadOnly, OperationDelete, OwnershipOwn, false, "readonly: delete own"},
+		{SafetyLevelReadOnly, OperationDelete, OwnershipShared, false, "readonly: delete shared"},
+		{SafetyLevelReadOnly, OperationDeleteBucket, OwnershipUnknown, false, "readonly: delete bucket"},
 
 		// readwrite-mine
-		{config.SafetyLevelReadWriteMine, OperationRead, OwnershipUnknown, true, "readwrite-mine: read"},
-		{config.SafetyLevelReadWriteMine, OperationCreate, OwnershipUnknown, true, "readwrite-mine: create"},
-		{config.SafetyLevelReadWriteMine, OperationUpdate, OwnershipOwn, true, "readwrite-mine: update own"},
-		{config.SafetyLevelReadWriteMine, OperationUpdate, OwnershipUnknown, false, "readwrite-mine: update unknown"}, // Unknown blocked (safer)
-		{config.SafetyLevelReadWriteMine, OperationUpdate, OwnershipShared, false, "readwrite-mine: update shared"},
-		{config.SafetyLevelReadWriteMine, OperationDelete, OwnershipOwn, true, "readwrite-mine: delete own"},
-		{config.SafetyLevelReadWriteMine, OperationDelete, OwnershipUnknown, false, "readwrite-mine: delete unknown"}, // Unknown blocked (safer)
-		{config.SafetyLevelReadWriteMine, OperationDelete, OwnershipShared, false, "readwrite-mine: delete shared"},
-		{config.SafetyLevelReadWriteMine, OperationDeleteBucket, OwnershipUnknown, false, "readwrite-mine: delete bucket"},
+		{SafetyLevelReadWriteMine, OperationRead, OwnershipUnknown, true, "readwrite-mine: read"},
+		{SafetyLevelReadWriteMine, OperationCreate, OwnershipUnknown, true, "readwrite-mine: create"},
+		{SafetyLevelReadWriteMine, OperationUpdate, OwnershipOwn, true, "readwrite-mine: update own"},
+		{SafetyLevelReadWriteMine, OperationUpdate, OwnershipUnknown, false, "readwrite-mine: update unknown"}, // Unknown blocked (safer)
+		{SafetyLevelReadWriteMine, OperationUpdate, OwnershipShared, false, "readwrite-mine: update shared"},
+		{SafetyLevelReadWriteMine, OperationDelete, OwnershipOwn, true, "readwrite-mine: delete own"},
+		{SafetyLevelReadWriteMine, OperationDelete, OwnershipUnknown, false, "readwrite-mine: delete unknown"}, // Unknown blocked (safer)
+		{SafetyLevelReadWriteMine, OperationDelete, OwnershipShared, false, "readwrite-mine: delete shared"},
+		{SafetyLevelReadWriteMine, OperationDeleteBucket, OwnershipUnknown, false, "readwrite-mine: delete bucket"},
 
 		// readwrite-all
-		{config.SafetyLevelReadWriteAll, OperationRead, OwnershipUnknown, true, "readwrite-all: read"},
-		{config.SafetyLevelReadWriteAll, OperationCreate, OwnershipUnknown, true, "readwrite-all: create"},
-		{config.SafetyLevelReadWriteAll, OperationUpdate, OwnershipOwn, true, "readwrite-all: update own"},
-		{config.SafetyLevelReadWriteAll, OperationUpdate, OwnershipShared, true, "readwrite-all: update shared"},
-		{config.SafetyLevelReadWriteAll, OperationDelete, OwnershipOwn, true, "readwrite-all: delete own"},
-		{config.SafetyLevelReadWriteAll, OperationDelete, OwnershipShared, true, "readwrite-all: delete shared"},
-		{config.SafetyLevelReadWriteAll, OperationDeleteBucket, OwnershipUnknown, false, "readwrite-all: delete bucket"},
+		{SafetyLevelReadWriteAll, OperationRead, OwnershipUnknown, true, "readwrite-all: read"},
+		{SafetyLevelReadWriteAll, OperationCreate, OwnershipUnknown, true, "readwrite-all: create"},
+		{SafetyLevelReadWriteAll, OperationUpdate, OwnershipOwn, true, "readwrite-all: update own"},
+		{SafetyLevelReadWriteAll, OperationUpdate, OwnershipShared, true, "readwrite-all: update shared"},
+		{SafetyLevelReadWriteAll, OperationDelete, OwnershipOwn, true, "readwrite-all: delete own"},
+		{SafetyLevelReadWriteAll, OperationDelete, OwnershipShared, true, "readwrite-all: delete shared"},
+		{SafetyLevelReadWriteAll, OperationDeleteBucket, OwnershipUnknown, false, "readwrite-all: delete bucket"},
 
 		// dangerously-unrestricted
-		{config.SafetyLevelDangerouslyUnrestricted, OperationRead, OwnershipUnknown, true, "dangerously-unrestricted: read"},
-		{config.SafetyLevelDangerouslyUnrestricted, OperationCreate, OwnershipUnknown, true, "dangerously-unrestricted: create"},
-		{config.SafetyLevelDangerouslyUnrestricted, OperationUpdate, OwnershipOwn, true, "dangerously-unrestricted: update own"},
-		{config.SafetyLevelDangerouslyUnrestricted, OperationUpdate, OwnershipShared, true, "dangerously-unrestricted: update shared"},
-		{config.SafetyLevelDangerouslyUnrestricted, OperationDelete, OwnershipOwn, true, "dangerously-unrestricted: delete own"},
-		{config.SafetyLevelDangerouslyUnrestricted, OperationDelete, OwnershipShared, true, "dangerously-unrestricted: delete shared"},
-		{config.SafetyLevelDangerouslyUnrestricted, OperationDeleteBucket, OwnershipUnknown, true, "dangerously-unrestricted: delete bucket"},
+		{SafetyLevelDangerouslyUnrestricted, OperationRead, OwnershipUnknown, true, "dangerously-unrestricted: read"},
+		{SafetyLevelDangerouslyUnrestricted, OperationCreate, OwnershipUnknown, true, "dangerously-unrestricted: create"},
+		{SafetyLevelDangerouslyUnrestricted, OperationUpdate, OwnershipOwn, true, "dangerously-unrestricted: update own"},
+		{SafetyLevelDangerouslyUnrestricted, OperationUpdate, OwnershipShared, true, "dangerously-unrestricted: update shared"},
+		{SafetyLevelDangerouslyUnrestricted, OperationDelete, OwnershipOwn, true, "dangerously-unrestricted: delete own"},
+		{SafetyLevelDangerouslyUnrestricted, OperationDelete, OwnershipShared, true, "dangerously-unrestricted: delete shared"},
+		{SafetyLevelDangerouslyUnrestricted, OperationDeleteBucket, OwnershipUnknown, true, "dangerously-unrestricted: delete bucket"},
 	}
 
 	for _, tt := range tests {
