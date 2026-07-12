@@ -24,6 +24,30 @@ func testSegmentList() []SegmentOption {
 	}
 }
 
+// varSegmentList is a picker list whose first entry defines a variable, so
+// space-toggling it opens the value sub-picker.
+func varSegmentList() []SegmentOption {
+	return []SegmentOption{
+		{UID: "uid-var", Name: "webshops", HasVariables: true,
+			VariablesQuery: "fetch dt.entity.cloud_application_namespace | fields namespace = entity.name"},
+		{UID: "uid-plain", Name: "plain"},
+	}
+}
+
+// deliverSegVarRows feeds the value sub-picker its query result (deliver
+// drops dataMsg, so tests inject it like seedRows does for tables).
+func deliverSegVarRows(a *app, rows []map[string]any) {
+	a.Update(dataMsg{owner: segVarOwner{}, seq: a.segVar.seq, records: rows})
+}
+
+func namespaceRows() []map[string]any {
+	return []map[string]any{
+		{"namespace": "astroshop"},
+		{"namespace": "easytrade"},
+		{"namespace": "online-boutique"},
+	}
+}
+
 // testAppSeeded builds an app with workspace segments pending, mirroring
 // testApp but with segment options set before Init runs.
 func testAppSeeded(t *testing.T, opts Options) *app {
@@ -235,6 +259,154 @@ func TestSegmentsRejectedOnAPIBackedViews(t *testing.T) {
 	}
 }
 
+func TestSegVarSubPickerBindsValues(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
+
+	press(a, key("S"))
+	press(a, key(" ")) // toggling the unbound vars segment opens the sub-picker
+	if !a.segVar.active {
+		t.Fatal("space on an unbound vars segment did not open the value sub-picker")
+	}
+	if !a.segVar.loading {
+		t.Fatal("sub-picker not in loading state")
+	}
+	deliverSegVarRows(a, namespaceRows())
+	if a.segVar.loading || len(a.segVar.rows) != 3 {
+		t.Fatalf("rows not delivered: loading=%v rows=%d", a.segVar.loading, len(a.segVar.rows))
+	}
+	if len(a.segVar.cols) != 1 || a.segVar.cols[0] != "namespace" {
+		t.Fatalf("cols = %v, want [namespace]", a.segVar.cols)
+	}
+
+	press(a, key("j"))
+	press(a, key(" ")) // check easytrade
+	press(a, key("enter"))
+	if a.segVar.active {
+		t.Fatal("enter did not close the sub-picker")
+	}
+	if !a.segPickActive {
+		t.Fatal("sub-picker enter should return to the segment picker")
+	}
+	if !a.segChecked["uid-var"] {
+		t.Fatal("segment lost its check after binding")
+	}
+	binds := a.segVars["uid-var"]
+	if len(binds) != 1 || binds[0].Name != "namespace" || len(binds[0].Values) != 1 || binds[0].Values[0] != "easytrade" {
+		t.Fatalf("bindings = %+v, want namespace=[easytrade]", binds)
+	}
+
+	press(a, key("enter")) // apply the segment selection
+	if len(a.ds.segments) != 1 || a.ds.segments[0].ID != "uid-var" {
+		t.Fatalf("ds.segments = %+v", a.ds.segments)
+	}
+	if vars := a.ds.segments[0].Variables; len(vars) != 1 || vars[0].Values[0] != "easytrade" {
+		t.Fatalf("applied refs miss the binding: %+v", a.ds.segments[0])
+	}
+}
+
+func TestSegVarSubPickerEscCancelsToggle(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
+	press(a, key("S"))
+	press(a, key(" "))
+	deliverSegVarRows(a, namespaceRows())
+	press(a, key("esc"))
+	if a.segVar.active {
+		t.Fatal("esc did not close the sub-picker")
+	}
+	if a.segChecked["uid-var"] {
+		t.Fatal("esc from the value prompt should cancel the segment toggle")
+	}
+	if len(a.segVars["uid-var"]) != 0 {
+		t.Fatalf("esc bound values: %+v", a.segVars["uid-var"])
+	}
+}
+
+func TestSegVarSubPickerEnterNeedsAValue(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
+	press(a, key("S"))
+	press(a, key(" "))
+	deliverSegVarRows(a, namespaceRows())
+	press(a, key("enter")) // nothing checked
+	if !a.segVar.active {
+		t.Fatal("enter with no values should keep the sub-picker open")
+	}
+	if !a.statusErr || !strings.Contains(a.status, "at least one value") {
+		t.Errorf("status = %q, want the pick-a-value hint", a.status)
+	}
+}
+
+func TestSegVarSubPickerFilter(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
+	press(a, key("S"))
+	press(a, key(" "))
+	deliverSegVarRows(a, namespaceRows())
+
+	press(a, key("/"))
+	press(a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("boutique")})
+	press(a, key("enter")) // leave filter mode, keep the filter
+	visible := a.segVarVisible()
+	if len(visible) != 1 || visible[0] != 2 {
+		t.Fatalf("visible = %v, want just online-boutique's row", visible)
+	}
+	press(a, key(" ")) // toggles the filtered row's absolute index
+	if !a.segVar.checked[2] {
+		t.Fatal("toggle under filter hit the wrong row")
+	}
+	press(a, key("enter"))
+	if got := a.segVars["uid-var"][0].Values[0]; got != "online-boutique" {
+		t.Fatalf("bound %q, want online-boutique", got)
+	}
+}
+
+func TestSegVarVOpensWithExistingBindingsPrechecked(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
+	a.segVars = map[string][]exec.FilterSegmentVariable{
+		"uid-var": {{Name: "namespace", Values: []string{"astroshop"}}},
+	}
+	press(a, key("S"))
+	press(a, key("v"))
+	if !a.segVar.active {
+		t.Fatal("v did not open the sub-picker")
+	}
+	deliverSegVarRows(a, namespaceRows())
+	if !a.segVar.checked[0] || a.segVar.checked[1] {
+		t.Fatalf("pre-check wrong: %+v (want only astroshop's row)", a.segVar.checked)
+	}
+
+	// v on a segment without variables refuses.
+	press(a, key("esc"))
+	press(a, key("j"))
+	press(a, key("v"))
+	if a.segVar.active {
+		t.Fatal("v opened a sub-picker for a variable-less segment")
+	}
+	if !a.statusErr || !strings.Contains(a.status, "no variables") {
+		t.Errorf("status = %q, want the no-variables notice", a.status)
+	}
+}
+
+func TestSegVarSubPickerFetchError(t *testing.T) {
+	a := testApp(t, "logs")
+	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
+	press(a, key("S"))
+	press(a, key(" "))
+	a.Update(dataMsg{owner: segVarOwner{}, seq: a.segVar.seq, err: errors.New("HTTP 500")})
+	if a.segVar.loading || a.segVar.err == "" {
+		t.Fatalf("fetch error not surfaced: loading=%v err=%q", a.segVar.loading, a.segVar.err)
+	}
+	// Space-toggling already checked the segment; the segment stays checked
+	// unless the user esc's out — verify esc still cancels cleanly.
+	press(a, key("esc"))
+	if a.segChecked["uid-var"] {
+		t.Fatal("esc after a fetch error left the segment checked")
+	}
+}
+
 func TestSegmentSummary(t *testing.T) {
 	if got := segmentSummary(nil); got != "" {
 		t.Errorf("empty summary = %q", got)
@@ -268,7 +440,7 @@ func TestRewriteSegmentVarError(t *testing.T) {
 	if strings.Contains(got, "-S \"") || strings.Contains(got, "--segments-file") {
 		t.Errorf("CLI flag examples survived: %q", got)
 	}
-	if !strings.Contains(got, `segment uid-b requires variable "env"`) || !strings.Contains(got, ".dynatrace.yaml") {
+	if !strings.Contains(got, `segment uid-b requires variable "env"`) || !strings.Contains(got, "v on it to pick values") {
 		t.Errorf("rewritten error misses cause or remedy: %q", got)
 	}
 }

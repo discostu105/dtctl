@@ -75,7 +75,9 @@ it can do. It merges on top of your personal dtctl config (unlike a local
 `.dtctl.yaml`, which replaces it), is applied session-locally, has no
 environment-variable expansion, and a broken file degrades to a startup
 warning — never a failed launch. In the TUI, `S` opens the segment picker to
-change or clear the selection at any time.
+change or clear the selection at any time; segments with variables prompt for
+their values right in the picker (`v` edits bindings later), so the
+`variables:` block above is a team default, not a requirement.
 
 ## Documentation
 

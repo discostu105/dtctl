@@ -241,8 +241,13 @@ pod → workload → namespace → the sibling workload that's actually broken.
   project's `.dynatrace.yaml` — found by walking up from the cwd, committable
   to the repo — pre-selects segments at startup: resolved async against the
   tenant list by exact UID, then exact case-insensitive name; unknown or
-  ambiguous refs warn instead of guessing. Segments with variables get their
-  bindings from the workspace file; a missing binding surfaces Grail's
+  ambiguous refs warn instead of guessing. Segments with variables prompt for
+  values right in the picker: space-toggling an unbound one opens a **value
+  sub-picker** (the variable definition DQL runs through the shared
+  dataSource; result columns are the variable names, rows the candidates;
+  `/` filters, enter binds, esc cancels the toggle — mirroring the web UI's
+  secondary selection), and `v` reopens it later to edit bindings, including
+  workspace-supplied ones. A still-missing binding surfaces Grail's
   `FILTER_SEGMENT_REQUIRES_VARIABLE` error rewritten with TUI remedies
   instead of CLI flags. The workspace file can also set the startup view,
   timeframe, and preferred environment (see the dtui README).

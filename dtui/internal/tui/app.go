@@ -138,6 +138,9 @@ type app struct {
 	segLoading    bool
 	segErr        string
 
+	// Variable value sub-picker (space on an unbound segment, or 'v').
+	segVar segVarState
+
 	hist *historyStore
 
 	status    string
@@ -277,6 +280,10 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 				a.ds.dict = catalog.ParseFieldDocs(msg.records)
 			}
 			return nil
+		}
+		// The segment variable value fetch belongs to the sub-picker.
+		if _, ok := msg.owner.(segVarOwner); ok {
+			return a.handleSegVarData(msg)
 		}
 		// Deliver to every view on either stack (deduped — the stacks share
 		// views), so a parent still loading below a drill-down completes and
@@ -432,6 +439,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	}
 	if a.openActive {
 		return a.updateOpenPicker(msg)
+	}
+	if a.segVar.active {
+		return a.updateSegVarPicker(msg)
 	}
 	if a.segPickActive {
 		return a.updateSegPicker(msg)
@@ -1073,6 +1083,9 @@ func (a *app) renderBody() string {
 	if a.openActive {
 		return overlay(a.width, bodyH, a.renderOpenPicker())
 	}
+	if a.segVar.active {
+		return overlay(a.width, bodyH, a.renderSegVarPicker())
+	}
 	if a.segPickActive {
 		return overlay(a.width, bodyH, a.renderSegPicker())
 	}
@@ -1093,8 +1106,10 @@ func (a *app) renderFooter() string {
 		hints = []keyHint{{"enter", "restore"}, {"j/k", "move"}, {"esc", "close"}}
 	case a.openActive:
 		hints = []keyHint{{"enter", "open"}, {"y", "yank url"}, {"esc", "cancel"}}
+	case a.segVar.active:
+		hints = []keyHint{{"space", "toggle"}, {"/", "filter"}, {"enter", "bind"}, {"esc", "back"}}
 	case a.segPickActive:
-		hints = []keyHint{{"space", "toggle"}, {"enter", "apply"}, {"c", "clear"}, {"esc", "cancel"}}
+		hints = []keyHint{{"space", "toggle"}, {"v", "values"}, {"enter", "apply"}, {"c", "clear"}, {"esc", "cancel"}}
 	case a.top().InputActive():
 		// A view's text input (filter, search, query editor) is focused — the
 		// global keys would just type characters, so show only the view's own
@@ -1164,7 +1179,7 @@ func (a *app) renderHelp() string {
 		{"Scope & actions", []keyHint{
 			{".", "pin selection as global scope (ctrl+x unpins)"},
 			{"t", "timeframe picker"},
-			{"S", "segments — up to 10 filter segments applied to every DQL view (:segments); a .dynatrace.yaml in the project pre-selects them"},
+			{"S", "segments — up to 10 filter segments applied to every DQL view (:segments); v picks variable values; a .dynatrace.yaml in the project pre-selects them"},
 			{"ctrl+q", "reveal query — this view's DQL in the editor"},
 			{"o", "open in the Dynatrace UI — a picker appears when several targets apply"},
 			{"y / c", "yank id / copy CLI command"},

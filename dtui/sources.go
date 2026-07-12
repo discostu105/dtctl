@@ -40,12 +40,16 @@ func segmentSource(h *segment.Handler) tui.SegmentLister {
 		}
 		opts := make([]tui.SegmentOption, 0, len(list.FilterSegments))
 		for _, s := range list.FilterSegments {
-			opts = append(opts, tui.SegmentOption{
+			opt := tui.SegmentOption{
 				UID:          s.UID,
 				Name:         s.Name,
 				Description:  s.Description,
 				HasVariables: s.Variables != nil,
-			})
+			}
+			if s.Variables != nil && s.Variables.Type == "query" {
+				opt.VariablesQuery = s.Variables.Value
+			}
+			opts = append(opts, opt)
 		}
 		sort.SliceStable(opts, func(i, j int) bool {
 			return strings.ToLower(opts[i].Name) < strings.ToLower(opts[j].Name)
