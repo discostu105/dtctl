@@ -436,3 +436,64 @@ func TestStaleFieldsSummaryResultDropped(t *testing.T) {
 		t.Fatalf("stale facet result must be dropped: options=%v", tv.facetOptions)
 	}
 }
+
+// Buckets are physical data separation — the primary Grail narrowing axis —
+// so bucket-backed views project dt.system.bucket into every record (the
+// inspector shows it, cross-view 'f' can pass it) and the facet manager pins
+// it first, ahead of the record attributes.
+func TestBucketFacetFirstClassOnBucketBackedViews(t *testing.T) {
+	a := testApp(t, "logs")
+	seedRows(t, a, []map[string]any{{
+		"timestamp": "2026-07-12T10:00:00Z", "content": "boom",
+		"loglevel": "ERROR", "dt.system.bucket": "default_logs",
+	}})
+	tv := a.top().(*tableView)
+
+	if !strings.Contains(tv.dql, "| fieldsAdd dt.system.bucket") {
+		t.Fatalf("bucket projection missing from the logs query:\n%s", tv.dql)
+	}
+	press(a, key("f"))
+	if len(tv.facetFields) == 0 || tv.facetFields[0] != catalog.BucketField {
+		t.Fatalf("bucket field must lead the candidates: %v", tv.facetFields)
+	}
+	for _, f := range tv.facetFields[1:] {
+		if f == catalog.BucketField {
+			t.Fatalf("bucket field pinned and listed: %v", tv.facetFields)
+		}
+	}
+}
+
+// Entity views read no bucket-backed table — referencing dt.system.bucket
+// there would fail the whole query (FIELD_DOES_NOT_EXIST, validated live).
+func TestBucketFacetAbsentOnEntityViews(t *testing.T) {
+	a := testApp(t, "hosts")
+	seedRows(t, a, []map[string]any{hostRow()})
+	tv := a.top().(*tableView)
+
+	if strings.Contains(tv.dql, "dt.system.bucket") {
+		t.Fatalf("entity views must not reference buckets:\n%s", tv.dql)
+	}
+	press(a, key("f"))
+	for _, f := range tv.facetFields {
+		if f == catalog.BucketField {
+			t.Fatalf("bucket field offered on a bucket-less view: %v", tv.facetFields)
+		}
+	}
+}
+
+// A bucket facet must prune at the source — directly after fetch, before the
+// spec's own pipeline — not sit at the tail like attribute facets.
+func TestBucketFacetFiltersAtSource(t *testing.T) {
+	a := testApp(t, "logs")
+	seedRows(t, a, []map[string]any{{"content": "x", "dt.system.bucket": "default_logs"}})
+	tv := a.top().(*tableView)
+
+	deliver(a, tv.addFacet(catalog.Facet{Field: catalog.BucketField, Value: "default_logs"}))
+	lines := strings.Split(tv.dql, "\n")
+	if len(lines) < 2 || lines[1] != `| filter toString(dt.system.bucket) == "default_logs"` {
+		t.Fatalf("bucket facet must follow the source line:\n%s", tv.dql)
+	}
+	if !historyContains(a, "dt.system.bucket=default_logs") {
+		t.Errorf("bucket facet not recorded in history: %+v", a.hist.entries)
+	}
+}

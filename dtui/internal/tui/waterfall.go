@@ -91,10 +91,14 @@ func (v *waterfallView) Echo() string { return v.ds.echoQuery(v.dql) }
 func (v *waterfallView) DQL() string { return v.dql }
 
 func (v *waterfallView) Hints() []keyHint {
-	return []keyHint{
+	hints := []keyHint{
 		{"enter", "span attributes"}, {"l", "trace logs"}, {"x", "topology"},
 		{"y", "yank trace id"}, {"o", "open"},
 	}
+	if !previewEnabled {
+		hints = append(hints, keyHint{"P", "preview"})
+	}
+	return hints
 }
 
 // Selection exposes the highlighted span and its service entity (for pin,
@@ -210,7 +214,15 @@ func (v *waterfallView) move(delta int) {
 	}
 }
 
-func (v *waterfallView) visible() int { return max(v.height-1, 1) }
+// visible is the row budget under the header, minus the bottom preview
+// panel's bite when that layout is active.
+func (v *waterfallView) visible() int {
+	h := v.height - 1
+	if previewBottomOn(v.width, v.height) {
+		h -= previewBottomH + 1
+	}
+	return max(h, 1)
+}
 
 // buildWaterfall assembles the depth-ordered rows from start-sorted spans.
 func buildWaterfall(records []map[string]any) []wfRow {
@@ -288,6 +300,10 @@ func parseTimeNs(iso string) int64 {
 
 func (v *waterfallView) View(width, height int) string {
 	v.width, v.height = width, height
+	return previewLayout(width, height, v.renderBody, v.previewLines)
+}
+
+func (v *waterfallView) renderBody(width, height int) string {
 	var b strings.Builder
 
 	switch {
@@ -341,7 +357,7 @@ func (v *waterfallView) View(width, height int) string {
 		end = len(v.rows)
 	}
 	for i := v.offset; i < end; i++ {
-		b.WriteString(v.renderRow(v.rows[i], i == v.cursor, t0, total, treeW, kindW, svcW, barW, durW))
+		b.WriteString(v.renderRow(v.rows[i], i == v.cursor, t0, total, width, treeW, kindW, svcW, barW, durW))
 		if i < end-1 {
 			b.WriteString("\n")
 		}
@@ -349,7 +365,36 @@ func (v *waterfallView) View(width, height int) string {
 	return b.String()
 }
 
-func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW, kindW, svcW, barW, durW int) string {
+// previewLines renders the highlighted span's peek pane: identity, the
+// curated span facts (statement, prompt, verdict, latency), and where the
+// span sits on the trace's own time axis.
+func (v *waterfallView) previewLines(w int) []string {
+	if v.cursor < 0 || v.cursor >= len(v.rows) {
+		return []string{theme.Dim.Render("no selection")}
+	}
+	row := v.rows[v.cursor]
+	title := catalog.PreviewTitle(row.rec)
+	if title == "" {
+		title = row.label
+	}
+	lines := []string{theme.OverlayTitle.Render(ansi.Truncate(flatten(title), w, "…")), ""}
+	lines = append(lines, renderPreviewFacts(catalog.PreviewFacts(row.rec), w)...)
+	// Trace-relative position: the clock time is in the facts, but "how deep
+	// into the trace" is what a waterfall reader is actually asking.
+	t0 := row.start
+	for _, r := range v.rows {
+		if r.start != 0 && r.start < t0 {
+			t0 = r.start
+		}
+	}
+	if row.start > t0 {
+		lines = append(lines, " "+theme.FactLabel.Render("offset:")+" "+
+			catalog.FormatNs(float64(row.start-t0))+theme.Dim.Render(" into the trace"))
+	}
+	return lines
+}
+
+func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, width, treeW, kindW, svcW, barW, durW int) string {
 	label := r.label
 	if r.failed {
 		label = "✗ " + label
@@ -393,7 +438,7 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 		bar := strings.Repeat("┄", startCell) + strings.Repeat("█", lenCells) +
 			strings.Repeat("┄", barW-startCell-lenCells)
 		return theme.Gutter.Render("▌") +
-			theme.Selected.Render(pad(tree+" "+kind+" "+svc+" "+bar+" "+durTxt, v.width-1))
+			theme.Selected.Render(pad(tree+" "+kind+" "+svc+" "+bar+" "+durTxt, width-1))
 	}
 
 	// Bars are colored by service, so one service's spans group visually;
@@ -418,7 +463,7 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, treeW
 	case r.category != "":
 		kindStyle = theme.Label
 	}
-	return ansi.Truncate(" "+tree+" "+kindStyle.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
+	return ansi.Truncate(" "+tree+" "+kindStyle.Render(kind)+" "+svc+" "+bar+" "+theme.Dim.Render(durTxt), width, "…")
 }
 
 // genaiGlyph marks a GenAI operation in the waterfall's kind column.

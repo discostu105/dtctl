@@ -1240,8 +1240,13 @@ func (v *navView) previewPane(w int) []string {
 			if val == "" {
 				continue
 			}
-			lines = append(lines, "  "+theme.FactLabel.Render(fact.Label+":")+" "+
-				ansi.Truncate(val, maxInt(w-len(fact.Label)-5, 8), "…"))
+			text := ansi.Truncate(val, maxInt(w-len(fact.Label)-5, 8), "…")
+			if fact.Class != nil {
+				if class := fact.Class(val); class != "" {
+					text = theme.Class(class, text)
+				}
+			}
+			lines = append(lines, "  "+theme.FactLabel.Render(fact.Label+":")+" "+text)
 			shown++
 		}
 		if shown == 0 {

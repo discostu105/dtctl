@@ -672,6 +672,11 @@ func (v *inspectorView) rebuild() {
 	if len(v.facts) > 0 {
 		for _, f := range v.facts {
 			if text := f.Value(v.rec); text != "" {
+				if f.Class != nil {
+					if class := f.Class(text); class != "" {
+						text = theme.Class(class, text)
+					}
+				}
 				v.addLine(" " + theme.FactLabel.Render(fmt.Sprintf("%-14s", f.Label)) + "  " + text)
 			}
 		}

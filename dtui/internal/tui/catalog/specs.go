@@ -207,6 +207,9 @@ var logsSpec = &Spec{
 	ScopeColumns: func(s Scope) []Column { return PatternColumns(s.Pattern) },
 	Entity:       signalSourceEntity,
 	Trace:        func(rec map[string]any) string { return Str(rec, "trace_id") },
+	// A SERVICE scope widens to the service's processes/containers first —
+	// most log records carry no service ID (see LogHopQuery).
+	Hop: &HopSpec{Query: LogHopQuery, Apply: LogHopEntities},
 	// 'a' analyzes the current logs into Davis patterns ('g' is go-to-top).
 	Drills: map[string]string{"p": "problems", "s": "trace", "a": "patterns"},
 }

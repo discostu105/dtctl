@@ -184,16 +184,9 @@ var workloadsSpec = &Spec{
 	},
 }
 
-func workloadReady(rec map[string]any) string {
-	ready, desired := Str(rec, "ready"), Str(rec, "desired")
-	if desired == "" {
-		return ""
-	}
-	if ready == "" {
-		ready = "0" // Kubernetes omits readyReplicas when zero are ready
-	}
-	return ready + "/" + desired
-}
+// workloadReady lives in detail.go — it reads the list aliases and digs the
+// manifest, so the workloads column and the key-facts panel share one
+// readiness reader (Kubernetes omits readyReplicas when zero are ready).
 
 var namespacesSpec = &Spec{
 	Name:         "namespaces",

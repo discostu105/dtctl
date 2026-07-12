@@ -59,6 +59,10 @@ type tableView struct {
 	facetSel     int
 	facetEdit    int // index of the search/facet being edited; -1 = adding
 
+	// hopDone marks the spec's scope-widening pre-query as resolved (or
+	// skipped); refreshes then reuse the widened scope.Entities.
+	hopDone bool
+
 	// onData observes fetched records before filtering (the query escape
 	// hatch derives result columns from it).
 	onData func(records []map[string]any)
@@ -96,9 +100,70 @@ const previewBottomH = 9
 // preview auto-hides instead.
 const previewBottomMinHeight = 30
 
-func (v *tableView) previewSide() bool { return previewEnabled && v.width >= previewPaneMinWidth }
-func (v *tableView) previewBottom() bool {
-	return previewEnabled && v.width < previewPaneMinWidth && v.height >= previewBottomMinHeight
+// previewSideOn / previewBottomOn are the shared size gates — every
+// record-list view (tables, the trace waterfall, the session timeline)
+// places its preview pane by the same rules.
+func previewSideOn(width int) bool { return previewEnabled && width >= previewPaneMinWidth }
+func previewBottomOn(width, height int) bool {
+	return previewEnabled && width < previewPaneMinWidth && height >= previewBottomMinHeight
+}
+
+func (v *tableView) previewSide() bool   { return previewSideOn(v.width) }
+func (v *tableView) previewBottom() bool { return previewBottomOn(v.width, v.height) }
+
+// previewLayout composes a view body with the selected row's preview pane: a
+// side pane on wide screens, a bottom panel on narrow-but-tall ones, the body
+// alone otherwise (cramped screens, or preview toggled off with P).
+func previewLayout(width, height int, body func(w, h int) string, preview func(w int) []string) string {
+	switch {
+	case previewSideOn(width):
+		paneW := width * 2 / 5
+		if paneW > 48 {
+			paneW = 48
+		}
+		leftW := width - paneW - 3
+		left := strings.Split(body(leftW, height), "\n")
+		right := preview(paneW)
+		if len(right) > height {
+			right = append(right[:height-1], theme.Dim.Render(fmt.Sprintf("… +%d more (enter opens)", len(right)-height+1)))
+		}
+		sep := theme.Rule.Render("│")
+		var b strings.Builder
+		rows := max(len(left), len(right))
+		if rows > height {
+			rows = height
+		}
+		for i := 0; i < rows; i++ {
+			l, r := "", ""
+			if i < len(left) {
+				l = left[i]
+			}
+			if i < len(right) {
+				r = right[i]
+			}
+			b.WriteString(pad(l, leftW) + " " + sep + " " + ansi.Truncate(r, paneW, "…"))
+			if i < rows-1 {
+				b.WriteString("\n")
+			}
+		}
+		return b.String()
+	case previewBottomOn(width, height):
+		bodyH := max(height-previewBottomH-1, 1)
+		out := body(width, bodyH)
+		if gap := bodyH - lipgloss.Height(out); gap > 0 {
+			out += strings.Repeat("\n", gap)
+		}
+		lines := preview(width - 2)
+		if len(lines) > previewBottomH {
+			lines = append(lines[:previewBottomH-1], theme.Dim.Render("… (enter opens the full record)"))
+		}
+		out += "\n" + theme.Rule.Render(strings.Repeat("─", max(width, 0)))
+		for _, l := range lines {
+			out += "\n " + ansi.Truncate(l, width-2, "…")
+		}
+		return out
+	}
+	return body(width, height)
 }
 
 // facetStage is the facet picker's overlay state.
@@ -129,6 +194,10 @@ const (
 // enrichOwner tags enrichment queries so their results are told apart from
 // the view's list query (both share the view's seq generation).
 type enrichOwner struct{ v *tableView }
+
+// hopOwner tags the scope-widening pre-query (Spec.Hop) that runs before
+// the first list fetch.
+type hopOwner struct{ v *tableView }
 
 // facetOwner tags the facet picker's fieldsSummary query; field pins the
 // result to the attribute it was requested for (two in-flight explorations
@@ -192,30 +261,51 @@ func (v *tableView) setLens(i int, wrap bool) tea.Cmd {
 }
 
 // composeDQL renders the list query: the spec's scope query with the server
-// searches injected after the source (DQL rejects them later in the
-// pipeline) and the facet filters before the sort/limit tail. API-backed
-// views without a query render "".
+// searches and bucket facets injected after the source (DQL rejects search
+// later in the pipeline; the bucket filter prunes physical reads at the
+// source), the record's bucket projected in on bucket-backed views (skipped
+// for API views — their query feeds an analyzer, not the table), and the
+// remaining facet filters before the sort/limit tail. API-backed views
+// without a query render "".
 func (v *tableView) composeDQL() string {
 	if v.spec.Query == nil {
 		return ""
 	}
-	dql := catalog.InjectSearches(v.spec.Query(v.scope), v.searches)
-	var stages []string
-	for _, f := range v.facets {
-		stages = append(stages, f.Stage())
-	}
-	return catalog.InjectStages(dql, stages)
+	return catalog.ComposeQuery(v.spec.Query(v.scope), v.searches, v.facets, v.spec.API == "")
 }
 
 func (v *tableView) Refresh() tea.Cmd {
 	v.seq++
 	v.loading = true
 	v.err = nil
+	if cmd := v.hopCmd(); cmd != nil {
+		return cmd
+	}
+	return v.fetch()
+}
+
+// fetch composes and issues the list query for the current scope.
+func (v *tableView) fetch() tea.Cmd {
 	v.dql = v.composeDQL()
 	if v.spec.API != "" {
 		return v.ds.call(v, v.seq, v.spec.API, v.scope, v.dql)
 	}
 	return v.ds.query(v, v.seq, v.dql)
+}
+
+// hopCmd issues the spec's scope-widening pre-query once, before the first
+// fetch (nil = no hop needed, fetch directly).
+func (v *tableView) hopCmd() tea.Cmd {
+	if v.spec.Hop == nil || v.hopDone {
+		return nil
+	}
+	q := v.spec.Hop.Query(v.scope)
+	if q == "" {
+		v.hopDone = true
+		return nil
+	}
+	v.dql = "" // the list query composes once the widened scope is known
+	return v.ds.query(hopOwner{v}, v.seq, q)
 }
 
 func (v *tableView) SetTimeframe(tf catalog.Timeframe) tea.Cmd {
@@ -361,6 +451,22 @@ func (v *tableView) Update(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case dataMsg:
+		if ho, ok := msg.owner.(hopOwner); ok && ho.v == v {
+			if msg.seq != v.seq {
+				return nil
+			}
+			v.hopDone = true
+			// A hop failure degrades to the unwidened scope — the entity's
+			// own filter arms still match directly-stamped records.
+			if msg.err == nil && v.spec.Hop != nil {
+				v.scope.Entities = v.spec.Hop.Apply(v.scope, msg.records)
+				if n := len(v.scope.Entities) - 1; n > 0 {
+					return tea.Batch(v.fetch(),
+						status(fmt.Sprintf("scope widened to %d runtime entities — logs rarely carry service IDs", n)))
+				}
+			}
+			return v.fetch()
+		}
 		if eo, ok := msg.owner.(enrichOwner); ok && eo.v == v {
 			if msg.seq == v.seq && msg.err == nil {
 				v.applyEnrichment(msg.records)
@@ -771,7 +877,7 @@ func (v *tableView) facetCandidates() []string {
 	var fields []string
 	for _, rec := range v.all {
 		for k, val := range rec {
-			if seen[k] || strings.HasPrefix(k, "__enrich.") {
+			if seen[k] || strings.HasPrefix(k, "__enrich.") || k == catalog.BucketField {
 				continue
 			}
 			switch val.(type) {
@@ -783,6 +889,12 @@ func (v *tableView) facetCandidates() []string {
 		}
 	}
 	sort.Strings(fields)
+	// Buckets are Grail's physical data separation — the primary narrowing
+	// axis — so the bucket field leads the candidates on bucket-backed views,
+	// rows fetched or not (the value picker explores it server-side).
+	if catalog.BucketEligible(v.spec.Query(v.scope)) {
+		fields = append([]string{catalog.BucketField}, fields...)
+	}
 	return fields
 }
 
@@ -1027,6 +1139,10 @@ func (v *tableView) renderFacetPicker() string {
 			case entryFacet:
 				return pad(v.facets[e.idx].Label(), valueW) + " " + cell("facet", countW, true)
 			default:
+				if e.attr == catalog.BucketField {
+					// Pinned first on bucket-backed views; the tag says why.
+					return pad(e.attr, valueW) + " " + cell("bucket", countW, true)
+				}
 				return pad(e.attr, valueW+countW+1)
 			}
 		}, func(i int) string {
@@ -1175,8 +1291,7 @@ func (v *tableView) drill(target string) tea.Cmd {
 	}
 	scope := catalog.Scope{Entity: entity, Timeframe: v.scope.Timeframe}
 	if target == "traces" {
-		// GenAI entities land on the genai lens — their spans rarely
-		// include roots, and prompts/tool calls are what the drill is for.
+		// Scoped drills skip the roots lens — see DefaultSpanLens.
 		scope.Lens = catalog.DefaultSpanLens(entity.Type)
 	}
 	return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
@@ -1429,71 +1544,24 @@ func (v *tableView) View(width, height int) string {
 		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Position(0.2),
 			theme.OverlayBox.Render(v.renderFacetPicker()))
 	}
-
-	if v.previewSide() {
-		paneW := width * 2 / 5
-		if paneW > 48 {
-			paneW = 48
-		}
-		leftW := width - paneW - 3
-		left := strings.Split(v.renderTable(leftW, height), "\n")
-		right := v.previewLines(paneW)
-		if len(right) > height {
-			right = append(right[:height-1], theme.Dim.Render(fmt.Sprintf("… +%d more (enter opens)", len(right)-height+1)))
-		}
-		sep := theme.Rule.Render("│")
-		var b strings.Builder
-		rows := max(len(left), len(right))
-		if rows > height {
-			rows = height
-		}
-		for i := 0; i < rows; i++ {
-			l, r := "", ""
-			if i < len(left) {
-				l = left[i]
-			}
-			if i < len(right) {
-				r = right[i]
-			}
-			b.WriteString(pad(l, leftW) + " " + sep + " " + ansi.Truncate(r, paneW, "…"))
-			if i < rows-1 {
-				b.WriteString("\n")
-			}
-		}
-		return b.String()
-	}
-	if v.previewBottom() {
-		tableH := max(height-previewBottomH-1, 1)
-		out := v.renderTable(width, tableH)
-		if gap := tableH - lipgloss.Height(out); gap > 0 {
-			out += strings.Repeat("\n", gap)
-		}
-		lines := v.previewLines(width - 2)
-		if len(lines) > previewBottomH {
-			lines = append(lines[:previewBottomH-1], theme.Dim.Render("… (enter opens the full record)"))
-		}
-		out += "\n" + theme.Rule.Render(strings.Repeat("─", max(width, 0)))
-		for _, l := range lines {
-			out += "\n " + ansi.Truncate(l, width-2, "…")
-		}
-		return out
-	}
-	return v.renderTable(width, height)
+	return previewLayout(width, height, v.renderTable, v.previewLines)
 }
 
 // previewLines renders the selected row's peek pane: identity, then the
-// curated key facts for entity rows or the priority-field highlights for
-// signal records — all from the record already in hand, zero queries.
+// curated key facts for entity rows or the per-kind curated facts for signal
+// records — all from the record already in hand, zero queries.
 func (v *tableView) previewLines(w int) []string {
 	rec := v.selected()
 	if rec == nil {
 		return []string{theme.Dim.Render("no selection")}
 	}
 	entity := v.entityOf(rec)
-	title := v.spec.Name
-	if entity != nil && entity.Name != "" {
+	title := catalog.PreviewTitle(rec)
+	if title == "" && entity != nil && entity.Name != "" {
 		title = entity.Name
-	} else {
+	}
+	if title == "" {
+		title = v.spec.Name
 		for _, key := range []string{"title", "name", "event.name", "span.name", "endpoint.name", "display_id", "content"} {
 			if t := catalog.Str(rec, key); t != "" {
 				title = t
@@ -1502,7 +1570,11 @@ func (v *tableView) previewLines(w int) []string {
 		}
 	}
 	lines := []string{theme.OverlayTitle.Render(ansi.Truncate(flatten(title), w, "…"))}
-	if entity != nil {
+	// Entity LIST rows preview the entity's curated key facts. Signal rows
+	// that merely reference an entity (a session's frontend, a problem's
+	// affected service) must NOT land here — the record is the signal, and
+	// probing entity facts against it reads as an empty pane.
+	if v.spec.Kind == catalog.KindEntity && entity != nil {
 		id := ansi.Truncate(" "+entity.ID, max(w-lipgloss.Width(entity.Type), 8), "…")
 		lines = append(lines, theme.Badge.Render(entity.Type)+theme.Dim.Render(id), "")
 		shown := 0
@@ -1511,8 +1583,13 @@ func (v *tableView) previewLines(w int) []string {
 			if val == "" {
 				continue
 			}
-			lines = append(lines, " "+theme.FactLabel.Render(fact.Label+":")+" "+
-				ansi.Truncate(flatten(val), max(w-len(fact.Label)-4, 8), "…"))
+			text := ansi.Truncate(flatten(val), max(w-len(fact.Label)-4, 8), "…")
+			if fact.Class != nil {
+				if class := fact.Class(val); class != "" {
+					text = theme.Class(class, text)
+				}
+			}
+			lines = append(lines, " "+theme.FactLabel.Render(fact.Label+":")+" "+text)
 			shown++
 		}
 		if shown <= 1 {
@@ -1521,43 +1598,95 @@ func (v *tableView) previewLines(w int) []string {
 		return lines
 	}
 	lines = append(lines, "")
-	for _, key := range catalog.PriorityFields(rec) {
-		val, ok := rec[key]
-		if !ok {
-			continue
-		}
-		text := flatten(catalog.FormatValue(val))
-		if text == "" {
-			continue
-		}
-		if key == "event.severity" {
-			text = catalog.SeverityBadge(catalog.Str(rec, key))
-		}
-		// Long prose fields (log content, event descriptions) wrap over a few
-		// lines; everything else stays a one-line fact.
-		if key == "content" || key == "event.description" {
-			lines = append(lines, " "+theme.FactLabel.Render(key))
-			wrapped := wrapLines(text, max(w-2, 8))
-			if len(wrapped) > 4 {
-				wrapped = append(wrapped[:4], theme.Dim.Render("…"))
+	if facts := catalog.PreviewFacts(rec); facts != nil {
+		lines = append(lines, renderPreviewFacts(facts, w)...)
+	} else {
+		for _, key := range catalog.PriorityFields(rec) {
+			val, ok := rec[key]
+			if !ok {
+				continue
 			}
-			for _, l := range wrapped {
-				lines = append(lines, "  "+l)
+			text := flatten(catalog.PreviewValue(key, val))
+			if text == "" {
+				continue
 			}
-			continue
+			if key == "event.severity" {
+				text = catalog.SeverityBadge(catalog.Str(rec, key))
+			}
+			// Long prose fields (log content, event descriptions) wrap over a
+			// few lines; everything else stays a one-line fact.
+			if key == "content" || key == "event.description" {
+				lines = append(lines, wrapFactLines(key, text, w)...)
+				continue
+			}
+			if class := catalog.SeverityFieldClass(key, text); class != "" {
+				text = theme.Class(class, text)
+			}
+			lines = append(lines, " "+theme.FactLabel.Render(key+":")+" "+
+				ansi.Truncate(text, max(w-len(key)-4, 8), "…"))
 		}
-		if class := catalog.SeverityFieldClass(key, text); class != "" {
-			text = theme.Class(class, text)
-		}
-		lines = append(lines, " "+theme.FactLabel.Render(key+":")+" "+
-			ansi.Truncate(text, max(w-len(key)-4, 8), "…"))
 	}
-	if v.spec.Trace != nil {
-		if id := v.spec.Trace(rec); id != "" {
-			lines = append(lines, "", " "+theme.FactLabel.Render("trace:")+" "+theme.UID.Render(shortID(id))+theme.Dim.Render(" (s opens)"))
+	return append(lines, v.previewJumpHints(rec)...)
+}
+
+// renderPreviewFacts renders curated preview facts as pane lines — shared by
+// the table, the trace waterfall, and the session timeline.
+func renderPreviewFacts(facts []catalog.PreviewFact, w int) []string {
+	var lines []string
+	for _, f := range facts {
+		if f.Wrap {
+			lines = append(lines, wrapFactLines(f.Label, flatten(f.Value), w)...)
+			continue
 		}
+		text := ansi.Truncate(flatten(f.Value), max(w-len(f.Label)-4, 8), "…")
+		if f.Class != "" {
+			text = theme.Class(f.Class, text)
+		}
+		lines = append(lines, " "+theme.FactLabel.Render(f.Label+":")+" "+text)
 	}
 	return lines
+}
+
+// wrapFactLines renders a long prose fact: its label on one line, the value
+// flowing over up to four wrapped lines below.
+func wrapFactLines(label, text string, w int) []string {
+	lines := []string{" " + theme.FactLabel.Render(label)}
+	wrapped := wrapLines(text, max(w-2, 8))
+	if len(wrapped) > 4 {
+		wrapped = append(wrapped[:4], theme.Dim.Render("…"))
+	}
+	for _, l := range wrapped {
+		lines = append(lines, "  "+l)
+	}
+	return lines
+}
+
+// previewJumpHints footers the pane with the record's cross-signal jumps —
+// the trace behind a span/log/RUM request, the session behind a RUM event —
+// each labeled with the key that actually takes it there on this view.
+func (v *tableView) previewJumpHints(rec map[string]any) []string {
+	var hints []string
+	if v.spec.Trace != nil {
+		if id := v.spec.Trace(rec); id != "" {
+			key := ""
+			switch {
+			case v.spec.EnterTarget == "waterfall":
+				key = " (enter opens)"
+			case v.spec.Drills["s"] == "trace":
+				key = " (s opens)"
+			}
+			hints = append(hints, " "+theme.FactLabel.Render("trace:")+" "+theme.UID.Render(shortID(id))+theme.Dim.Render(key))
+		}
+	}
+	if v.spec.Drills["u"] == "session" {
+		if id := catalog.Str(rec, "dt.rum.session.id"); id != "" {
+			hints = append(hints, " "+theme.FactLabel.Render("session:")+" "+theme.UID.Render(shortID(id))+theme.Dim.Render(" (u opens)"))
+		}
+	}
+	if len(hints) == 0 {
+		return nil
+	}
+	return append([]string{""}, hints...)
 }
 
 func (v *tableView) renderTable(width, height int) string {

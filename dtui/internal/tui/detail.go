@@ -364,9 +364,7 @@ func newDetailView(ds *dataSource, entity catalog.Entity, rec map[string]any, tf
 		if spec := catalog.Lookup(name); spec != nil {
 			tabScope := scope
 			if name == "traces" {
-				// GenAI entities open on the genai lens: their chat/tool
-				// spans nest deep, so the default roots lens is silently
-				// empty (and the genai columns are the point).
+				// Scoped tabs skip the roots lens — see DefaultSpanLens.
 				tabScope.Lens = catalog.DefaultSpanLens(entity.Type)
 			}
 			v.tabs = append(v.tabs, detailTab{name: name, view: newTableView(ds, spec, tabScope)})

@@ -264,7 +264,7 @@ pod → workload → namespace → the sibling workload that's actually broken.
 | `-` | toggle between the two most recent views (k9s-style) |
 | `H` | **history** — every breadcrumb trail visited, persisted per context across sessions (`~/.local/state/dtctl/tui-history.json`); enter restores the whole trail (data refetched, timeframe reapplied) |
 | `/` | incremental filter of the current table (client-side, per keystroke); **enter adds it as a server-side `\| search`** over every field of the unfetched dataset (terms stack as AND), **alt+enter replaces** the active terms; `esc` clears |
-| `f` / `F` | **facet manager** — active filters listed first (enter edits in place, `ctrl+x` removes one), below them the attributes (quick-search over the fetched records' keys) to add a new facet: pick a value from the server's `fieldsSummary` top values, or type a `*` pattern (`payment*`, `*ayment*`); filters stack, render as pills, survive refresh/timeframe, and persist into history / `F` clears them all (esc-chain clears too) |
+| `f` / `F` | **facet manager** — active filters listed first (enter edits in place, `ctrl+x` removes one), below them the attributes (quick-search over the fetched records' keys) to add a new facet: pick a value from the server's `fieldsSummary` top values, or type a `*` pattern (`payment*`, `*ayment*`); filters stack, render as pills, survive refresh/timeframe, and persist into history / `F` clears them all (esc-chain clears too). On bucket-backed views `dt.system.bucket` is pinned first (tagged `bucket`): buckets are Grail's physical data separation, so a bucket facet prunes reads at the source — its filter injects right after the fetch, and every record is projected with its bucket (`fieldsAdd dt.system.bucket`) so the inspector shows it |
 | `f` (inspector / details tab) | facet the **list beneath** by the selected field's value — scalars apply exactly, array elements as a contains pattern; refused with a message when the list's rows don't carry the field |
 | `shift-j/k` or click header | sort by column, toggle direction |
 | `1`–`9` | hotkeys — user-assignable view bookmarks (`:hotkeys` to manage; defaults: 1 problems, 2 services, 3 hosts, 4 pods, 5 logs) |
@@ -624,7 +624,7 @@ Value rendering rules (implemented in `render.go` / `inspector.go`):
 
 ### Findings that shape all pages
 
-Three lessons from the live exploration, baked into the design:
+Five lessons from the live exploration, baked into the design:
 
 1. **Dual entity-ID eras.** Records carry both deprecated `dt.entity.*` and
    modern `dt.smartscape.*` fields (logs in the tenant have
@@ -638,6 +638,24 @@ Three lessons from the live exploration, baked into the design:
    not errors. Detail tabs therefore render explicit "no data in timeframe /
    not monitored" states, and the relations panel is driven by *discovered*
    edges (see below), never a hardcoded edge list.
+4. **Scoped traces must not open on the roots lens.** Root spans belong only
+   to the trace's *entry* service, so `isNull(span.parent_id)` ANDed with an
+   entity scope is silently empty for most entities (validated live: 11 of
+   the top-15 services on one tenant had zero root spans; "server" is no
+   safer — busy internal-only services carry neither). `DefaultSpanLens`
+   sends scoped drills/tabs to `all` (GenAI to `genai`); only the unscoped
+   `:traces` view keeps roots.
+5. **Logs rarely carry service IDs.** Logs are emitted by processes — a
+   service is a detection construct — so a plain SERVICE filter reads as
+   "this service logs nothing" (validated live: a busy service with zero
+   service-stamped lines but ~2k via its process). The logs view therefore
+   hops (`Spec.Hop`, `LogHopQuery`): a SERVICE scope resolves its `runs_on`
+   PROCESS/CONTAINER Smartscape edges in a pre-query and widens the filter
+   to service + runtime entities. Deliberate approximation, same as the
+   platform's own service→logs navigation: a process hosting several
+   services shows sibling logs too. HOST is excluded (too coarse); K8S_POD
+   adds nothing (pod logs match through the container, and logs carry
+   `k8s.pod.name` but no `dt.smartscape.k8s_pod`).
 
 ---
 

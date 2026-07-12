@@ -222,6 +222,10 @@ type Spec struct {
 	// Enrich adds async per-row metric columns (sparklines) fetched in one
 	// batched timeseries query after the list loads (nil = none).
 	Enrich *EnrichSpec
+	// Hop widens the scope in a pre-query before the view's first fetch
+	// (nil = none) — the logs view resolves a service's runtime entities
+	// because log records rarely carry service IDs (see LogHopQuery).
+	Hop *HopSpec
 	// Scopable refines CanScope for views whose query composes a filter that
 	// is present but useless for some entity types — traces filter by a
 	// dt.smartscape.* field spans only carry for some types. nil = rely on
@@ -300,6 +304,20 @@ type EnrichSpec struct {
 
 // EnrichKey is the record key enrichment series are stored under.
 func EnrichKey(alias string) string { return "__enrich." + alias }
+
+// HopSpec widens a view's scope with entities resolved in a pre-query
+// before the first fetch. It exists for the logs view: most log records
+// carry no service ID, so a plain SERVICE filter reads as "this service
+// logs nothing" — the hop follows the topology to the entities whose IDs
+// logs do carry. Resolved once per view; refreshes reuse the widened set.
+type HopSpec struct {
+	// Query renders the resolution query ("" = this scope needs no hop).
+	Query func(s Scope) string
+	// Apply merges the hop records into the widened entity set. The
+	// original entity stays first — its own filter arms still match
+	// directly-stamped records.
+	Apply func(s Scope, records []map[string]any) []Entity
+}
 
 // specs is the ordered registry; order drives command-bar suggestions.
 var specs = []*Spec{

@@ -244,16 +244,21 @@ func classSpanStatus(val string) string {
 }
 
 // DefaultSpanLens picks the lens a traces view scoped to an entity should
-// open on. GenAI entities land on the genai lens: their chat/tool spans
-// nest deep inside agent traces, so the default roots lens
-// (isNull(span.parent_id)) is silently empty for them — and the genai
-// columns (prompts, tool calls, tokens) are what the drill is for.
+// open on. GenAI entities land on the genai lens: the genai columns
+// (prompts, tool calls, tokens) are what the drill is for. Everything else
+// lands on "all", NOT the unscoped default "roots": root spans belong only
+// to the trace's entry service, so roots ANDed with an entity scope is
+// silently empty for most entities (validated live — 11 of the top-15
+// services on one tenant had zero root spans; "server" is no safer, busy
+// internal-only services carry neither).
 func DefaultSpanLens(entityType string) int {
+	name := "all"
 	if strings.HasPrefix(entityType, "GENAI_") {
-		for i, l := range spanLenses {
-			if l.Name == "genai" {
-				return i
-			}
+		name = "genai"
+	}
+	for i, l := range spanLenses {
+		if l.Name == name {
+			return i
 		}
 	}
 	return 0

@@ -86,7 +86,15 @@ func deliver(a *app, cmd tea.Cmd) {
 		}
 		return
 	}
-	if _, isData := msg.(dataMsg); isData {
+	if dm, isData := msg.(dataMsg); isData {
+		// The scope-widening hop (Spec.Hop) is control flow, not view data:
+		// its result must land so the view composes and issues its real list
+		// query (the runFn seam returns no hop records — the scope stays the
+		// plain entity). The list query's result is still dropped below.
+		if _, isHop := dm.owner.(hopOwner); isHop {
+			_, next := a.Update(msg)
+			deliver(a, next)
+		}
 		return
 	}
 	// Spinner ticks would re-arm themselves forever while a view waits on
@@ -904,7 +912,11 @@ func deliverView(v viewModel, cmd tea.Cmd) {
 		}
 		return
 	}
-	if _, isData := msg.(dataMsg); isData {
+	if dm, isData := msg.(dataMsg); isData {
+		// The scope-widening hop is control flow — see deliver.
+		if _, isHop := dm.owner.(hopOwner); isHop {
+			deliverView(v, v.Update(msg))
+		}
 		return
 	}
 	deliverView(v, v.Update(msg))

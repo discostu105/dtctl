@@ -105,6 +105,51 @@ func BuildEdges(selfID string, records []map[string]any) []Edge {
 	return out
 }
 
+// LogHopQuery resolves the runtime entities a service runs on — the
+// processes and containers whose IDs log records actually carry. Logs are
+// emitted by processes, not services (a service is a detection construct),
+// so most log records carry no service ID: on one tenant the busiest
+// service had ZERO service-stamped log lines but ~2k via its process
+// (validated live). PROCESS and CONTAINER are the hop targets because logs
+// carry dt.smartscape.process and dt.smartscape.container; runs_on HOST is
+// deliberately excluded (a host's full log stream is not "this service's
+// logs") and K8S_POD adds nothing — pod logs match through the pod's
+// container, and log records carry k8s.pod.name but the edge target has no
+// name to match it by. "" for scopes that need no hop: other entity types
+// are stamped on their logs directly, and multi-entity scopes (a problem's
+// affected set) are already wide.
+func LogHopQuery(s Scope) string {
+	if len(s.Entities) > 0 || s.Entity == nil || s.Entity.Type != "SERVICE" {
+		return ""
+	}
+	return fmt.Sprintf(`smartscapeEdges "*"
+| filter source_id == toSmartscapeId(%q) and type == "runs_on"
+| fieldsAdd target_type
+| filter in(target_type, {"PROCESS", "CONTAINER"})
+| fields target_id, target_type
+| limit 50`, s.Entity.ID)
+}
+
+// LogHopEntities merges LogHopQuery's records into the widened entity set:
+// the service first (its arms still match service-stamped logs), then each
+// process/container once.
+func LogHopEntities(s Scope, records []map[string]any) []Entity {
+	if s.Entity == nil {
+		return nil
+	}
+	ents := []Entity{*s.Entity}
+	seen := map[string]bool{s.Entity.ID: true}
+	for _, rec := range records {
+		id, typ := Str(rec, "target_id"), Str(rec, "target_type")
+		if id == "" || typ == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ents = append(ents, Entity{ID: id, Type: typ})
+	}
+	return ents
+}
+
 // CensusQuery counts every Smartscape entity type — the navigator overview's
 // type list (same aggregation as the :entities census view).
 func CensusQuery() string {

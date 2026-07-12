@@ -80,7 +80,7 @@ func TestGenAILensCoversBothConventions(t *testing.T) {
 			t.Errorf("genai lens filter must cover %s:\n%s", want, lens.Filter)
 		}
 	}
-	if DefaultSpanLens("SERVICE") != 0 {
-		t.Error("non-GenAI types keep the roots lens")
+	if got := lensAt(spanLenses, DefaultSpanLens("SERVICE")).Name; got != "all" {
+		t.Errorf("DefaultSpanLens(SERVICE) → %s, want all (scoped roots is empty for most services)", got)
 	}
 }

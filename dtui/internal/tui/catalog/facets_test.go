@@ -161,3 +161,89 @@ func TestParseFieldsSummary(t *testing.T) {
 		t.Error("empty result should parse to nil")
 	}
 }
+
+// Bucket eligibility is a whitelist: referencing dt.system.bucket on a table
+// without buckets fails the whole query with FIELD_DOES_NOT_EXIST — not null
+// (validated live on dt.entity.*, dt.system.buckets, dt.semantic_dictionary.*).
+func TestBucketEligible(t *testing.T) {
+	tests := []struct {
+		dql  string
+		want bool
+	}{
+		{"fetch logs, from:now() - 2h\n| sort timestamp desc\n| limit 300", true},
+		{"fetch bizevents, from:now() - 24h\n| limit 100", true},
+		// dt.davis.* and dt.synthetic.* are views over the events table and
+		// carry buckets (validated live).
+		{"fetch dt.davis.problems, from:now() - 2h\n| filter not(dt.davis.is_duplicate)\n| limit 200", true},
+		{"fetch dt.synthetic.events, from:now() - 24h\n| limit 100", true},
+		// The record sampler's bucket slice of a table.
+		{"fetch logs\n| filter dt.system.bucket == \"default_logs\"\n| limit 200", true},
+		// Tables without buckets hard-fail the field reference.
+		{"fetch dt.system.buckets\n| limit 100", false},
+		{"fetch dt.entity.http_check\n| limit 100", false},
+		{"fetch dt.semantic_dictionary.fields\n| limit 100", false},
+		// Non-fetch sources carry no buckets.
+		{"smartscapeNodes \"HOST\", from:now() - 2h\n| limit 100", false},
+		// summarize aggregates the field away; a fields projection drops it.
+		{"fetch security.events, from:now() - 2h\n| summarize x = count(), by:{id}\n| limit 100", false},
+		{"fetch logs, from:now() - 2h\n| fields timestamp, content\n| limit 100", false},
+	}
+	for _, tt := range tests {
+		if got := BucketEligible(tt.dql); got != tt.want {
+			t.Errorf("BucketEligible(%q) = %v, want %v", tt.dql, got, tt.want)
+		}
+	}
+}
+
+// The full composition: searches directly after the source, bucket facets
+// next (physical pruning at the source), the bucket projection, then the
+// remaining facets before the sort/limit tail. Stage order validated live.
+func TestComposeQueryBucketPlacement(t *testing.T) {
+	dql := "fetch logs, from:now() - 2h\n| filter x == 1\n| sort timestamp desc\n| limit 300"
+	got := ComposeQuery(dql, []string{"payment"}, []Facet{
+		{Field: BucketField, Value: "default_logs"},
+		{Field: "loglevel", Value: "ERROR"},
+	}, true)
+	want := strings.Join([]string{
+		"fetch logs, from:now() - 2h",
+		`| search "*payment*"`,
+		`| filter toString(dt.system.bucket) == "default_logs"`,
+		"| fieldsAdd dt.system.bucket",
+		"| filter x == 1",
+		`| filter toString(loglevel) == "ERROR"`,
+		"| sort timestamp desc",
+		"| limit 300",
+	}, "\n")
+	if got != want {
+		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Ineligible queries change nothing: no projection, and a (stale) bucket
+// facet stays a plain tail filter like any other.
+func TestComposeQueryIneligibleUntouched(t *testing.T) {
+	dql := "smartscapeNodes \"HOST\", from:now() - 2h\n| sort name asc\n| limit 300"
+	got := ComposeQuery(dql, nil, []Facet{{Field: BucketField, Value: "x"}}, true)
+	want := "smartscapeNodes \"HOST\", from:now() - 2h\n" +
+		`| filter toString(dt.system.bucket) == "x"` + "\n" +
+		"| sort name asc\n| limit 300"
+	if got != want {
+		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
+	}
+	if ComposeQuery(dql, nil, nil, true) != dql {
+		t.Error("no narrowing on an ineligible query must return it unchanged")
+	}
+}
+
+// An API view's query is analyzer input, not the records the table shows —
+// the bucket projection is skipped, but bucket facets still prune the source.
+func TestComposeQueryAnalyzerInputSkipsProjection(t *testing.T) {
+	dql := "fetch logs, from:now() - 2h\n| sort timestamp desc\n| limit 300"
+	got := ComposeQuery(dql, nil, []Facet{{Field: BucketField, Value: "default_logs"}}, false)
+	want := "fetch logs, from:now() - 2h\n" +
+		`| filter toString(dt.system.bucket) == "default_logs"` + "\n" +
+		"| sort timestamp desc\n| limit 300"
+	if got != want {
+		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
+	}
+}

@@ -89,8 +89,12 @@ func (v *timelineView) Hints() []keyHint {
 	if row := v.selectedRow(); row != nil && row.Trace != "" {
 		hints = append(hints, keyHint{"s", "backend trace"})
 	}
-	return append(hints,
+	hints = append(hints,
 		keyHint{"e", "events table"}, keyHint{"x", "relations"}, keyHint{"o", "open"})
+	if !previewEnabled {
+		hints = append(hints, keyHint{"P", "preview"})
+	}
+	return hints
 }
 
 // Selection exposes the highlighted event and its frontend entity (pin,
@@ -234,11 +238,22 @@ func (v *timelineView) move(delta int) {
 	}
 }
 
-// visible is the row budget under the header and lens strip.
-func (v *timelineView) visible() int { return max(v.height-2, 1) }
+// visible is the row budget under the header and lens strip, minus the
+// bottom preview panel's bite when that layout is active.
+func (v *timelineView) visible() int {
+	h := v.height - 2
+	if previewBottomOn(v.width, v.height) {
+		h -= previewBottomH + 1
+	}
+	return max(h, 1)
+}
 
 func (v *timelineView) View(width, height int) string {
 	v.width, v.height = width, height
+	return previewLayout(width, height, v.renderBody, v.previewLines)
+}
+
+func (v *timelineView) renderBody(width, height int) string {
 	var b strings.Builder
 
 	switch {
@@ -308,12 +323,44 @@ func (v *timelineView) View(width, height int) string {
 		end = len(v.rows)
 	}
 	for i := v.offset; i < end; i++ {
-		b.WriteString(v.renderRow(v.rows[i], i == v.cursor, t0, total, labelW, kindW, barW, durW))
+		b.WriteString(v.renderRow(v.rows[i], i == v.cursor, t0, total, width, labelW, kindW, barW, durW))
 		if i < end-1 {
 			b.WriteString("\n")
 		}
 	}
 	return b.String()
+}
+
+// previewLines renders the highlighted event's peek pane: identity, the
+// classifier-specific facts (web vitals, request verdict, error origin),
+// where the event sits on the session's time axis, and its backend-trace
+// jump when it has one.
+func (v *timelineView) previewLines(w int) []string {
+	row := v.selectedRow()
+	if row == nil {
+		return []string{theme.Dim.Render("no selection")}
+	}
+	title := catalog.PreviewTitle(row.Rec)
+	if title == "" {
+		title = row.Label
+	}
+	lines := []string{theme.OverlayTitle.Render(ansi.Truncate(flatten(title), w, "…")), ""}
+	lines = append(lines, renderPreviewFacts(catalog.PreviewFacts(row.Rec), w)...)
+	t0 := row.Start
+	for _, r := range v.rows {
+		if r.Start != 0 && r.Start < t0 {
+			t0 = r.Start
+		}
+	}
+	if row.Start > t0 {
+		lines = append(lines, " "+theme.FactLabel.Render("offset:")+" "+
+			catalog.FormatNs(float64(row.Start-t0))+theme.Dim.Render(" into the session"))
+	}
+	if row.Trace != "" {
+		lines = append(lines, "", " "+theme.FactLabel.Render("trace:")+" "+
+			theme.UID.Render(shortID(row.Trace))+theme.Dim.Render(" (s opens)"))
+	}
+	return lines
 }
 
 // sessionApp names the session's frontend for the header line.
@@ -329,7 +376,7 @@ func (v *timelineView) sessionApp() string {
 	return ""
 }
 
-func (v *timelineView) renderRow(r catalog.TimelineRow, selected bool, t0, total int64, labelW, kindW, barW, durW int) string {
+func (v *timelineView) renderRow(r catalog.TimelineRow, selected bool, t0, total int64, width, labelW, kindW, barW, durW int) string {
 	indent := strings.Repeat("  ", r.Depth)
 	label := r.Label
 	if r.Failed {
@@ -359,7 +406,7 @@ func (v *timelineView) renderRow(r catalog.TimelineRow, selected bool, t0, total
 		bar := strings.Repeat("┄", startCell) + strings.Repeat("█", lenCells) +
 			strings.Repeat("┄", barW-startCell-lenCells)
 		return theme.Gutter.Render("▌") +
-			theme.Selected.Render(pad(text+" "+kind+" "+bar+" "+durTxt, v.width-1))
+			theme.Selected.Render(pad(text+" "+kind+" "+bar+" "+durTxt, width-1))
 	}
 
 	style := timelineKindStyle(r.Kind)
@@ -372,7 +419,7 @@ func (v *timelineView) renderRow(r catalog.TimelineRow, selected bool, t0, total
 	bar := theme.Track.Render(strings.Repeat("┄", startCell)) +
 		style.Render(strings.Repeat("█", lenCells)) +
 		theme.Track.Render(strings.Repeat("┄", barW-startCell-lenCells))
-	return ansi.Truncate(" "+text+" "+style.Render(kind)+" "+bar+" "+theme.Dim.Render(durTxt), v.width, "…")
+	return ansi.Truncate(" "+text+" "+style.Render(kind)+" "+bar+" "+theme.Dim.Render(durTxt), width, "…")
 }
 
 // timelineKindStyle colors an event kind consistently across rows.

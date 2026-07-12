@@ -118,6 +118,89 @@ func InjectSearches(dql string, terms []string) string {
 	return strings.Join(out, "\n")
 }
 
+// --- buckets ----------------------------------------------------------------
+
+// BucketField is Grail's physical-partition metadata field. Every record in a
+// bucket-backed table carries it and it is queryable at any point before an
+// aggregation, but responses only include it once a `fieldsAdd
+// dt.system.bucket` projects it (validated live). Buckets are physical data
+// separation — the primary Grail narrowing axis — so eligible views project
+// the field into every record and the facet manager pins it first.
+const BucketField = "dt.system.bucket"
+
+// bucketFieldStage projects the record's bucket into the response.
+const bucketFieldStage = "| fieldsAdd " + BucketField
+
+// bucketTables are the Grail tables whose records live in buckets — the
+// dt.system.table values of `fetch dt.system.buckets` (validated live).
+// Referencing dt.system.bucket on any other table fails the whole query with
+// FIELD_DOES_NOT_EXIST (validated live on dt.entity.*, dt.system.buckets and
+// dt.semantic_dictionary.*) — not null — so eligibility is a whitelist.
+var bucketTables = map[string]bool{
+	"logs": true, "events": true, "spans": true, "bizevents": true,
+	"metrics": true, "security.events": true, "application.snapshots": true,
+	"user.events": true, "user.sessions": true, "user.replays": true,
+	"dt.system.events": true,
+}
+
+// BucketEligible reports whether a query's records carry dt.system.bucket:
+// the source fetches a bucket-backed table — including the dt.davis.* and
+// dt.synthetic.* views over events (validated live) — and no later stage
+// drops the field (summarize aggregates it away, a fields projection
+// excludes it).
+func BucketEligible(dql string) bool {
+	lines := strings.Split(dql, "\n")
+	table, ok := strings.CutPrefix(strings.TrimSpace(lines[0]), "fetch ")
+	if !ok {
+		return false
+	}
+	table = strings.TrimSpace(strings.SplitN(table, ",", 2)[0])
+	if !bucketTables[table] && !strings.HasPrefix(table, "dt.davis.") && !strings.HasPrefix(table, "dt.synthetic.") {
+		return false
+	}
+	for _, l := range lines[1:] {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "| summarize") || strings.HasPrefix(t, "| fields ") {
+			return false
+		}
+	}
+	return true
+}
+
+// ComposeQuery renders a view's final list query from its narrowing state:
+// search terms directly after the source (InjectSearches), then — on
+// bucket-eligible queries — the bucket facets, whose filter prunes physical
+// reads at the source and survives transforming stages the tail sits after,
+// then the bucket projection (projectBucket; off for API views, whose query
+// is analyzer input rather than the records the table shows), and the
+// remaining facets before the sort/limit tail as usual. The stage order
+// source → search → bucket filter → fieldsAdd is validated live.
+func ComposeQuery(dql string, searches []string, facets []Facet, projectBucket bool) string {
+	var head, tail []string
+	eligible := BucketEligible(dql)
+	for _, f := range facets {
+		if eligible && f.Field == BucketField {
+			head = append(head, f.Stage())
+		} else {
+			tail = append(tail, f.Stage())
+		}
+	}
+	if eligible && projectBucket {
+		head = append(head, bucketFieldStage)
+	}
+	out := InjectSearches(dql, searches)
+	if len(head) > 0 {
+		lines := strings.Split(out, "\n")
+		at := 1 + len(searches)
+		spliced := make([]string, 0, len(lines)+len(head))
+		spliced = append(spliced, lines[:at]...)
+		spliced = append(spliced, head...)
+		spliced = append(spliced, lines[at:]...)
+		out = strings.Join(spliced, "\n")
+	}
+	return InjectStages(out, tail)
+}
+
 // FacetTopValues is how many suggestions the value picker requests.
 const FacetTopValues = 25
 

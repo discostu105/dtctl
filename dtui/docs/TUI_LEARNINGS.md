@@ -270,6 +270,19 @@ All validated live; implementation in `pkg/tui/catalog/facets.go`.
 - Facet `filter` stages stay before the sort/limit tail — after a
   `summarize`, that's what makes them filter the exact fields the columns
   (and the facet attribute picker, built from fetched record keys) present.
+- **`dt.system.bucket` is the primary narrowing axis — and a whitelist.**
+  Buckets are Grail's physical data separation, so a bucket filter prunes
+  reads at the source. The field is queryable and `fieldsSummary`-able on
+  every bucket-backed table *without* a projection, but only appears in
+  responses via `| fieldsAdd dt.system.bucket`. On tables without buckets
+  (`dt.entity.*`, `dt.system.buckets`, `dt.semantic_dictionary.*`) any
+  reference **fails the whole query** with `FIELD_DOES_NOT_EXIST` — not
+  null — so eligibility is the `bucketTables` whitelist (the
+  `dt.system.table` values of `fetch dt.system.buckets`, plus the
+  `dt.davis.*` / `dt.synthetic.*` views over events, all validated live).
+  Bucket facets therefore inject directly after the source + search stages
+  (order validated live), where they also survive `summarize`; the
+  projection is skipped for API views, whose query is analyzer input.
 
 ### 1.11 Span lenses — why the traces view fetches spans directly
 
