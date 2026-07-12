@@ -1,4 +1,4 @@
-package config
+package session
 
 // Contract tests: lock the shared config-file contract that dtctl and dtui
 // (and any future plugin) both depend on — see docs/dev/CONFIG_CONTRACT.md.

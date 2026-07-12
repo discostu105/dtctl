@@ -1,6 +1,6 @@
 //go:build linux
 
-package config
+package session
 
 import (
 	"context"
