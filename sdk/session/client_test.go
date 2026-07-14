@@ -425,16 +425,16 @@ func TestClient_UserAgent(t *testing.T) {
 	}
 
 	// A consumer identity set via option must win (Landmine 5: dtctl and
-	// dtui are distinguishable in tenant-side request logs).
-	client, err = NewClient(server.URL, "test-token", WithUserAgentProduct("dtui", "9.9.9"))
+	// dynatui are distinguishable in tenant-side request logs).
+	client, err = NewClient(server.URL, "test-token", WithUserAgentProduct("dynatui", "9.9.9"))
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 	if _, err = client.HTTP().R().Get("/test"); err != nil {
 		t.Fatalf("Request failed: %v", err)
 	}
-	if !strings.HasPrefix(receivedUA, "dtui/9.9.9") {
-		t.Errorf("User-Agent = %v, want prefix dtui/9.9.9", receivedUA)
+	if !strings.HasPrefix(receivedUA, "dynatui/9.9.9") {
+		t.Errorf("User-Agent = %v, want prefix dynatui/9.9.9", receivedUA)
 	}
 
 	// May include AI agent suffix like " (AI-Agent: opencode)" depending on environment

@@ -1,6 +1,6 @@
 // Package client re-exports the authenticated Dynatrace HTTP client from
 // github.com/dynatrace-oss/dtctl/sdk/session, where the implementation moved
-// (docs/dev/DTUI_SPLIT_DESIGN.md Decision 2, Landmine 5): client construction
+// (docs/dev/DYNATUI_SPLIT_DESIGN.md Decision 2, Landmine 5): client construction
 // from a context — token resolution, OAuth refresh, the 401 retry — is shared
 // session behavior, and the User-Agent is parameterized there so each
 // consumer ships its own identity. This package pins dtctl's identity
@@ -28,8 +28,8 @@ type (
 	UserInfo = session.UserInfo
 )
 
-// dtctlIdentity is the User-Agent this binary sends (Landmine 5: dtui sends
-// dtui/<version> through the same parameterized sdk client).
+// dtctlIdentity is the User-Agent this binary sends (Landmine 5: dynatui sends
+// dynatui/<version> through the same parameterized sdk client).
 func dtctlIdentity() session.ClientOption {
 	return session.WithUserAgentProduct("dtctl", version.Version)
 }

@@ -353,7 +353,7 @@ func loadFrom(path string, expandEnv bool) (*Config, error) {
 	}
 
 	if !isSupportedAPIVersion(cfg.APIVersion) {
-		return nil, fmt.Errorf("config file %s has schema version %q; this build understands %q — upgrade dtctl (or dtui) to read this config", path, cfg.APIVersion, CurrentAPIVersion)
+		return nil, fmt.Errorf("config file %s has schema version %q; this build understands %q — upgrade dtctl (or dynatui) to read this config", path, cfg.APIVersion, CurrentAPIVersion)
 	}
 
 	return &cfg, nil

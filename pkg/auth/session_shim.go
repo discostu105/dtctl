@@ -1,5 +1,5 @@
 // The OAuth flow, token manager, and cross-process refresh lock moved to
-// github.com/dynatrace-oss/dtctl/sdk/session (docs/dev/DTUI_SPLIT_DESIGN.md
+// github.com/dynatrace-oss/dtctl/sdk/session (docs/dev/DYNATUI_SPLIT_DESIGN.md
 // Decision 2): every long-running consumer of the shared token store must
 // refresh through the same locked path, so the machinery is part of the
 // shared session layer. This file re-exports it for the root module.

@@ -1,6 +1,6 @@
 package session
 
-// Contract tests: lock the shared config-file contract that dtctl and dtui
+// Contract tests: lock the shared config-file contract that dtctl and dynatui
 // (and any future plugin) both depend on — see docs/dev/CONFIG_CONTRACT.md.
 // The fixtures under testdata/contract/ are the golden artifacts of that
 // contract; a change that breaks these tests is a contract change and needs
@@ -210,7 +210,7 @@ func TestContract_SaveOverCorruptFileStillSucceeds(t *testing.T) {
 }
 
 // The keyring service name is part of the credential contract shared with
-// dtui — changing it strands every stored credential.
+// dynatui — changing it strands every stored credential.
 func TestContract_KeyringServiceName(t *testing.T) {
 	if KeyringService != "dtctl" {
 		t.Errorf("KeyringService = %q; this is a shared contract (docs/dev/CONFIG_CONTRACT.md) — changing it requires a migration", KeyringService)

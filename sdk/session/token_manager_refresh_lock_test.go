@@ -195,7 +195,7 @@ func TestTokenManager_RefreshToken_LockFailure_StillRefreshes(t *testing.T) {
 }
 
 func TestTokenManager_RefreshToken_ConcurrentRotation(t *testing.T) {
-	// End-to-end regression for the dtui landmine: two concurrent forced
+	// End-to-end regression for the dynatui landmine: two concurrent forced
 	// refreshes (a long-running TUI reacting to a 401 racing a parallel dtctl
 	// invocation) against a rotating provider. Uses the real file lock. The
 	// provider accepts each refresh token exactly once — without the lock and

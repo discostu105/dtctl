@@ -20,8 +20,8 @@ import (
 
 // defaultUserAgentProduct identifies clients whose builder did not set an
 // identity. Every consumer should pass WithUserAgentProduct — dtctl sends
-// dtctl/<version>, dtui sends dtui/<version> — so tenant-side request logs
-// can tell them apart (DTUI_SPLIT_DESIGN.md, Landmine 5).
+// dtctl/<version>, dynatui sends dynatui/<version> — so tenant-side request logs
+// can tell them apart (DYNATUI_SPLIT_DESIGN.md, Landmine 5).
 const defaultUserAgentProduct = "dtctl-sdk"
 
 // Client is the authenticated HTTP client for a Dynatrace environment.
@@ -52,7 +52,7 @@ func WithUserAgent(ua string) ClientOption {
 }
 
 // WithUserAgentProduct sets the User-Agent from a product name and version,
-// e.g. WithUserAgentProduct("dtui", "0.5.0") → "dtui/0.5.0".
+// e.g. WithUserAgentProduct("dynatui", "0.5.0") → "dynatui/0.5.0".
 func WithUserAgentProduct(product, version string) ClientOption {
 	return WithUserAgent(fmt.Sprintf("%s/%s", product, version))
 }

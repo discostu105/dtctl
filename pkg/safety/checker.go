@@ -1,7 +1,7 @@
 // Package safety re-exports the safety-level semantics from
 // github.com/dynatrace-oss/dtctl/sdk/session, where the implementation moved
-// (docs/dev/DTUI_SPLIT_DESIGN.md Decision 2): a readonly context must mean
-// the same thing in dtctl, dtui, and every plugin, so the checker is part of
+// (docs/dev/DYNATUI_SPLIT_DESIGN.md Decision 2): a readonly context must mean
+// the same thing in dtctl, dynatui, and every plugin, so the checker is part of
 // the shared session layer. This package remains so the root module's import
 // surface is stable; new code should import sdk/session directly.
 package safety

@@ -40,13 +40,13 @@ jobs:
             exit 1
           fi
 
-      - name: Check go mod tidy (dtui)
-        working-directory: dtui
+      - name: Check go mod tidy (dynatui)
+        working-directory: dynatui
         run: |
           go mod tidy
           if ! git diff --exit-code go.mod go.sum; then
             echo ""
-            echo "dtui/go.mod or dtui/go.sum is not tidy. Run 'go mod tidy' in dtui/ and commit the changes."
+            echo "dynatui/go.mod or dynatui/go.sum is not tidy. Run 'go mod tidy' in dynatui/ and commit the changes."
             exit 1
           fi
 
@@ -55,8 +55,8 @@ jobs:
         with:
           version: v2.11.1
 
-      - name: Run golangci-lint (dtui)
+      - name: Run golangci-lint (dynatui)
         uses: golangci/golangci-lint-action@v7
         with:
           version: v2.11.1
-          working-directory: dtui
+          working-directory: dynatui

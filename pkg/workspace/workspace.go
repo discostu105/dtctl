@@ -4,7 +4,7 @@
 // dtctl config. Unlike the local .dtctl.yaml (which replaces the global config
 // wholesale), a workspace file carries no contexts, no credentials, and no
 // executable keys by construction — it can only narrow what a session shows,
-// never change what it can do. Consumed by dtui; dtctl CLI adoption is
+// never change what it can do. Consumed by dynatui; dtctl CLI adoption is
 // planned.
 package workspace
 
@@ -36,7 +36,7 @@ const Version = 1
 type Workspace struct {
 	Version     int       `yaml:"version,omitempty"`     // schema version; 0 (absent) and 1 accepted
 	Environment string    `yaml:"environment,omitempty"` // preferred environment URL (context is picked by match)
-	View        string    `yaml:"view,omitempty"`        // initial dtui view (CLI argument wins)
+	View        string    `yaml:"view,omitempty"`        // initial dynatui view (CLI argument wins)
 	Timeframe   string    `yaml:"timeframe,omitempty"`   // default timeframe: "30m", "2h", "3d"
 	Segments    []Segment `yaml:"segments,omitempty"`    // filter segments applied to every DQL query
 

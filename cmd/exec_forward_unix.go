@@ -8,7 +8,7 @@ import (
 	"syscall"
 )
 
-// execForward replaces the dtctl process with the target binary (dtui, or a
+// execForward replaces the dtctl process with the target binary (dynatui, or a
 // dtctl-* plugin) so it owns the terminal end to end — raw mode, signals,
 // exit code — with no parent in between. It only returns on failure to exec;
 // the exit code in the return value is meaningful only on Windows, where

@@ -3809,7 +3809,7 @@ export DTCTL_CONTEXT=production
 dtctl get workflows -o yaml
 ```
 
-`DTCTL_CONTEXT` is also honored by `dtui`. To persist a context switch, use
+`DTCTL_CONTEXT` is also honored by `dynatui`. To persist a context switch, use
 `dtctl ctx <name>`.
 
 ### Pipeline Commands

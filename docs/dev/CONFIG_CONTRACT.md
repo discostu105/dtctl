@@ -1,9 +1,9 @@
 # The dtctl Config Contract
 
 **Status:** v1, normative since 2026-07-12
-**Audience:** dtctl, dtui, and any future `dtctl-*` plugin that reads the
+**Audience:** dtctl, dynatui, and any future `dtctl-*` plugin that reads the
 shared configuration. This is the state contract required by
-[DTUI_SPLIT_DESIGN.md](DTUI_SPLIT_DESIGN.md) (Landmine 4): everything a
+[DYNATUI_SPLIT_DESIGN.md](DYNATUI_SPLIT_DESIGN.md) (Landmine 4): everything a
 second binary may rely on, and nothing more. Golden fixtures live in
 `sdk/session/testdata/contract/`; `sdk/session/contract_test.go` enforces this
 document. A change that breaks those tests is a contract change and must
@@ -41,7 +41,7 @@ the same thing everywhere) and token resolution order (see below).
 - `apiVersion` spellings accepted as schema v1: **empty** (pre-enforcement
   configs), **`v1`**, and **`dtctl.io/v1`** (written by `dtctl config init`).
 - An unrecognized `apiVersion` is a **hard load error** naming the version —
-  never a silent misread. This is the version-skew answer: "dtui N supports
+  never a silent misread. This is the version-skew answer: "dynatui N supports
   config schema ≤ M" is testable.
 - Within v1 the schema evolves **additively only**. Renaming or redefining an
   existing key requires bumping the version.
@@ -77,14 +77,14 @@ string. Management commands that rewrite the file must load with
 - `DTCTL_DISABLE_KEYRING` (any non-empty value) disables the keyring;
   `DTCTL_TOKEN_STORAGE=file` forces the file store.
 - **macOS keychain UX**: keychain access is granted per binary, so each
-  consumer (dtctl, dtui, every plugin) triggers its own one-time
+  consumer (dtctl, dynatui, every plugin) triggers its own one-time
   keychain-access prompt on first credential read. Expected behavior —
   document it, don't "fix" it.
 
 ## Write rules
 
 1. **dtctl owns all config-file writes** — context CRUD, login flows,
-   safety-level assignment. dtui and plugins treat the config file as
+   safety-level assignment. dynatui and plugins treat the config file as
    **read-only**.
 2. **The token store is the one shared write surface.** OAuth refresh tokens
    rotate on use, so any long-running consumer must persist refreshed token
@@ -93,7 +93,7 @@ string. Management commands that rewrite the file must load with
    Concurrent unlocked refreshes double-spend the rotating refresh token and
    strand one side's credentials (`invalid_grant`).
 3. **Context overrides are session-local.** The `--context` flag (dtctl and
-   dtui) and the `DTCTL_CONTEXT` env var override the current context in
+   dynatui) and the `DTCTL_CONTEXT` env var override the current context in
    memory only. The sole way to persist a switch is `dtctl ctx <name>`
    (or `dtctl config use-context`).
 
@@ -101,7 +101,7 @@ string. Management commands that rewrite the file must load with
 
 | Variable | Meaning |
 |---|---|
-| `DTCTL_CONTEXT` | Session-local current-context override; flag `--context` wins over it. Honored by dtctl and dtui. |
+| `DTCTL_CONTEXT` | Session-local current-context override; flag `--context` wins over it. Honored by dtctl and dynatui. |
 | `DTCTL_OUTPUT` | Default output format when `-o/--output` is not given (dtctl only). |
 | `DTCTL_DISABLE_KEYRING` | Disable the OS keyring (any non-empty value). |
 | `DTCTL_TOKEN_STORAGE` | `file` forces the file-based OAuth store. |

@@ -1,4 +1,4 @@
-.PHONY: all build clean test test-unit test-integration test-all test-coverage test-update-golden install lint lint-strict fmt markdownlint markdownlint-fix security-scan check release release-snapshot test-sdk vet-sdk lint-sdk sdk-check-deps sdk-check-imports sdk-check build-dtui install-dtui test-dtui vet-dtui lint-dtui dtctl-check-lean dtui-check
+.PHONY: all build clean test test-unit test-integration test-all test-coverage test-update-golden install lint lint-strict fmt markdownlint markdownlint-fix security-scan check release release-snapshot test-sdk vet-sdk lint-sdk sdk-check-deps sdk-check-imports sdk-check build-dynatui install-dynatui test-dynatui vet-dynatui lint-dynatui dtctl-check-lean dynatui-check
 
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -8,8 +8,8 @@ DATE ?= $(shell date -u +"%Y-%m-%dT%H:%M:%SZ")
 COVERAGE_THRESHOLD ?= 60
 
 LDFLAGS = -ldflags "-X github.com/dynatrace-oss/dtctl/pkg/version.Version=$(VERSION) -X github.com/dynatrace-oss/dtctl/pkg/version.Commit=$(COMMIT) -X github.com/dynatrace-oss/dtctl/pkg/version.Date=$(DATE) -s -w"
-# dtui stamps its own version plus pkg/version.Version, which feeds the client User-Agent.
-DTUI_LDFLAGS = -ldflags "-X main.version=$(VERSION) -X github.com/dynatrace-oss/dtctl/pkg/version.Version=$(VERSION) -s -w"
+# dynatui stamps its own version plus pkg/version.Version, which feeds the client User-Agent.
+DYNATUI_LDFLAGS = -ldflags "-X main.version=$(VERSION) -X github.com/dynatrace-oss/dtctl/pkg/version.Version=$(VERSION) -s -w"
 INSTALL_BIN_DIR ?= $(if $(GOBIN),$(GOBIN),$(shell go env GOPATH)/bin)
 
 MD_LINT_CLI_IMAGE := "ghcr.io/igorshubovych/markdownlint-cli:v0.31.1"
@@ -143,10 +143,10 @@ security-scan:
 # Run all checks (lint-strict + security)
 check: lint-strict security-scan
 
-# Format code (goimports runs path-based, so it also covers the sdk and dtui modules)
+# Format code (goimports runs path-based, so it also covers the sdk and dynatui modules)
 fmt:
 	@go fmt ./...
-	@cd dtui && go fmt ./...
+	@cd dynatui && go fmt ./...
 	@goimports -local github.com/dynatrace-oss -w .
 
 # Markdown linting
@@ -199,37 +199,37 @@ sdk-check-imports:
 # Run all SDK checks
 sdk-check: test-sdk vet-sdk sdk-check-deps sdk-check-imports
 
-# --- dtui targets ---
-# The TUI lives in its own module (dtui/) and ships as its own binary;
-# dtctl only forwards to it (see docs/dev/DTUI_SPLIT_DESIGN.md).
+# --- dynatui targets ---
+# The TUI lives in its own module (dynatui/) and ships as its own binary;
+# dtctl only forwards to it (see docs/dev/DYNATUI_SPLIT_DESIGN.md).
 
-# Build the dtui binary
-build-dtui:
-	@echo "Building dtui..."
-	@cd dtui && go build $(DTUI_LDFLAGS) -o ../bin/dtui .
+# Build the dynatui binary
+build-dynatui:
+	@echo "Building dynatui..."
+	@cd dynatui && go build $(DYNATUI_LDFLAGS) -o ../bin/dynatui .
 
-# Install dtui locally (found by `dtctl tui` via PATH)
-install-dtui:
-	@echo "Installing dtui to $(INSTALL_BIN_DIR)..."
+# Install dynatui locally (found by `dtctl tui` via PATH)
+install-dynatui:
+	@echo "Installing dynatui to $(INSTALL_BIN_DIR)..."
 	@mkdir -p "$(INSTALL_BIN_DIR)"
-	@cd dtui && go build $(DTUI_LDFLAGS) -o "$(INSTALL_BIN_DIR)/dtui" .
+	@cd dynatui && go build $(DYNATUI_LDFLAGS) -o "$(INSTALL_BIN_DIR)/dynatui" .
 
-test-dtui:
-	@echo "Running dtui tests..."
-	@cd dtui && go test -v -race ./...
+test-dynatui:
+	@echo "Running dynatui tests..."
+	@cd dynatui && go test -v -race ./...
 
-vet-dtui:
-	@cd dtui && go vet ./...
+vet-dynatui:
+	@cd dynatui && go vet ./...
 
-lint-dtui:
-	@cd dtui && golangci-lint run ./...
+lint-dynatui:
+	@cd dynatui && golangci-lint run ./...
 
 # Check that the TUI stack never leaks back into the root module
 dtctl-check-lean:
 	@echo "Checking dtctl stays lean..."
 	@! grep -E 'charmbracelet' go.mod || (echo "FORBIDDEN: TUI dependency in root go.mod" && exit 1)
-	@! grep -rE '"github.com/dynatrace-oss/dtui' --include='*.go' cmd/ pkg/ sdk/ || (echo "FORBIDDEN: root module imports dtui" && exit 1)
+	@! grep -rE '"github.com/dynatrace-oss/dynatui' --include='*.go' cmd/ pkg/ sdk/ || (echo "FORBIDDEN: root module imports dynatui" && exit 1)
 	@echo "dtctl lean OK"
 
-# Run all dtui checks
-dtui-check: test-dtui vet-dtui dtctl-check-lean
+# Run all dynatui checks
+dynatui-check: test-dynatui vet-dynatui dtctl-check-lean

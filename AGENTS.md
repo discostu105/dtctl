@@ -31,12 +31,12 @@ sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
   ├── urls/        # Environment URL validation/normalization
   ├── credstore/   # Deprecated — superseded by sdk/session (was never wired up)
   └── agentmode/   # AI agent environment detection
-dtui/           # Separate Go module + binary (github.com/dynatrace-oss/dtui): the interactive TUI
+dynatui/           # Separate Go module + binary (github.com/dynatrace-oss/dynatui): the interactive TUI
   ├── docs/          # TUI docs: design/ (tui.md, smartscape-navigator.md), adr/, dev/ (learnings.md, phases.md)
-  └── internal/tui/  # k9s-style navigator; `dtctl tui` forwards to the dtui binary on PATH
+  └── internal/tui/  # k9s-style navigator; `dtctl tui` forwards to the dynatui binary on PATH
 ```
 
-**dtui module**: The TUI is a separate Go module and binary that consumes `sdk/session` (config, credentials, client — with its own `dtui/<version>` User-Agent) plus dtctl's domain packages (`pkg/exec`, `pkg/output`, selected `pkg/resources/*`) via `replace` directives — see [docs/dev/DTUI_SPLIT_DESIGN.md](docs/dev/DTUI_SPLIT_DESIGN.md). The root module must stay TUI-free: no charmbracelet dependencies, no imports of `github.com/dynatrace-oss/dtui` (enforced by `make dtctl-check-lean`). Build with `make build-dtui`, test with `make test-dtui`; root-module changes to the packages dtui imports must keep `dtui/` compiling (CI runs both).
+**dynatui module**: The TUI is a separate Go module and binary that consumes `sdk/session` (config, credentials, client — with its own `dynatui/<version>` User-Agent) plus dtctl's domain packages (`pkg/exec`, `pkg/output`, selected `pkg/resources/*`) via `replace` directives — see [docs/dev/DYNATUI_SPLIT_DESIGN.md](docs/dev/DYNATUI_SPLIT_DESIGN.md). The root module must stay TUI-free: no charmbracelet dependencies, no imports of `github.com/dynatrace-oss/dynatui` (enforced by `make dtctl-check-lean`). Build with `make build-dynatui`, test with `make test-dynatui`; root-module changes to the packages dynatui imports must keep `dynatui/` compiling (CI runs both).
 
 **SDK delegation pattern**: CLI resource handlers in `pkg/resources/` import types from `sdk/api/` (often via type aliases) and delegate HTTP calls to SDK functions. The `sdk/api/*` packages contain **no file I/O, no CLI concerns, no display logic**. File reading (e.g., `ReadFileOrStdin`, `ParseInputFromFile`) stays in `pkg/resources/`. (`sdk/session` is the deliberate exception on file I/O: it owns the config file and credential stores — that's its job.)
 

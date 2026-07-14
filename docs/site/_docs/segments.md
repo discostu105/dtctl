@@ -165,7 +165,7 @@ Segments support multiple aliases for convenience:
 ## Workspace File (`.dynatrace.yaml`)
 
 Commit a `.dynatrace.yaml` to a software project to give every developer the
-right Dynatrace context when they run the interactive TUI (`dtui` / `dtctl
+right Dynatrace context when they run the interactive TUI (`dynatui` / `dtctl
 tui`) inside that workspace. The file is discovered by walking up from the
 current directory (like `.git`) and pre-selects filter segments — plus,
 optionally, the environment, initial view, and timeframe:

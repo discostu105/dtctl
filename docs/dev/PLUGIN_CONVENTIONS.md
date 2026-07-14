@@ -1,12 +1,12 @@
 # dtctl Plugin Conventions
 
-**Status:** v1, since 2026-07-12 (docs/dev/DTUI_SPLIT_DESIGN.md Decision 4)
+**Status:** v1, since 2026-07-12 (docs/dev/DYNATUI_SPLIT_DESIGN.md Decision 4)
 **Audience:** authors of dtctl exec plugins.
 
 dtctl follows the kubectl exec-plugin convention and nothing heavier: an
 executable named `dtctl-<name>` on `PATH` runs as `dtctl <name>`. There is no
 installer, no registry, no RPC — deliberately. The first plugin is the
-interactive TUI (`dtctl-tui`, packaging alias `dtui`).
+interactive TUI (`dtctl-tui`, packaging alias `dynatui`).
 
 ## Dispatch semantics
 
@@ -73,4 +73,4 @@ contract ([CONFIG_CONTRACT.md](CONFIG_CONTRACT.md)): the config file named by
 
 No plugin installer, no registry, no scaffolding, no Go `plugin` package, no
 gRPC. If real third-party plugins appear (rule of thumb: ≥5), revisit — see
-DTUI_SPLIT_DESIGN.md Decision 4 for the reasoning.
+DYNATUI_SPLIT_DESIGN.md Decision 4 for the reasoning.

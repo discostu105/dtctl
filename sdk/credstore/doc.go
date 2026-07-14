@@ -7,7 +7,7 @@
 //
 // Deprecated: dtctl's credential resolution lives in
 // github.com/dynatrace-oss/dtctl/sdk/session (TokenStore, OAuthFileStore),
-// which is the implementation dtctl and dtui actually run and the one the
+// which is the implementation dtctl and dynatui actually run and the one the
 // config contract (docs/dev/CONFIG_CONTRACT.md) is tested against. This
 // package predates that promotion, was never wired up, and will be removed
 // before the sdk's first tagged release. The on-disk formats are compatible

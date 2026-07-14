@@ -1,8 +1,8 @@
 // Package config re-exports the dtctl session layer from
 // github.com/dynatrace-oss/dtctl/sdk/session, where the implementation moved
-// (docs/dev/DTUI_SPLIT_DESIGN.md Decision 2). The config model, load/save,
+// (docs/dev/DYNATUI_SPLIT_DESIGN.md Decision 2). The config model, load/save,
 // credential stores, and token resolution are the shared contract consumed
-// by dtctl, dtui, and plugins; this package remains so the root module's
+// by dtctl, dynatui, and plugins; this package remains so the root module's
 // import surface is stable. New code (and external consumers) should import
 // sdk/session directly.
 package config

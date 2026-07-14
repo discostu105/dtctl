@@ -9,7 +9,7 @@ import (
 	"os/exec"
 )
 
-// execForward runs the target binary (dtui, or a dtctl-* plugin) as a child
+// execForward runs the target binary (dynatui, or a dtctl-* plugin) as a child
 // with inherited stdio — Windows has no process replacement — and returns
 // the child's exit code verbatim so scripts see the target's code, not a
 // cobra-wrapped error.

@@ -13,7 +13,7 @@ import (
 )
 
 // tryPluginDispatch gives an unknown top-level command one shot at plugin
-// dispatch (docs/dev/DTUI_SPLIT_DESIGN.md Decision 4): `dtctl foo bar` execs
+// dispatch (docs/dev/DYNATUI_SPLIT_DESIGN.md Decision 4): `dtctl foo bar` execs
 // the longest dash-joined dtctl-<name> match on PATH (dtctl-foo-bar, then
 // dtctl-foo). Built-in commands always win — this only runs from the
 // unknown-command error path, and the first word is re-checked against the
