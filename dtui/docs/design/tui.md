@@ -1,7 +1,8 @@
 # dtui — Design
 
 **Status:** Phases 1–3 implemented (see [../dev/phases.md](../dev/phases.md));
-Phase 4 (assets & mutations) proposed
+Phase 4 (read-only asset browsing) proposed. Known design↔code gaps:
+[../dev/design-gaps.md](../dev/design-gaps.md)
 **Created:** 2026-07-05 · **Author:** dtctl team
 
 dtui is its own Go module and binary; `dtctl tui` forwards to the `dtui`
@@ -106,8 +107,12 @@ map freely, and drop into any signal already scoped to where you're standing.
   detected AI environments, non-TTY); agents keep the JSON envelope.
 - **Not a replacement CLI.** Every view shows its CLI/DQL equivalent
   ("command echo"), so the TUI teaches the CLI rather than hiding it.
-- **Not an editor.** `e` on a management asset shells out to `$EDITOR` via the
-  existing `edit` flow.
+- **Not a mutation surface — strictly read-only, by decision.** dtui never
+  creates, edits, deletes, or executes anything; mutations are not deferred,
+  they are out of scope entirely, mainly to limit the project's complexity
+  ([ADR-0011](../adr/0011-strictly-read-only.md)). The command echo is the
+  handover: dtui shows you the dtctl command, you run it where the safety
+  model lives.
 - **No new SDK API surface** for phases 1–3.
 
 ---
@@ -164,7 +169,8 @@ live log follow), `:dashboards`, `:notebooks`, `:documents`,
 `:buckets`, `:detectors`, `:settings`, `:extensions`, `:edgeconnects`,
 `:users`, `:groups`, … — one `ResourceView` implementation configured per type
 from the existing `pkg/resources/<name>` display fields. These get list /
-filter / describe / open / edit / delete / exec, but no bespoke layouts.
+filter / describe / open, but no bespoke layouts — and no mutations, ever
+([ADR-0011](../adr/0011-strictly-read-only.md)); editing stays in the CLI.
 (`:segments` is taken: it opens the segment *picker* — the global scope of
 section 4 below — not a management table; managing segments stays in the CLI.)
 
@@ -355,17 +361,18 @@ bar), and query history. Its main entrance is `ctrl-q` from any view —
 is where curated navigation gracefully hands over to power users, and it makes
 the TUI a DQL *teacher*: every screen can show you how it was made.
 
-### Mutations and safety
+### Strictly read-only
 
-The TUI is read-first; entity and signal views have no mutating actions at all.
-On management assets (`e`dit, `ctrl-d`elete, e`x`ecute workflow):
-
-1. **Safety-checker gated** — `safety.Checker.Check(op, ownership)` decides
-   whether the action even appears in the footer; in a `readonly` context the
-   TUI is purely a browser.
-2. **Confirmed** — modal equivalents of `prompt.ConfirmDeletion`
-   (type-to-confirm for data-destructive ops), matching CLI behavior.
-3. **Echoed** — the status line prints the equivalent CLI command afterwards.
+The TUI never mutates anything — no create, edit, delete, or execute, on any
+view, under any safety level. This is a deliberate scope cap, mainly to limit
+the project's complexity ([ADR-0011](../adr/0011-strictly-read-only.md)): the
+CLI already owns mutations, their confirmation semantics, and the safety
+model, and duplicating that stack in a TUI (`$EDITOR` suspend/restore,
+type-to-confirm modals, ownership resolution) buys little. The handover is
+the **command echo**: `c` copies the equivalent dtctl command for what you
+are looking at, and you run it where the safety checker lives. The header
+still shows the context's safety level color-coded — it identifies the
+credentials the session holds, even though dtui itself gates nothing on it.
 
 ---
 
@@ -806,10 +813,12 @@ tied to view lifetime.
 ## Implementation Status
 
 Phases 1–3 (shell, topology, traces, Kubernetes, cloud, RUM, security,
-Smartscape navigator, DQL escape hatch) are implemented; Phase 4 (management
-assets & safety-gated mutations) is proposed. The phase-by-phase shipped log —
-including design refinements that superseded sections above — lives in
-[../dev/phases.md](../dev/phases.md).
+Smartscape navigator, DQL escape hatch) are implemented; Phase 4 (read-only
+management-asset browsing — mutations are not planned at all, see
+[ADR-0011](../adr/0011-strictly-read-only.md)) is proposed. The
+phase-by-phase shipped log — including design refinements that superseded
+sections above — lives in [../dev/phases.md](../dev/phases.md); the known
+remaining design↔code gaps in [../dev/design-gaps.md](../dev/design-gaps.md).
 
 ---
 

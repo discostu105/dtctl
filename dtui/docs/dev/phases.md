@@ -387,13 +387,21 @@ pass (all validated live on the demo tenant):
   resurrect them). The session lands on home; the timeframe is the one
   global that carries over, and `H` records under the new context.
 
-### Phase 4 — Assets & mutations
+### Phase 4 — Asset browsing (read-only)
 
-- Management resource browser for the full existing CRUD surface; workflow
-  executions with live log follow.
-- Safety-gated edit (`$EDITOR` suspend/restore), delete confirms, workflow
-  execute. Clipboard for command echo. Stretch: export a breadcrumb trail as
-  a notebook.
+- Management resource browser for the existing resource surface — list /
+  filter / describe / open in browser, configured per type from the
+  `pkg/resources/<name>` display fields (`:slos` and `:detectors` already
+  shipped this shape via `Spec.API`, phase 3.5); workflow executions with
+  live log follow.
+- Stretch: export a breadcrumb trail as a notebook.
+
+> **Decided 2026-07-14 — dtui is strictly read-only; mutations are not
+> planned at all** ([ADR-0011](../adr/0011-strictly-read-only.md), mainly to
+> limit the project's complexity). The safety-gated edit/delete/execute
+> items this phase used to carry are dropped, not deferred; the command echo
+> (`c`, shipped in phase 3) is the handover to the CLI, where mutations and
+> the safety model live.
 
 Each phase ships independently; Phase 1 alone is a usable "k9s for Dynatrace
 triage".

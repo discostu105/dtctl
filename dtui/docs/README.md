@@ -18,6 +18,8 @@ reference. This directory is for design and contributor documentation.
     DQL/Grail facts, the view extension model, bubbletea patterns, how to
     verify the TUI
   - [phases.md](dev/phases.md) — the phase-by-phase shipped log
+  - [design-gaps.md](dev/design-gaps.md) — where the design docs and the
+    code still disagree, and which side should move
 
 The split from the dtctl repository is designed in dtctl's
 [DTUI_SPLIT_DESIGN.md](../../docs/dev/DTUI_SPLIT_DESIGN.md); the shared

@@ -8,6 +8,12 @@ navigator. Every view is a curated DQL query under the hood; drill-down keys
 compose entity and timeframe scope automatically, and `ctrl+q` reveals the
 generated query whenever curation runs out.
 
+dtui is **strictly read-only**: it never creates, edits, deletes, or
+executes anything on your tenant, under any safety level — by design, not
+just for now ([ADR-0011](docs/adr/0011-strictly-read-only.md)). When you
+want to change what you found, `c` copies the equivalent dtctl command;
+mutations stay in the CLI, where the safety model lives.
+
 > **Status**: dtui currently lives inside the dtctl repository as its own Go
 > module and binary, in preparation for becoming a separate project — see
 > [DTUI_SPLIT_DESIGN.md](../docs/dev/DTUI_SPLIT_DESIGN.md).

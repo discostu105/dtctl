@@ -1,6 +1,9 @@
 # ADR-0006: Read-first UI; mutations are safety-gated
 
-**Status:** Accepted · **Date:** 2026-07-05
+**Status:** Partially superseded by [ADR-0011](0011-strictly-read-only.md)
+(2026-07-14): the read-first stance stands and is now absolute — mutations
+were dropped from the plan entirely, so the safety-gating design below is
+moot. · **Date:** 2026-07-05
 
 ## Context
 
