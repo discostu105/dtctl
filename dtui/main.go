@@ -77,9 +77,13 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
   dtui traces
   dtui svc
 
+  # Walk the topology from a type, an entity id, or a name
+  dtui nav SERVICE
+  dtui nav payments
+
   # Launch against a specific context (session-local, never persisted)
   dtui --context prod`,
-	Args:              cobra.MaximumNArgs(1),
+	Args:              cobra.MaximumNArgs(2),
 	ValidArgsFunction: viewCompletion,
 	SilenceUsage:      true,
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -104,8 +108,18 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 				wsWarnings = append(wsWarnings, fmt.Sprintf("unknown workspace view %q — starting on home", ws.View))
 			}
 		}
-		if len(args) == 1 {
+		viewArg := ""
+		if len(args) >= 1 {
 			view = args[0]
+		}
+		if len(args) == 2 {
+			// Only the navigator takes an argument (`dtui nav <type|id|name>`,
+			// smartscape-navigator.md) — everywhere else the second word is a
+			// mistake worth naming.
+			if !isNavView(view) {
+				return fmt.Errorf("only nav takes an argument (dtui nav <type|id|name>); %q does not", view)
+			}
+			viewArg = args[1]
 		}
 		// Only an explicit CLI argument can still be unknown here (the
 		// workspace view fell back above) — that stays a hard error.
@@ -139,14 +153,18 @@ dtctl (dtctl ctx create). dtui is read-only and interactive-only.`,
 		}
 
 		opts := tui.Options{
-			ContextName:   cfg.CurrentContext,
-			Environment:   ctxObj.Environment,
-			SafetyLevel:   string(ctxObj.GetEffectiveSafetyLevel()),
-			Executor:      newDQLExecutor(cfg, c),
-			Sources:       tuiSources(c),
-			SegmentSource: segmentSource(segment.NewHandler(c)),
-			InitialView:   view,
-			HistoryPath:   historyPath(),
+			ContextName:      cfg.CurrentContext,
+			Environment:      ctxObj.Environment,
+			SafetyLevel:      string(ctxObj.GetEffectiveSafetyLevel()),
+			Executor:         newDQLExecutor(cfg, c),
+			Sources:          tuiSources(c),
+			SegmentSource:    segmentSource(segment.NewHandler(c)),
+			SwitchContext:    switchContext,
+			Contexts:         contextNames(cfg),
+			InitialView:      view,
+			InitialArg:       viewArg,
+			HistoryPath:      historyPath(),
+			QueryHistoryPath: queryHistoryPath(),
 		}
 		if ws != nil {
 			opts.WorkspaceSegments = workspaceSegments(ws)
@@ -195,6 +213,43 @@ func contextOverride() string {
 	return os.Getenv("DTCTL_CONTEXT")
 }
 
+// contextNames lists the configured context names (:ctx shows them).
+func contextNames(cfg *session.Config) []string {
+	names := make([]string, 0, len(cfg.Contexts))
+	for _, nc := range cfg.Contexts {
+		names = append(names, nc.Name)
+	}
+	return names
+}
+
+// switchContext is the :ctx wiring factory (tui.Options.SwitchContext): it
+// reloads the shared config, points it at the requested context in memory
+// only — dtui never writes the config, the same session-local contract as
+// --context — and rebuilds everything derived from the tenant client.
+func switchContext(name string) (*tui.ContextWiring, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
+	}
+	cfg.CurrentContext = name
+	ctxObj, err := cfg.CurrentContextObj()
+	if err != nil {
+		return nil, fmt.Errorf("context %q not found (available: %s)", name, strings.Join(contextNames(cfg), ", "))
+	}
+	c, err := session.NewClientFromConfig(cfg, session.WithUserAgentProduct("dtui", version))
+	if err != nil {
+		return nil, err
+	}
+	return &tui.ContextWiring{
+		ContextName:   name,
+		Environment:   ctxObj.Environment,
+		SafetyLevel:   string(ctxObj.GetEffectiveSafetyLevel()),
+		Executor:      newDQLExecutor(cfg, c),
+		Sources:       tuiSources(c),
+		SegmentSource: segmentSource(segment.NewHandler(c)),
+	}, nil
+}
+
 // newDQLExecutor creates a DQL executor with OAuth token refresh support.
 // When the OAuth token expires during a long-running query poll (which can
 // exceed the 5-minute token lifetime), the executor automatically fetches a
@@ -228,6 +283,12 @@ func historyPath() string {
 		}
 	}
 	return path
+}
+
+// queryHistoryPath returns the submitted-DQL history of the query escape
+// hatch (ctrl+p/ctrl+n in the editor), kept beside the navigation history.
+func queryHistoryPath() string {
+	return filepath.Join(xdg.StateHome, "dtui", "queries.json")
 }
 
 // loadWorkspace discovers the project's .dynatrace.yaml. Errors degrade to a
@@ -308,7 +369,17 @@ func envKey(env string) string {
 // (non-catalog) screens.
 func isBespokeView(name string) bool {
 	switch name {
-	case "home", "query", "dql", "nav", "smartscape", "navigator":
+	case "home", "query", "dql":
+		return true
+	}
+	return isNavView(name)
+}
+
+// isNavView reports whether the name opens the smartscape navigator — the
+// one view whose CLI form takes an argument.
+func isNavView(name string) bool {
+	switch name {
+	case "nav", "smartscape", "navigator":
 		return true
 	}
 	return false

@@ -475,6 +475,98 @@ func TestTimeframePickerAppliesGlobally(t *testing.T) {
 	}
 }
 
+// :ctx <name> switches the session to another dtctl context (tui.md §Command
+// bar): the tenant wiring swaps, every tenant-specific piece of state drops
+// (pin, segments, dictionary, both stacks), and the session lands on home.
+func TestCtxCommandSwitchesContext(t *testing.T) {
+	a := testApp(t, "hosts")
+	a.opts.Contexts = []string{"test", "prod"}
+	a.opts.SwitchContext = func(name string) (*ContextWiring, error) {
+		if name != "prod" {
+			return nil, fmt.Errorf("context %q not found", name)
+		}
+		return &ContextWiring{ContextName: "prod", Environment: "https://prod.example.invalid",
+			SafetyLevel: "readonly"}, nil
+	}
+	// Tenant-specific state that must not survive the switch.
+	a.pin = &catalog.Entity{ID: "HOST-0000000000000001", Type: "HOST"}
+	a.segApplied = []SegmentOption{{UID: "seg-1", Name: "shop"}}
+	a.ds.segments = a.segmentRefs(a.segApplied)
+	a.ds.dictRequested = true
+
+	press(a, key(":"))
+	press(a, key("ctx"))
+	press(a, key(" "))
+	press(a, key("prod"))
+	press(a, key("enter"))
+
+	if a.opts.ContextName != "prod" || a.opts.SafetyLevel != "readonly" {
+		t.Fatalf("wiring not applied: %+v", a.opts.ContextName)
+	}
+	if a.pin != nil || a.segApplied != nil || a.ds.segments != nil || a.ds.dictRequested {
+		t.Error("tenant-specific state must reset on switch")
+	}
+	if _, ok := a.top().(*homeView); !ok || len(a.stack) != 1 {
+		t.Fatalf("switch must land on a fresh home view, top = %T", a.top())
+	}
+	if a.prev != nil {
+		t.Error("'-' must not resurrect the old tenant's views")
+	}
+	if a.hist.ctx != "prod" {
+		t.Errorf("history context = %q, want prod", a.hist.ctx)
+	}
+
+	// A failed switch leaves the session untouched.
+	press(a, key(":"))
+	press(a, key("ctx nosuch"))
+	press(a, key("enter"))
+	if a.opts.ContextName != "prod" || !a.statusErr {
+		t.Fatalf("failed switch must keep the session and report: ctx=%s status=%q", a.opts.ContextName, a.status)
+	}
+
+	// No argument lists what exists instead of switching.
+	press(a, key(":"))
+	press(a, key("ctx"))
+	press(a, key("enter"))
+	if !strings.Contains(a.status, "prod") || a.statusErr {
+		t.Fatalf(":ctx without argument should list contexts, status = %q", a.status)
+	}
+}
+
+// The picker's fifth entry takes any relative window (tui.md §4: "30m / 2h /
+// 24h / 7d / custom") — the same labels the workspace file accepts.
+func TestTimeframePickerCustomEntry(t *testing.T) {
+	a := testApp(t, "hosts")
+	press(a, key("t"))
+	press(a, key("5")) // the custom entry follows the four presets
+	if !a.tfCustom {
+		t.Fatal("digit 5 should open the custom window input")
+	}
+	press(a, key("45m"))
+	press(a, key("enter"))
+	if a.tfActive || a.tfCustom || a.tf.Label != "45m" {
+		t.Fatalf("custom window did not apply: tf = %s", a.tf.Label)
+	}
+
+	// Reopening lands the highlight on custom (45m is no preset) and an
+	// invalid label refuses with a status instead of applying garbage.
+	press(a, key("t"))
+	if a.tfSel != len(catalog.Timeframes) {
+		t.Fatalf("picker highlight = %d, want the custom entry", a.tfSel)
+	}
+	press(a, key("enter"))
+	press(a, key("nonsense"))
+	press(a, key("enter"))
+	if !a.tfCustom || a.tf.Label != "45m" {
+		t.Fatalf("invalid label must keep the input open and the window unchanged, tf = %s", a.tf.Label)
+	}
+	press(a, key("esc")) // back to the pills
+	press(a, key("esc")) // close the picker
+	if a.tfCustom || a.tfActive {
+		t.Fatal("esc should unwind the custom input, then the picker")
+	}
+}
+
 func TestFilterNarrowsRows(t *testing.T) {
 	a := testApp(t, "problems")
 	other := problemRow()

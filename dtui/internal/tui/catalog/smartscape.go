@@ -224,6 +224,20 @@ func TypeInstancesQuery(typ string) string {
 		"| sort display asc\n| limit 500", typ)
 }
 
+// NameSearchQuery resolves entities by display name across every type — the
+// :nav <name> entry point. matchesValue is case-insensitive and allows `*`
+// wildcards only at either end (validated live, see learnings §1.10), so the
+// term is stripped of user-typed stars and wrapped for contains semantics.
+// Name-poor AWS nodes (`name` is empty, learnings §1.9) won't match — name
+// resolution is for named entities; the type browser covers inventory.
+func NameSearchQuery(name string) string {
+	pattern := "*" + strings.ReplaceAll(name, "*", "") + "*"
+	return fmt.Sprintf("smartscapeNodes \"*\"\n"+
+		"| filter matchesValue(name, %q)\n"+
+		"| fields id, name, type\n"+
+		"| sort name asc\n| limit 200", pattern)
+}
+
 // ProblemOverlayQuery fetches recent problem records tenant-wide — the
 // navigator's health overlay. One query per refresh, intersected client-side
 // against visible nodes (never one query per node). Records are per-update;

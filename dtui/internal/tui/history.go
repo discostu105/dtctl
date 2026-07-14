@@ -249,6 +249,9 @@ func pageRefOf(v viewModel) (pageRef, bool) {
 		return pageRef{Kind: "relations", Crumb: v.Crumb(), Entity: &e}, true
 	case *navView:
 		ref := pageRef{Kind: "nav", Crumb: v.Crumb(), View: navModeName(v.mode), Arg: v.typ}
+		if v.mode == navBrowser && v.search != "" {
+			ref.View, ref.Arg = "search", v.search
+		}
 		if v.mode == navWalk {
 			e := v.root
 			ref.Entity = &e
@@ -296,7 +299,7 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 		v.facets = ref.Facets
 		return v, nil
 	case "query":
-		v := newQueryView(a.ds, ref.DQL, tf)
+		v := newQueryView(a.ds, ref.DQL, tf, a.qhist)
 		if ref.DQL != "" {
 			// Arrive on results, not the editor: Init re-runs a submitted query.
 			v.current = ref.DQL
@@ -333,6 +336,11 @@ func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) 
 				return nil, fmt.Errorf("type browser without a type")
 			}
 			return newNavBrowserView(a.ds, ref.Arg, tf), nil
+		case "search":
+			if ref.Arg == "" {
+				return nil, fmt.Errorf("name search without a term")
+			}
+			return newNavSearchView(a.ds, ref.Arg, tf), nil
 		default:
 			return newNavView(a.ds, tf), nil
 		}

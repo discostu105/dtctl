@@ -67,11 +67,13 @@ type timelineMsg struct {
 }
 
 // navMsg opens the smartscape navigator: the overview (zero value), the type
-// browser (typ), or walk mode rooted at an entity (root; wins over typ).
-// replace resets the stack (command-bar jumps).
+// browser (typ), walk mode rooted at an entity (root; wins over typ), or the
+// name-resolution browser (search — a unique match walks straight to the
+// entity). replace resets the stack (command-bar jumps).
 type navMsg struct {
 	typ     string
 	root    *catalog.Entity
+	search  string
 	replace bool
 }
 

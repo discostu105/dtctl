@@ -93,6 +93,92 @@ func TestNavCommandWithEntityIDOpensWalk(t *testing.T) {
 	}
 }
 
+// ":nav payments" is ambiguous — type-shaped once uppercased, but usually a
+// name. The type browse runs first; landing empty re-shapes it into the name
+// search instead of dead-ending on "no PAYMENTS entities".
+func TestNavAmbiguousArgBrowsesTypeThenFallsBackToNameSearch(t *testing.T) {
+	a := testApp(t, "problems")
+	press(a, key(":"))
+	press(a, key("nav payments"))
+	press(a, key("enter"))
+	v, ok := a.top().(*navView)
+	if !ok || v.mode != navBrowser || v.typ != "PAYMENTS" || v.searchFallback != "payments" {
+		t.Fatalf(":nav payments should browse PAYMENTS with a name fallback, top = %T", a.top())
+	}
+	seedNav(t, a, nil)
+	if v.search != "payments" || v.typ != "" {
+		t.Fatalf("empty type browse must fall back to the name search, search=%q typ=%q", v.search, v.typ)
+	}
+	if !strings.Contains(v.dql, `matchesValue(name, "*payments*")`) {
+		t.Errorf("search dql:\n%s", v.dql)
+	}
+}
+
+func TestNavNameSearchUniqueMatchWalks(t *testing.T) {
+	a := testApp(t, "problems")
+	press(a, key(":"))
+	press(a, key("nav checkout-gw")) // hyphen: not type-shaped, straight to search
+	press(a, key("enter"))
+	v, ok := a.top().(*navView)
+	if !ok || v.mode != navBrowser || v.search != "checkout-gw" {
+		t.Fatalf(":nav checkout-gw should open the name search, top = %T", a.top())
+	}
+	seedNav(t, a, []map[string]any{
+		{"id": "SERVICE-0000000000000001", "name": "checkout-gw", "type": "SERVICE"},
+	})
+	if v.mode != navWalk || v.root.ID != "SERVICE-0000000000000001" || v.root.Name != "checkout-gw" {
+		t.Fatalf("a unique name match must walk straight to the entity, mode=%v root=%+v", v.mode, v.root)
+	}
+	if !strings.Contains(v.dql, `toSmartscapeId("SERVICE-0000000000000001")`) {
+		t.Errorf("walk dql:\n%s", v.dql)
+	}
+}
+
+func TestNavNameSearchMultiMatchDisambiguates(t *testing.T) {
+	a := testApp(t, "problems")
+	press(a, key(":"))
+	press(a, key("nav checkout-svc"))
+	press(a, key("enter"))
+	v := seedNav(t, a, []map[string]any{
+		{"id": "SERVICE-0000000000000002", "name": "checkout-svc-canary", "type": "SERVICE"},
+		{"id": "SERVICE-0000000000000001", "name": "checkout-svc", "type": "SERVICE"},
+	})
+	if v.mode != navBrowser || v.search != "checkout-svc" {
+		t.Fatalf("multi-match must stay a disambiguation list, mode=%v search=%q", v.mode, v.search)
+	}
+	if catalog.Str(v.instances[0], "name") != "checkout-svc" {
+		t.Errorf("exact name match must rank first: %+v", v.instances)
+	}
+	press(a, key("enter"))
+	w, ok := a.top().(*navView)
+	if !ok || w.mode != navWalk || w.root.ID != "SERVICE-0000000000000001" {
+		t.Fatalf("enter must walk the highlighted match, top = %T", a.top())
+	}
+}
+
+// `dtui nav <arg>` — the CLI form of the :nav argument (Options.InitialArg).
+func TestNavCLIArgumentRoutesTheInitialView(t *testing.T) {
+	previewEnabled = true
+	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly",
+		InitialView: "nav", InitialArg: "HOST-0D8DA6F3E704257C"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := a.top().(*navView)
+	if !ok || v.mode != navWalk || v.root.ID != "HOST-0D8DA6F3E704257C" {
+		t.Fatalf("dtui nav <id> should walk from it, top = %T", a.top())
+	}
+
+	a, err = newApp(Options{ContextName: "test", SafetyLevel: "readonly",
+		InitialView: "nav", InitialArg: "checkout-gw"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v, ok = a.top().(*navView); !ok || v.search != "checkout-gw" {
+		t.Fatalf("dtui nav <name> should open the name search, top = %T", a.top())
+	}
+}
+
 func TestGlobalXOpensWalkFromSelection(t *testing.T) {
 	a := testApp(t, "pods")
 	seedRows(t, a, []map[string]any{podRow("checkout-1", "shop", "Running", 0)})

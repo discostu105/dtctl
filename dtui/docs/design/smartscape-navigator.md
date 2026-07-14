@@ -323,7 +323,11 @@ DQL works.
 Walk view: grouped ego list, trail, preview (identity + health + cached
 facts), `enter` re-root, `←` backtrack, `d` detail, drills via selection,
 global `X`, `:nav <id|TYPE>`, shared queries in `catalog/smartscape.go`,
-history (trail survives restore).
+history (trail survives restore). Name entry (`:nav <name>`, `dtui nav
+<type|id|name>`) shipped later (phases.md 3.12): a cross-type
+`matchesValue` lookup — unique match walks, multi-match disambiguates in
+the browser, and an ambiguous lowercase token browses the type first,
+re-shaping into the name search when the browse lands empty.
 
 **Phase 2 — Overview & health** ✅ shipped
 Census + schema overview, type browser, session-wide active-problem overlay

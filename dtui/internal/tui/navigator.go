@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,9 +40,16 @@ type navView struct {
 	schemaLoading bool
 	schemaErr     error
 
-	// browser state.
-	typ       string
-	instances []map[string]any
+	// browser state. search puts the browser in name-resolution flavor
+	// (:nav <name>): instances are the cross-type name matches and a unique
+	// match re-shapes the view into a walk rooted there. searchFallback
+	// carries an ambiguous lowercase argument (":nav payments" is
+	// type-shaped too): a type browse that lands empty retries it as the
+	// name search instead of dead-ending.
+	typ            string
+	search         string
+	searchFallback string
+	instances      []map[string]any
 
 	// walk state.
 	root       catalog.Entity
@@ -179,6 +187,17 @@ func newNavBrowserView(ds *dataSource, typ string, tf catalog.Timeframe) *navVie
 	return v
 }
 
+// newNavSearchView resolves a name argument (:nav payments): a browser-mode
+// view whose list query matches names across every type. The disambiguation
+// list IS the browser — enter walks a match, health dots and the preview
+// pane apply unchanged.
+func newNavSearchView(ds *dataSource, term string, tf catalog.Timeframe) *navView {
+	v := newNavView(ds, tf)
+	v.mode = navBrowser
+	v.search = strings.TrimSpace(term)
+	return v
+}
+
 func newNavWalkView(ds *dataSource, root catalog.Entity, tf catalog.Timeframe) *navView {
 	v := newNavView(ds, tf)
 	v.mode = navWalk
@@ -226,6 +245,9 @@ func (v *navView) Busy() bool { return v.loading || v.schemaLoading }
 func (v *navView) Crumb() string {
 	switch v.mode {
 	case navBrowser:
+		if v.search != "" {
+			return fmt.Sprintf("nav %q", v.search)
+		}
 		return v.typ
 	case navWalk:
 		return "walk (" + entityName(v.root) + ")"
@@ -304,7 +326,11 @@ func (v *navView) fetchMain() tea.Cmd {
 	case navOverview:
 		v.dql = catalog.CensusQuery()
 	case navBrowser:
-		v.dql = catalog.TypeInstancesQuery(v.typ)
+		if v.search != "" {
+			v.dql = catalog.NameSearchQuery(v.search)
+		} else {
+			v.dql = catalog.TypeInstancesQuery(v.typ)
+		}
 	case navWalk:
 		v.dql = catalog.EdgesQuery(v.root.ID)
 		if edges, ok := v.nodeCache[v.root.ID]; ok {
@@ -316,6 +342,50 @@ func (v *navView) fetchMain() tea.Cmd {
 	}
 	v.loading = true
 	return v.ds.query(v, v.seq, v.dql)
+}
+
+// resolveSearch inspects a browser's fresh result set: an empty type browse
+// with a pending fallback term retries it as the name search (":nav
+// payments" browsed the nonexistent PAYMENTS type first), a name search's
+// unique match re-shapes the view into a walk rooted there (the :nav <name>
+// promise), and a multi-match stays as the disambiguation list with exact
+// name hits ranked first. nil = no morph.
+func (v *navView) resolveSearch() tea.Cmd {
+	if v.search == "" {
+		if len(v.instances) == 0 && v.searchFallback != "" {
+			v.search, v.searchFallback, v.typ = v.searchFallback, "", ""
+			return tea.Batch(v.fetchMain(), markHistory)
+		}
+		return nil
+	}
+	if len(v.instances) == 0 {
+		return nil
+	}
+	if len(v.instances) == 1 {
+		if e := navInstanceEntity(v.instances[0]); e != nil {
+			v.mode = navWalk
+			v.search = ""
+			if e.Name != "" {
+				v.names[e.ID] = e.Name
+			}
+			v.root = *e
+			return tea.Batch(v.fetchMain(), v.schedulePreview(), markHistory)
+		}
+		return nil
+	}
+	term := strings.ToLower(v.search)
+	sort.SliceStable(v.instances, func(i, j int) bool {
+		return searchHitRank(v.instances[i], term) < searchHitRank(v.instances[j], term)
+	})
+	return nil
+}
+
+// searchHitRank orders name matches: exact (case-insensitive) before contains.
+func searchHitRank(rec map[string]any, term string) int {
+	if strings.ToLower(catalog.Str(rec, "name")) == term {
+		return 0
+	}
+	return 1
 }
 
 func (v *navView) schemaCmd() tea.Cmd {
@@ -457,6 +527,9 @@ func (v *navView) handleData(msg dataMsg) tea.Cmd {
 		v.census = msg.records
 	case navBrowser:
 		v.instances = msg.records
+		if cmd := v.resolveSearch(); cmd != nil {
+			return cmd
+		}
 	case navWalk:
 		v.edges = catalog.BuildEdges(v.root.ID, msg.records)
 		v.nodeCache[v.root.ID] = v.edges
@@ -906,10 +979,14 @@ func (v *navView) contextLine(width int) string {
 	case navWalk:
 		return v.trailLine(width)
 	case navBrowser:
-		line := " " + theme.OverlayTitle.Render(v.typ)
+		title, unit := v.typ, "entities"
+		if v.search != "" {
+			title, unit = fmt.Sprintf("matches for %q", v.search), "matches"
+		}
+		line := " " + theme.OverlayTitle.Render(title)
 		if !v.loading && v.err == nil {
-			line += theme.Dim.Render(fmt.Sprintf("  %d entities", len(v.instances)))
-			if v.probLoaded {
+			line += theme.Dim.Render(fmt.Sprintf("  %d %s", len(v.instances), unit))
+			if v.probLoaded && v.search == "" {
 				if n := v.probByType[v.typ]; n > 0 {
 					line += theme.Error.Render(fmt.Sprintf("  ● %d with problems", n))
 				}
@@ -986,6 +1063,9 @@ func (v *navView) renderList(w, h int) []string {
 func (v *navView) loadingLabel() string {
 	switch v.mode {
 	case navBrowser:
+		if v.search != "" {
+			return fmt.Sprintf("resolving %q…", v.search)
+		}
 		return "listing " + v.typ + "…"
 	case navWalk:
 		return "walking topology…"
@@ -1010,6 +1090,9 @@ func (v *navView) emptyMessage() string {
 	case navOverview:
 		return "∅ no smartscape entities"
 	case navBrowser:
+		if v.search != "" {
+			return fmt.Sprintf("∅ no entity named %q", v.search)
+		}
 		return "∅ no " + v.typ + " entities"
 	}
 	if v.dirFilter != navDirBoth || v.structOnly {
@@ -1051,6 +1134,12 @@ func (v *navView) rowText(row navRow, w int) (plain, styled string) {
 		name := entityName(*e)
 		plain = dot + " " + name
 		styled = dotStyled + " " + name
+		if v.search != "" {
+			// Name matches span types — the type disambiguates the list.
+			typW := 22
+			plain = dot + " " + pad(e.Type, typW) + " " + name
+			styled = dotStyled + " " + theme.Dim.Render(pad(e.Type, typW)) + " " + name
+		}
 		if e.Name != "" {
 			plain += "  " + e.ID
 			styled += theme.Dim.Render("  " + e.ID)

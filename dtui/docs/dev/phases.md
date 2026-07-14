@@ -350,6 +350,43 @@ and filter shape below was validated live against a demo tenant.
   vulnerabilities panel filters like the list (VULNERABILITY level,
   unmuted).
 
+### Phase 3.12 — Design-promise closure ✅ implemented
+
+Four behaviors the design doc promised but the code lacked, closed in one
+pass (all validated live on the demo tenant):
+
+- **`:nav <name>` resolves names** (and `dtui nav <type|id|name>` from the
+  CLI): a cross-type `matchesValue(name, "*term*")` lookup — a unique match
+  walks straight to the entity, a multi-match becomes the browser as a
+  disambiguation list (type column added, exact-name hits ranked first,
+  health dots and preview apply unchanged). An ambiguous lowercase token
+  (":nav payments" is type-shaped too) browses the type first and re-shapes
+  into the name search when the browse lands empty — ":nav service" keeps
+  meaning the SERVICE browser. Live gotcha: hosts pair with a same-named
+  ONEAGENT node, so unique matches are rarer than expected — the
+  disambiguation list is the common path.
+- **Custom timeframe**: the `t` picker grew its fifth entry — any relative
+  window (`45m`, `12h`, `3d`), the same labels the workspace file takes
+  (`catalog.ParseTimeframe`). The pill shows the applied window
+  (`custom (45m)`) and the highlight lands on it when the active window is
+  no preset.
+- **Query history**: the escape hatch remembers submitted DQL (MRU, capped
+  at 50, persisted to `~/.local/state/dtui/queries.json`); `ctrl+p`/`ctrl+n`
+  cycle it in the editor with the live draft stashed — up/down stay cursor
+  movement in the multi-line editor. Live progress and renderer cycling
+  remain open.
+- **`:ctx <name>` switches contexts in-session** (no argument lists them).
+  The dtui main package supplies a wiring factory (`Options.SwitchContext`)
+  that reloads the config, points it at the requested context **in memory
+  only** — the session-local contract of `--context` holds; an open TUI
+  never writes the shared config — and rebuilds the executor, API sources,
+  and segment lister. Applying a switch drops every tenant-specific piece
+  of state: the pin, applied segments, the semantic-dictionary cache, and
+  both view stacks (entity ids and fetched data don't survive the tenant
+  boundary; in-flight results die with the discarded views; `-` must not
+  resurrect them). The session lands on home; the timeframe is the one
+  global that carries over, and `H` records under the new context.
+
 ### Phase 4 — Assets & mutations
 
 - Management resource browser for the full existing CRUD surface; workflow

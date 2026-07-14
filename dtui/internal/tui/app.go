@@ -31,11 +31,23 @@ type Options struct {
 	// package so no HTTP lives in this package.
 	Sources     map[string]Source
 	InitialView string // catalog view name or alias; "" = problems
-	HistoryPath string // navigation-history file; "" = in-memory only
+	// InitialArg is the optional CLI argument for the initial view — only
+	// nav takes one (`dtui nav <type|id|name>`); ignored elsewhere.
+	InitialArg       string
+	HistoryPath      string // navigation-history file; "" = in-memory only
+	QueryHistoryPath string // submitted-DQL history file; "" = in-memory only
 
 	// SegmentSource backs the segment picker and workspace seeding; nil
 	// disables both. Constructed in the dtui main package (no HTTP here).
 	SegmentSource SegmentLister
+	// SwitchContext rebuilds the tenant wiring for another dtctl context —
+	// the :ctx command. nil disables in-session switching. Constructed in
+	// the dtui main package (no HTTP here); session-local by contract, it
+	// must never write the shared config.
+	SwitchContext func(name string) (*ContextWiring, error)
+	// Contexts are the configured context names (:ctx without an argument
+	// lists them).
+	Contexts []string
 	// WorkspaceSegments are .dynatrace.yaml refs resolved and applied on
 	// startup (async — the first paint is never blocked on them).
 	WorkspaceSegments []WorkspaceSegment
@@ -45,6 +57,18 @@ type Options struct {
 	// .dynatrace.yaml announces it is steering the session (or failed to).
 	StartupNotice    string
 	StartupNoticeErr bool
+}
+
+// ContextWiring is everything in Options that depends on the tenant client
+// — what Options.SwitchContext rebuilds when :ctx moves the session to
+// another dtctl context.
+type ContextWiring struct {
+	ContextName   string
+	Environment   string
+	SafetyLevel   string
+	Executor      *exec.DQLExecutor
+	Sources       map[string]Source
+	SegmentSource SegmentLister
 }
 
 // Run launches the TUI and blocks until the user quits.
@@ -113,7 +137,9 @@ type app struct {
 	cmdSel     int
 	helpActive bool
 	tfActive   bool
-	tfSel      int
+	tfSel      int // picker highlight; len(Timeframes) = the custom entry
+	tfCustom   bool
+	tfInput    textinput.Model
 	histActive bool
 	histSel    int
 	histList   []historyEntry // snapshot shown by the open picker
@@ -128,8 +154,8 @@ type app struct {
 	// lives on ds.segments.
 	segApplied []SegmentOption
 	segVars    map[string][]exec.FilterSegmentVariable // uid → workspace bindings
-	segPending bool // workspace refs still resolving against the tenant list
-	segPaused  bool // alt+s — selection kept, nothing sent to queries
+	segPending bool                                    // workspace refs still resolving against the tenant list
+	segPaused  bool                                    // alt+s — selection kept, nothing sent to queries
 
 	// Segment picker overlay ('S').
 	segPickActive bool
@@ -142,7 +168,8 @@ type app struct {
 	// Variable value sub-picker (space on an unbound segment, or 'v').
 	segVar segVarState
 
-	hist *historyStore
+	hist  *historyStore
+	qhist *queryHistory
 
 	status    string
 	statusErr bool
@@ -150,7 +177,16 @@ type app struct {
 	refreshIdx int
 	refreshGen int
 
+	ctxSwitchSeq int // drops a stale async :ctx switch result
+
 	spinning bool // spinner ticker scheduled
+}
+
+// ctxSwitchedMsg delivers an async :ctx context switch (or its failure).
+type ctxSwitchedMsg struct {
+	seq    int
+	wiring *ContextWiring
+	err    error
 }
 
 type refreshTickMsg struct{ gen int }
@@ -164,28 +200,59 @@ func newApp(opts Options) (*app, error) {
 	ci.Prompt = ":"
 	ci.PromptStyle = theme.Crumb
 	ci.CharLimit = 64
+	ti := textinput.New()
+	ti.Prompt = "last "
+	ti.PromptStyle = theme.Crumb
+	ti.Placeholder = "45m · 12h · 3d"
+	ti.CharLimit = 8
 	a := &app{
-		opts: opts,
-		ds:   &dataSource{exec: opts.Executor, sources: opts.Sources},
-		tf:   catalog.DefaultTimeframe,
-		hist: loadHistory(opts.HistoryPath, opts.ContextName),
+		opts:  opts,
+		ds:    &dataSource{exec: opts.Executor, sources: opts.Sources},
+		tf:    catalog.DefaultTimeframe,
+		hist:  loadHistory(opts.HistoryPath, opts.ContextName),
+		qhist: loadQueryHistory(opts.QueryHistoryPath),
 	}
 	if tf, ok := catalog.ParseTimeframe(opts.InitialTimeframe); ok {
 		a.tf = tf
 	}
 	a.cmdInput = ci
-	for i, tf := range catalog.Timeframes {
-		if tf.Label == a.tf.Label {
-			a.tfSel = i
-		}
+	a.tfInput = ti
+	if i, preset := presetIndex(a.tf.Label); preset {
+		a.tfSel = i
+	} else {
+		a.tfSel = len(catalog.Timeframes)
 	}
 
 	initial, err := a.viewFor(opts.InitialView)
 	if err != nil {
 		return nil, err
 	}
+	// `dtui nav <arg>` — same routing as the :nav command-bar argument.
+	if _, isNav := initial.(*navView); isNav && strings.TrimSpace(opts.InitialArg) != "" {
+		initial = a.navViewFor(strings.TrimSpace(opts.InitialArg))
+	}
 	a.stack = []viewModel{initial}
 	return a, nil
+}
+
+// navViewFor builds the navigator view a :nav / CLI argument means: an
+// entity id walks from it, a type-shaped token (case-insensitive — ":nav
+// service" keeps meaning the SERVICE browser) browses the type, anything
+// else resolves as a name. A lowercase token is ambiguous — "payments" is
+// type-shaped too — so its type browse carries the original term as a
+// fallback: zero instances re-shape it into the name search.
+func (a *app) navViewFor(arg string) viewModel {
+	if entityIDRe.MatchString(arg) {
+		return newNavWalkView(a.ds, *entityFromID(arg), a.tf)
+	}
+	if typ := strings.ToUpper(arg); navTypeRe.MatchString(typ) {
+		v := newNavBrowserView(a.ds, typ, a.tf)
+		if arg != typ {
+			v.searchFallback = arg
+		}
+		return v
+	}
+	return newNavSearchView(a.ds, arg, a.tf)
 }
 
 // viewFor resolves a view name to a fresh view: the bespoke screens (home,
@@ -195,7 +262,7 @@ func (a *app) viewFor(name string) (viewModel, error) {
 	case "", "home":
 		return newHomeView(a.ds, a.tf), nil
 	case "query", "dql":
-		return newQueryView(a.ds, "", a.tf), nil
+		return newQueryView(a.ds, "", a.tf, a.qhist), nil
 	case "nav", "smartscape", "navigator":
 		return newNavView(a.ds, a.tf), nil
 	}
@@ -348,15 +415,20 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 			return a.navigate(newNavWalkView(a.ds, *msg.root, a.tf), msg.replace)
 		case msg.typ != "":
 			return a.navigate(newNavBrowserView(a.ds, msg.typ, a.tf), msg.replace)
+		case msg.search != "":
+			return a.navigate(newNavSearchView(a.ds, msg.search, a.tf), msg.replace)
 		default:
 			return a.navigate(newNavView(a.ds, a.tf), msg.replace)
 		}
 
 	case queryMsg:
-		return a.navigate(newQueryView(a.ds, msg.dql, a.tf), false)
+		return a.navigate(newQueryView(a.ds, msg.dql, a.tf, a.qhist), false)
 
 	case segmentListMsg:
 		return a.handleSegmentList(msg)
+
+	case ctxSwitchedMsg:
+		return a.handleCtxSwitched(msg)
 
 	case statusMsg:
 		a.status, a.statusErr = msg.text, msg.isErr
@@ -485,6 +557,13 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		case "t":
 			a.tfActive = true
+			// A window typed via the custom entry is not a preset — land the
+			// highlight on custom so the picker reflects what is applied.
+			if i, preset := presetIndex(a.tf.Label); preset {
+				a.tfSel = i
+			} else {
+				a.tfSel = len(catalog.Timeframes)
+			}
 			return nil
 		case "S":
 			return a.openSegmentPicker()
@@ -606,19 +685,76 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 // openNav routes a command-bar navigator jump: no argument opens the
 // overview, an entity id walks from it, anything else browses it as a type
 // (case-insensitive — Smartscape types are upper snake case).
+// switchContext handles :ctx — without an argument it reports where you are
+// and what exists; with a name it rebuilds the tenant wiring in a background
+// command and resets the session onto the new context. Session-local by
+// contract (the same rule as --context / DTCTL_CONTEXT): the switcher never
+// writes the shared config, so an open TUI cannot repoint scripts and agents
+// using dtctl on the same machine.
+func (a *app) switchContext(arg string) tea.Cmd {
+	arg = strings.TrimSpace(arg)
+	if arg == "" {
+		if len(a.opts.Contexts) > 0 {
+			return status(fmt.Sprintf("context %s — ctx <name> switches: %s",
+				a.opts.ContextName, strings.Join(a.opts.Contexts, " · ")))
+		}
+		return status(fmt.Sprintf("context %s — ctx <name> switches (session-local)", a.opts.ContextName))
+	}
+	if a.opts.SwitchContext == nil {
+		return statusErr("context switching is not wired up in this session")
+	}
+	if arg == a.opts.ContextName {
+		return status(fmt.Sprintf("already on context %s", arg))
+	}
+	a.ctxSwitchSeq++
+	seq := a.ctxSwitchSeq
+	switchFn := a.opts.SwitchContext
+	return tea.Batch(
+		status(fmt.Sprintf("switching to context %s…", arg)),
+		func() tea.Msg {
+			w, err := switchFn(arg)
+			return ctxSwitchedMsg{seq: seq, wiring: w, err: err}
+		},
+	)
+}
+
+// handleCtxSwitched applies a finished context switch: swap the tenant
+// wiring and drop every piece of tenant-specific state — the pin, applied
+// segments, the semantic-dictionary cache, and both view stacks (entity ids
+// and fetched data don't survive the tenant boundary; in-flight results
+// route to the discarded views and die with them). The session lands on the
+// home view; the timeframe is the one global that carries over.
+func (a *app) handleCtxSwitched(msg ctxSwitchedMsg) tea.Cmd {
+	if msg.seq != a.ctxSwitchSeq {
+		return nil
+	}
+	if msg.err != nil {
+		return statusErr(fmt.Sprintf("context switch failed: %v", msg.err))
+	}
+	w := msg.wiring
+	a.opts.ContextName, a.opts.Environment, a.opts.SafetyLevel = w.ContextName, w.Environment, w.SafetyLevel
+	a.opts.SegmentSource = w.SegmentSource
+	a.ds.exec = w.Executor
+	a.ds.sources = w.Sources
+	a.ds.segments = nil
+	a.ds.dict, a.ds.dictRequested = nil, false
+	a.pin = nil
+	a.segApplied, a.segVars, a.segList, a.segChecked = nil, nil, nil, nil
+	a.segPending, a.segPaused, a.segLoading = false, false, false
+	a.segErr = ""
+	a.hist.ctx = w.ContextName // H now records and lists the new context
+	cmd := a.navigate(newHomeView(a.ds, a.tf), true)
+	a.prev = nil // '-' must not resurrect the old tenant's views
+	return tea.Batch(cmd, status(fmt.Sprintf("context %s — %s", w.ContextName, envHost(w.Environment))))
+}
+
+// openNav routes a :nav argument — entity id, type, or name.
 func (a *app) openNav(arg string) tea.Cmd {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
 		return a.jumpTo("nav", "")
 	}
-	if entityIDRe.MatchString(arg) {
-		root := entityFromID(arg)
-		return func() tea.Msg { return navMsg{root: root, replace: true} }
-	}
-	if typ := strings.ToUpper(arg); navTypeRe.MatchString(typ) {
-		return func() tea.Msg { return navMsg{typ: typ, replace: true} }
-	}
-	return statusErr("usage: nav [<TYPE> | <entity-id>]")
+	return a.navigate(a.navViewFor(arg), true)
 }
 
 // applyFacetBelow routes an inspector's facet request to the nearest list
@@ -869,6 +1005,8 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 			return func() tea.Msg { return waterfallMsg{traceID: arg} }
 		case "segments", "seg":
 			return a.openSegmentPicker()
+		case "ctx", "context":
+			return a.switchContext(arg)
 		}
 		spec := catalog.Lookup(input[0])
 		if spec == nil && a.cmdSel < len(a.cmdMatches) {
@@ -886,6 +1024,8 @@ func (a *app) updateCmdbar(msg tea.KeyMsg) tea.Cmd {
 			return a.openNav(arg)
 		case "segments":
 			return a.openSegmentPicker()
+		case "ctx":
+			return a.switchContext(arg)
 		}
 		// Arguments narrow the jump (":pods checkout" pre-fills the filter).
 		return a.jumpTo(spec.Name, arg)
@@ -905,6 +1045,7 @@ var bespokeSpecs = []*catalog.Spec{
 	{Name: "query", Aliases: []string{"dql"}, Desc: "DQL escape hatch"},
 	{Name: "nav", Aliases: []string{"smartscape", "navigator"}, Desc: "Smartscape topology navigator"},
 	{Name: "segments", Aliases: []string{"seg"}, Desc: "Filter segments — global DQL scope"},
+	{Name: "ctx", Aliases: []string{"context"}, Desc: "Switch dtctl context (session-local)"},
 }
 
 func (a *app) updateCmdMatches() {
@@ -920,21 +1061,59 @@ func (a *app) updateCmdMatches() {
 // --- timeframe picker ---------------------------------------------------------
 
 func (a *app) updateTfPicker(msg tea.KeyMsg) tea.Cmd {
+	// The custom entry: a focused text input for any relative window ("45m",
+	// "12h", "3d" — the same labels the workspace file takes).
+	if a.tfCustom {
+		switch msg.String() {
+		case "esc":
+			a.tfCustom = false
+			a.tfInput.Blur()
+			return nil
+		case "enter":
+			label := strings.TrimSpace(a.tfInput.Value())
+			tf, ok := catalog.ParseTimeframe(label)
+			if !ok {
+				return statusErr(fmt.Sprintf("%q is not a relative window (45m, 12h, 3d)", label))
+			}
+			a.tfCustom = false
+			a.tfInput.Blur()
+			a.tfActive = false
+			return a.setTimeframe(tf)
+		}
+		var cmd tea.Cmd
+		a.tfInput, cmd = a.tfInput.Update(msg)
+		return cmd
+	}
+
+	entries := len(catalog.Timeframes) + 1 // presets + the custom entry
+	openCustom := func() tea.Cmd {
+		a.tfSel = len(catalog.Timeframes)
+		a.tfCustom = true
+		a.tfInput.SetValue("")
+		a.tfInput.Focus()
+		return textinput.Blink
+	}
 	switch msg.String() {
 	case "esc", "t":
 		a.tfActive = false
 		return nil
 	case "left", "h", "up", "k":
-		a.tfSel = (a.tfSel + len(catalog.Timeframes) - 1) % len(catalog.Timeframes)
+		a.tfSel = (a.tfSel + entries - 1) % entries
 		return nil
 	case "right", "l", "down", "j", "tab":
-		a.tfSel = (a.tfSel + 1) % len(catalog.Timeframes)
+		a.tfSel = (a.tfSel + 1) % entries
 		return nil
 	case "enter":
+		if a.tfSel >= len(catalog.Timeframes) {
+			return openCustom()
+		}
 		a.tfActive = false
 		return a.setTimeframe(catalog.Timeframes[a.tfSel])
 	}
-	if idx := strings.IndexByte("1234", msg.String()[0]); idx >= 0 && idx < len(catalog.Timeframes) && len(msg.String()) == 1 {
+	if idx := strings.IndexByte("123456789", msg.String()[0]); idx >= 0 && idx < entries && len(msg.String()) == 1 {
+		if idx == len(catalog.Timeframes) {
+			return openCustom()
+		}
 		a.tfActive = false
 		a.tfSel = idx
 		return a.setTimeframe(catalog.Timeframes[idx])
@@ -1159,7 +1338,7 @@ func (a *app) renderHelp() string {
 		keys  []keyHint
 	}{
 		{"Navigation", []keyHint{
-			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>)"},
+			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>, :nav <type|id|name>, :ctx <name>)"},
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 address the innermost numbered strip: its tabs, or the active tab's lens strip when it shows one (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},
@@ -1187,7 +1366,7 @@ func (a *app) renderHelp() string {
 		}},
 		{"Scope & actions", []keyHint{
 			{".", "pin selection as global scope (ctrl+x unpins)"},
-			{"t", "timeframe picker"},
+			{"t", "timeframe picker — presets or a custom relative window (45m, 12h, 3d)"},
 			{"S", "segments — up to 10 filter segments applied to every DQL view (:segments); v picks variable values; a .dynatrace.yaml in the project pre-selects them"},
 			{"alt+s", "segments on/off — suspend the applied set for the unfiltered picture, restore it with bindings intact"},
 			{"ctrl+q", "reveal query — this view's DQL in the editor"},
@@ -1216,9 +1395,18 @@ func (a *app) renderHelp() string {
 func (a *app) renderTfPicker() string {
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("timeframe") + "\n\n")
-	pills := make([]string, len(catalog.Timeframes))
-	for i, tf := range catalog.Timeframes {
-		label := fmt.Sprintf("%d · %s", i+1, tf.Label)
+	custom := "custom"
+	if _, preset := presetIndex(a.tf.Label); !preset {
+		custom = "custom (" + a.tf.Label + ")" // the applied window when it isn't a preset
+	}
+	labels := make([]string, 0, len(catalog.Timeframes)+1)
+	for _, tf := range catalog.Timeframes {
+		labels = append(labels, tf.Label)
+	}
+	labels = append(labels, custom)
+	pills := make([]string, len(labels))
+	for i, l := range labels {
+		label := fmt.Sprintf("%d · %s", i+1, l)
 		if i == a.tfSel {
 			pills[i] = theme.TabActive.Render(label)
 		} else {
@@ -1226,8 +1414,23 @@ func (a *app) renderTfPicker() string {
 		}
 	}
 	b.WriteString(strings.Join(pills, " ") + "\n")
-	b.WriteString("\n" + theme.Dim.Render("enter/1-4 apply · esc cancel"))
+	if a.tfCustom {
+		b.WriteString("\n" + a.tfInput.View() + "\n")
+		b.WriteString("\n" + theme.Dim.Render("a relative window: 45m · 12h · 3d — enter apply · esc back"))
+		return b.String()
+	}
+	b.WriteString("\n" + theme.Dim.Render(fmt.Sprintf("enter/1-%d apply · esc cancel", len(labels))))
 	return b.String()
+}
+
+// presetIndex finds a timeframe label among the picker presets.
+func presetIndex(label string) (int, bool) {
+	for i, tf := range catalog.Timeframes {
+		if tf.Label == label {
+			return i, true
+		}
+	}
+	return 0, false
 }
 
 func overlay(width, height int, content string) string {

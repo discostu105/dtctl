@@ -22,10 +22,17 @@ type queryView struct {
 	current string // last-submitted DQL
 	editing bool
 
+	// hist walks previously submitted queries (ctrl+p / ctrl+n while
+	// editing); histIdx is the recalled entry (-1 = the live draft, stashed
+	// in draft while cycling).
+	hist    *queryHistory
+	histIdx int
+	draft   string
+
 	width, height int
 }
 
-func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe) *queryView {
+func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe, hist *queryHistory) *queryView {
 	ta := textarea.New()
 	ta.Placeholder = "fetch logs | filter status == \"ERROR\"  (enter runs · ctrl+j newline · tab results)"
 	ta.SetHeight(3)
@@ -34,7 +41,10 @@ func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe) *queryView {
 	ta.SetValue(dql)
 	ta.Focus()
 
-	v := &queryView{ds: ds, editor: ta, editing: true, current: ""}
+	if hist == nil {
+		hist = &queryHistory{} // in-memory; callers normally pass the app's store
+	}
+	v := &queryView{ds: ds, editor: ta, editing: true, current: "", hist: hist, histIdx: -1}
 	spec := &catalog.Spec{
 		Name: "results",
 		Kind: catalog.KindSignal,
@@ -96,7 +106,11 @@ func (v *queryView) Echo() string {
 
 func (v *queryView) Hints() []keyHint {
 	if v.editing {
-		return []keyHint{{"enter", "run"}, {"ctrl+j", "newline"}, {"tab", "results"}}
+		hints := []keyHint{{"enter", "run"}, {"ctrl+j", "newline"}, {"tab", "results"}}
+		if len(v.hist.queries) > 0 {
+			hints = append(hints, keyHint{"ctrl+p/n", "history"})
+		}
+		return hints
 	}
 	if v.results.InputActive() { // results-table filter focused
 		return v.results.Hints()
@@ -140,7 +154,32 @@ func (v *queryView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			v.current = dql
 			v.editing = false
 			v.editor.Blur()
+			v.hist.add(dql)
+			v.histIdx, v.draft = -1, ""
 			return v.results.Refresh()
+		case "ctrl+p":
+			// Walk back through submitted queries (readline muscle memory —
+			// up/down stay cursor movement in the multi-line editor).
+			if v.histIdx+1 >= len(v.hist.queries) {
+				return nil
+			}
+			if v.histIdx == -1 {
+				v.draft = v.editor.Value()
+			}
+			v.histIdx++
+			v.recall(v.hist.queries[v.histIdx])
+			return nil
+		case "ctrl+n":
+			if v.histIdx < 0 {
+				return nil
+			}
+			v.histIdx--
+			if v.histIdx == -1 {
+				v.recall(v.draft)
+			} else {
+				v.recall(v.hist.queries[v.histIdx])
+			}
+			return nil
 		case "ctrl+j":
 			v.editor, _ = v.editor.Update(tea.KeyMsg{Type: tea.KeyEnter})
 			return nil
@@ -164,6 +203,13 @@ func (v *queryView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return v.editor.Focus()
 	}
 	return v.results.Update(msg)
+}
+
+// recall swaps the editor content for a history entry (or the stashed
+// draft), leaving the cursor at the end.
+func (v *queryView) recall(dql string) {
+	v.editor.SetValue(dql)
+	v.editor.CursorEnd()
 }
 
 func (v *queryView) editorHeight() int { return v.editor.Height() + 1 }

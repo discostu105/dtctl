@@ -88,6 +88,19 @@ func TestTypeInstancesQueryFallsBackToTagAndARN(t *testing.T) {
 	}
 }
 
+func TestNameSearchQueryWrapsAndSanitizesTheTerm(t *testing.T) {
+	dql := NameSearchQuery("payments")
+	if !strings.Contains(dql, `matchesValue(name, "*payments*")`) {
+		t.Errorf("name search must wrap the term for contains semantics:\n%s", dql)
+	}
+	// matchesValue allows wildcards only at either end — user-typed stars
+	// inside the term must not reach the pattern.
+	dql = NameSearchQuery("pay*ments*")
+	if !strings.Contains(dql, `matchesValue(name, "*payments*")`) {
+		t.Errorf("embedded stars must be stripped:\n%s", dql)
+	}
+}
+
 func TestProblemAffectedIDsCoversBothEras(t *testing.T) {
 	ids := ProblemAffectedIDs(map[string]any{
 		"smartscape.affected_entities": []any{

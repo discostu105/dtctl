@@ -170,7 +170,7 @@ func TestHistoryRestoresEveryPageKind(t *testing.T) {
 	views := []viewModel{
 		newHomeView(a.ds, a.tf),
 		newTableView(a.ds, catalog.Lookup("logs"), catalog.Scope{Timeframe: a.tf, Entity: &entity}),
-		newQueryView(a.ds, "fetch logs", a.tf),
+		newQueryView(a.ds, "fetch logs", a.tf, a.qhist),
 		newDetailView(a.ds, entity, nil, a.tf),
 		newMetricsView(a.ds, entity, a.tf),
 		newRelationsView(a.ds, entity, a.tf),
