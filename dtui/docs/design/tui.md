@@ -80,9 +80,10 @@ map freely, and drop into any signal already scoped to where you're standing.
 
 ## Goals
 
-1. **Complete primitive coverage** — every noun a Dynatrace operator expects
+1. **Broad primitive coverage** — every noun a Dynatrace operator expects
    (services → cloud infra → frontends) is a named view, reachable in ≤2
-   keystrokes plus an alias.
+   keystrokes plus an alias. Coverage is broad across nouns and capped in
+   depth per noun ([ADR-0014](../adr/0014-breadth-not-depth.md)).
 2. **Topology-following navigation** — from any entity, jump to its related
    entities and its signals with single keys; scope composes automatically.
 3. **No query language required** — curated views with sensible columns
@@ -113,7 +114,14 @@ map freely, and drop into any signal already scoped to where you're standing.
   ([ADR-0011](../adr/0011-strictly-read-only.md)). The command echo is the
   handover: dtui shows you the dtctl command, you run it where the safety
   model lives.
+- **Not an analysis surface.** Open-ended correlation, hypothesis testing,
+  dashboard building, and visual depth belong to the web UI; mutation and
+  automation to the CLI ([ADR-0012](../adr/0012-navigate-analyze-mutate.md)).
 - **No new SDK API surface** for phases 1–3.
+
+The full scope charter — audience, the TUI/web/CLI boundary, query and
+latency budgets, the feature-admission gate, and the standing anti-goal
+list — is [vision.md](vision.md).
 
 ---
 

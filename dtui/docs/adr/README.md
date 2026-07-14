@@ -19,6 +19,9 @@ can read in two minutes.
 | [0009](0009-navigate-dont-draw.md) | Navigate the topology, don't draw it |
 | [0010](0010-curated-defaults-runtime-discovery.md) | Curated defaults, runtime discovery for the rest |
 | [0011](0011-strictly-read-only.md) | dtui is strictly read-only; mutations are not planned |
+| [0012](0012-navigate-analyze-mutate.md) | Navigate in dtui, analyze in the web UI, mutate via dtctl |
+| [0013](0013-query-budget.md) | Every keystroke has a query budget |
+| [0014](0014-breadth-not-depth.md) | Breadth across nouns, capped depth; render to decide |
 
 New ADRs: next number, same three sections, `Accepted`/`Superseded` status.
 Record a decision when reversing it would ripple through more than one view.

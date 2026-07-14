@@ -7,6 +7,8 @@ reference. This directory is for design and contributor documentation.
 ## Layout
 
 - **[design/](design/)** — what dtui is and how it's built
+  - [vision.md](design/vision.md) — the vision & scope charter: who dtui
+    is for, the TUI/web/CLI boundary, budgets, the feature gate, anti-goals
   - [tui.md](design/tui.md) — the core design: view catalog, navigation
     model, detail pages, architecture
   - [smartscape-navigator.md](design/smartscape-navigator.md) — the
