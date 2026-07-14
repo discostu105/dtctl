@@ -63,12 +63,7 @@ func (v *inspectorView) addConversation(needle string) bool {
 		if text == "" || !fieldMatches(needle, label, text) {
 			return
 		}
-		v.addRow(key, label, v.labelStyle(needle, label, style), valueView{
-			lines:   wrapLines(text, v.vp.Width-6),
-			compact: compactText(text),
-			raw:     text,
-			block:   expand,
-		})
+		v.addRow(key, label, v.labelStyle(needle, label, style), genaiBodyView(text, v.vp.Width-6, expand))
 	}
 
 	addMsg("gen_ai.system_instructions", "system", theme.Dim, system, false)
@@ -97,6 +92,21 @@ func (v *inspectorView) addConversation(needle string) bool {
 	}
 	v.addLine("")
 	return true
+}
+
+// genaiBodyView renders one conversation body. A JSON payload (tool
+// arguments/results, structured output) becomes the same navigable
+// highlighted block JSON gets everywhere else in the inspector; prose gets
+// in-place token highlighting (markdown structure, XML-ish prompt tags) —
+// the raw text stays untouched for search and yank.
+func genaiBodyView(text string, width int, expand bool) valueView {
+	if doc := parseJSONDoc(text); doc != nil {
+		lines := jsonLines(doc, 0, width)
+		return valueView{lines: lines, compact: compactText(text), raw: text,
+			block: expand && len(lines) <= maxAutoExpandLines, doc: doc}
+	}
+	return valueView{lines: wrapLines(highlightProse(text), width),
+		compact: compactText(text), raw: text, block: expand}
 }
 
 // genaiMessageText flattens a message's parts for display: text verbatim,

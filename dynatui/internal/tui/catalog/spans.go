@@ -41,7 +41,7 @@ var spanLenses = []Lens{
 	// exception-bearing spans are not failed (caught/handled), and the
 	// populations barely overlap (validated live).
 	{Name: "errors", Desc: "failed spans of any kind, with the minimal why",
-		Filter: `span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`,
+		Filter:  `span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`,
 		Columns: errorSpanColumns},
 	// Exceptions hide from every status filter: ~98% of exception-bearing
 	// spans have span.status_code null or "ok" (validated live). Iterative

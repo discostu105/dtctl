@@ -116,6 +116,15 @@ var (
 	JSONKey   = lipgloss.NewStyle().Foreground(Sky)
 	JSONStr   = lipgloss.NewStyle().Foreground(Green)
 	JSONPunct = lipgloss.NewStyle().Foreground(Faint)
+
+	// Free-text highlighting (gen_ai message bodies, stack traces): structure
+	// pops, content stays plain — headings bold, XML-ish tags sky like JSON
+	// keys, code teal, list markers peach, stack locations sky.
+	ProseHead   = lipgloss.NewStyle().Bold(true)
+	ProseTag    = lipgloss.NewStyle().Foreground(Sky)
+	ProseCode   = lipgloss.NewStyle().Foreground(Teal)
+	ProseMarker = lipgloss.NewStyle().Foreground(Peach)
+	StackLoc    = lipgloss.NewStyle().Foreground(Sky)
 )
 
 // brandStops are the Dynatrace logo gradient colors, lime → green → teal →

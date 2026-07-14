@@ -150,14 +150,16 @@ func isStackKey(key string) bool {
 
 // stackValue renders a callstack collapsed behind its top frame
 // ("frame ⋯ 44 frames") — the top frame answers "where", the other
-// forty lines are one keypress away instead of swamping the record.
+// forty lines are one keypress away instead of swamping the record. Expanded
+// frames highlight in place (highlight.go): headers loud, locations sky,
+// plumbing dim.
 func stackValue(s string, width int) valueView {
 	frames := strings.Split(strings.TrimSpace(s), "\n")
-	compact := compactText(frames[0])
+	compact := highlightStackLine(compactText(frames[0]))
 	if len(frames) > 1 {
 		compact += theme.Dim.Render(fmt.Sprintf("  ⋯ %d frames", len(frames)))
 	}
-	return valueView{lines: wrapLines(s, width), compact: compact, raw: s, block: false}
+	return valueView{lines: wrapLines(highlightStack(s), width), compact: compact, raw: s, block: false}
 }
 
 // maxAutoExpandLines caps default expansion of JSON blocks: a k8s.object
