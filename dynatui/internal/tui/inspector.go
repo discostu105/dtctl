@@ -418,9 +418,11 @@ func (v *inspectorView) handleKey(msg tea.KeyMsg) tea.Cmd {
 }
 
 // facetRow asks the app to facet the nearest list beneath this page by the
-// selected field's value: scalars apply exactly, and an exploded array
-// element applies as a contains pattern — the underlying field is an array,
-// which toString renders as one matchable string (validated live).
+// selected field's value: scalars apply exactly, a string-array element
+// applies as a contains pattern (matchesValue is element-wise on string
+// arrays), and elements of record or numeric arrays apply as a `~` token
+// search — the only operator that matches inside those server-side
+// (validated live).
 func (v *inspectorView) facetRow() tea.Cmd {
 	row := v.selectedRow()
 	if row == nil {
@@ -436,6 +438,15 @@ func (v *inspectorView) facetRow() tea.Cmd {
 	case []any:
 		if row.label == row.key || row.val.raw == "" {
 			return statusErr("can't facet on a whole array — select one element")
+		}
+		for _, elem := range val {
+			if elem == nil {
+				continue
+			}
+			if _, isString := elem.(string); !isString {
+				return func() tea.Msg { return applyFacetMsg{field: field, value: row.val.raw, tokens: true} }
+			}
+			break
 		}
 		value := "*" + row.val.raw + "*"
 		return func() tea.Msg { return applyFacetMsg{field: field, value: value} }

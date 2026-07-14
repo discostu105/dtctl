@@ -119,10 +119,13 @@ type metricChartMsg struct {
 
 // applyFacetMsg asks the app to facet the nearest list view beneath the
 // current page by field=value (the inspector's 'f'). A value wrapped in '*'
-// applies as a contains pattern (array fields match through toString).
+// applies as a contains pattern (element-wise on string arrays); tokens
+// asks for a `~` token-search facet instead — the only operator that
+// matches inside arrays of records or numbers.
 type applyFacetMsg struct {
-	field string
-	value string
+	field  string
+	value  string
+	tokens bool
 }
 
 // historyMarkMsg asks the app to snapshot the current stack into the

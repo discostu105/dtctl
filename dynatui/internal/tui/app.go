@@ -439,7 +439,7 @@ func (a *app) dispatch(msg tea.Msg) tea.Cmd {
 		return nil
 
 	case applyFacetMsg:
-		return a.applyFacetBelow(msg.field, msg.value)
+		return a.applyFacetBelow(msg)
 
 	case refreshTickMsg:
 		if msg.gen != a.refreshGen || refreshIntervals[a.refreshIdx] == 0 {
@@ -762,7 +762,7 @@ func (a *app) openNav(arg string) tea.Cmd {
 // active tab is one — popping down to it. The target must actually carry the
 // field: a facet on a missing field would silently empty the list, the exact
 // trap the picker avoids by deriving attributes from fetched records.
-func (a *app) applyFacetBelow(field, value string) tea.Cmd {
+func (a *app) applyFacetBelow(msg applyFacetMsg) tea.Cmd {
 	for i := len(a.stack) - 2; i >= 0; i-- {
 		var tv *tableView
 		switch v := a.stack[i].(type) {
@@ -782,12 +782,12 @@ func (a *app) applyFacetBelow(field, value string) tea.Cmd {
 			// (patterns) and the filter would null out on the pipeline.
 			return statusErr(fmt.Sprintf("%s is API-backed — facets don't apply", tv.spec.Name))
 		}
-		if !tv.hasField(field) {
-			return statusErr(fmt.Sprintf("%s rows carry no %s field", tv.spec.Name, field))
+		if !tv.hasField(msg.field) {
+			return statusErr(fmt.Sprintf("%s rows carry no %s field", tv.spec.Name, msg.field))
 		}
 		a.prev = a.stack
 		a.stack = a.stack[:i+1]
-		return tv.addFacet(catalog.Facet{Field: field, Value: value})
+		return tv.addFacet(catalog.Facet{Field: msg.field, Value: msg.value, Tokens: msg.tokens})
 	}
 	return statusErr("no list view beneath to facet")
 }

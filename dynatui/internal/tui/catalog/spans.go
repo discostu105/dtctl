@@ -44,12 +44,13 @@ var spanLenses = []Lens{
 		Filter:  `span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`,
 		Columns: errorSpanColumns},
 	// Exceptions hide from every status filter: ~98% of exception-bearing
-	// spans have span.status_code null or "ok" (validated live). Iterative
-	// expressions (span.events[][span_event.name]) are rejected inside filter
-	// (ITERATIVE_EXPRESSION_FOR_FILTER), so this string-matches the exact
-	// serialized discriminator — validated against toString(span.events).
+	// spans have span.status_code null or "ok" (validated live). A raw
+	// iterative expression is rejected inside filter
+	// (ITERATIVE_EXPRESSION_FOR_FILTER), but wrapped in iAny() it collapses
+	// to a legal scalar boolean — row-equivalent to string-matching the
+	// toString-serialized array, without muting the index (validated live).
 	{Name: "exceptions", Desc: "spans that recorded exception events (mostly non-failed spans)",
-		Filter: `contains(toString(span.events), "\"span_event.name\":\"exception\"")`, Columns: exceptionSpanColumns},
+		Filter: `iAny(span.events[][span_event.name] == "exception")`, Columns: exceptionSpanColumns},
 	{Name: "server", Desc: "incoming requests handled by a service",
 		Filter: `span.kind == "server"`},
 	{Name: "client", Desc: "outgoing calls (HTTP, RPC, DB drivers)",

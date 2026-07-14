@@ -144,7 +144,7 @@ func TestFacetPickerFlow(t *testing.T) {
 	if want := (catalog.Facet{Field: "sku", Value: "t3.large"}); tv.facets[0] != want {
 		t.Fatalf("facet = %+v, want %+v", tv.facets[0], want)
 	}
-	if !strings.Contains(tv.dql, `| filter toString(sku) == "t3.large"`) {
+	if !strings.Contains(tv.dql, `| filter sku == "t3.large"`) {
 		t.Errorf("dql missing facet stage:\n%s", tv.dql)
 	}
 	if !strings.Contains(tv.Crumb(), "sku=t3.large") {
@@ -275,7 +275,7 @@ func TestInspectorFacetsListBeneath(t *testing.T) {
 	if len(tv.facets) != 1 || tv.facets[0] != (catalog.Facet{Field: "sku", Value: "t3.large"}) {
 		t.Fatalf("facets = %v", tv.facets)
 	}
-	if !strings.Contains(tv.dql, `| filter toString(sku) == "t3.large"`) {
+	if !strings.Contains(tv.dql, `| filter sku == "t3.large"`) {
 		t.Errorf("list not refetched with the facet:\n%s", tv.dql)
 	}
 }
@@ -353,8 +353,8 @@ func TestInspectorFacetOnArrayElement(t *testing.T) {
 	if len(tv.facets) != 1 || tv.facets[0] != want {
 		t.Fatalf("array-element facet = %v, want %+v", tv.facets, want)
 	}
-	if !strings.Contains(tv.dql, `matchesValue(toString(affected_entity_ids), "*CLOUD_APPLICATION-0000000000000001*")`) {
-		t.Errorf("array facet must go through toString+matchesValue:\n%s", tv.dql)
+	if !strings.Contains(tv.dql, `matchesValue(affected_entity_ids, "*CLOUD_APPLICATION-0000000000000001*")`) {
+		t.Errorf("array facet must go through element-wise matchesValue:\n%s", tv.dql)
 	}
 }
 
@@ -376,7 +376,7 @@ func TestFacetPatternValue(t *testing.T) {
 	if len(tv.facets) != 1 || tv.facets[0].Value != "web-*" {
 		t.Fatalf("facets = %v", tv.facets)
 	}
-	if !strings.Contains(tv.dql, `| filter matchesValue(toString(name), "web-*")`) {
+	if !strings.Contains(tv.dql, `| filter matchesValue(name, "web-*")`) {
 		t.Errorf("dql missing pattern stage:\n%s", tv.dql)
 	}
 }
@@ -410,7 +410,7 @@ func TestFacetsSurviveTimeframeChange(t *testing.T) {
 
 	deliver(a, a.setTimeframe(catalog.Timeframes[3]))
 	if !strings.Contains(tv.dql, `| search "*payment*"`) ||
-		!strings.Contains(tv.dql, `| filter toString(event.status) == "ACTIVE"`) {
+		!strings.Contains(tv.dql, `| filter event.status == "ACTIVE"`) {
 		t.Errorf("facets/search must survive a timeframe refetch:\n%s", tv.dql)
 	}
 	if !strings.Contains(tv.dql, "7d") {
@@ -481,8 +481,9 @@ func TestBucketFacetAbsentOnEntityViews(t *testing.T) {
 	}
 }
 
-// A bucket facet must prune at the source — directly after fetch, before the
-// spec's own pipeline — not sit at the tail like attribute facets.
+// A bucket facet must prune at the source — on a real table it becomes the
+// fetch command's bucket: parameter, Grail's native physical pruning — not
+// sit at the tail like attribute facets.
 func TestBucketFacetFiltersAtSource(t *testing.T) {
 	a := testApp(t, "logs")
 	seedRows(t, a, []map[string]any{{"content": "x", "dt.system.bucket": "default_logs"}})
@@ -490,8 +491,8 @@ func TestBucketFacetFiltersAtSource(t *testing.T) {
 
 	deliver(a, tv.addFacet(catalog.Facet{Field: catalog.BucketField, Value: "default_logs"}))
 	lines := strings.Split(tv.dql, "\n")
-	if len(lines) < 2 || lines[1] != `| filter toString(dt.system.bucket) == "default_logs"` {
-		t.Fatalf("bucket facet must follow the source line:\n%s", tv.dql)
+	if len(lines) < 1 || !strings.HasSuffix(lines[0], `, bucket:{"default_logs"}`) {
+		t.Fatalf("bucket facet must become the fetch bucket: parameter:\n%s", tv.dql)
 	}
 	if !historyContains(a, "dt.system.bucket=default_logs") {
 		t.Errorf("bucket facet not recorded in history: %+v", a.hist.entries)

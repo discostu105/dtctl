@@ -224,7 +224,7 @@ func TestPatternsQueryShape(t *testing.T) {
 // catalog_injectFacet simulates the table view's facet injection so the test
 // proves faceted fields survive until the source's appended projection.
 func catalog_injectFacet(dql string) string {
-	return InjectStages(dql, []string{`| filter toString(loglevel) == "ERROR"`})
+	return InjectStages(dql, []string{`| filter loglevel == "ERROR"`})
 }
 
 func TestLogsPatternScope(t *testing.T) {

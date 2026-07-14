@@ -254,19 +254,50 @@ All validated live; implementation in `internal/tui/catalog/facets.go`.
   `{field, count, rawCount, values: [{value, occurrence-count}]}` — counts
   are stringified longs, and **values are stringified even for numeric
   fields** (`"2"` for `logical_cores`).
-- **Facet comparisons must go through `toString()`.** `logical_cores == "2"`
-  is *silently empty* on a numeric field; `toString(logical_cores) == "2"`
-  matches — and composes fine with string fields too, so it is the universal
-  exact encoding for a stringified value. Patterns use
-  `matchesValue(toString(field), "pay*")`: case-insensitive, `*` wildcards
-  allowed at either end, and `toString()` is accepted as its first argument.
-- **Array fields facet through the same pattern encoding.**
-  `toString(arrayField)` renders the elements into one string
-  (`["KUBERNETES_CLUSTER-…"]`), so
-  `matchesValue(toString(arrayField), "*ELEMENT*")` matches rows whose array
-  contains the element — the inspector's facet-by-array-element rides on
-  this. Note `matchesValue` patterns must be **constants**
-  (`MANDATORY_PARAMETER_HAS_TO_BE_CONSTANT` with `concat(...)`).
+- **Facet comparisons never wrap the field in `toString()`** — a function
+  call on the field mutes Grail's index features. `Facet.Stage()` instead
+  branches on the shape of the stringified value; all encodings validated
+  live against the toString forms they replaced (equal counts, row-level
+  where checked):
+  - **Plain strings:** `field == "x"` — exact and case-sensitive. No `~`
+    leg: `~` is case-insensitive and token-based, so `phase ~ "Running"`
+    also matches `"Running fast"` and `"running"`, and
+    `dt.system.bucket ~ "logs_product"` matches
+    `custom_sen_low_logs_product_limit` (consecutive-token phrase).
+  - **Numbers:** `field == 2 or field == "2" or field == duration(2, "ns")`.
+    `logical_cores == "2"` is *silently empty* on a numeric field and
+    `== 2` on a string field, so both legs are needed; the `duration()` leg
+    matches duration fields, whose `fieldsSummary` values are nanosecond
+    counts (`"203000"`) that neither `toString(duration)` (renders seconds)
+    nor the old encoding ever matched.
+  - **Booleans:** `field == true or field == "true"` — `~` never matches
+    booleans (server warns), and `== "true"` alone is silently empty on a
+    real boolean.
+  - **ID-shaped values** (smartscape ID, hex UID, UUID, IP):
+    `field == "x" or field ~ "x"`. Typed scalars never equal a string
+    literal — `dt.smartscape.host == "HOST-…"` is silently empty with a
+    "convert using toSmartscapeId()" warning, same for UID `trace.id` —
+    while `~` auto-converts and matches their **exact** string
+    representation (case-sensitive for smartscape IDs). Counts equal the
+    toString encoding (4102/4102 hosts on logs, 6/6 trace ids on spans).
+  - **Patterns:** `matchesValue(field, "pay*")` on the bare field:
+    case-insensitive, `*` wildcards at either end, **element-wise on string
+    arrays** and accepts smartscape IDs — but returns false (with a
+    warning, not an error) on longs/doubles/UIDs, so wildcard facets on
+    numeric fields no longer match (accepted trade-off; only toString
+    could do that). Patterns must be **constants**
+    (`MANDATORY_PARAMETER_HAS_TO_BE_CONSTANT` with `concat(...)`).
+- **Array fields facet element-wise without toString.**
+  `matchesValue(arrayField, "*ELEMENT*")` matches rows whose **string**
+  array contains a matching element (equal counts vs the old
+  toString-serialization encoding, validated on events). Arrays of records
+  or numbers refuse `matchesValue` ("inner type has to be a string or a
+  smartscape id") — those facet through the **`~` search operator**
+  (`Facet.Tokens`): `arrayField ~ "v"` matches if any element matches, with
+  records matching on any nested field name or value and numbers matching
+  their exact representation (`array(1,2,3) ~ "3"`). `~` is token-based on
+  strings: `"Hello World" ~ "world"` matches, `"HelloWorld" ~ "world"`
+  doesn't.
 - Facet `filter` stages stay before the sort/limit tail — after a
   `summarize`, that's what makes them filter the exact fields the columns
   (and the facet attribute picker, built from fetched record keys) present.
@@ -280,9 +311,16 @@ All validated live; implementation in `internal/tui/catalog/facets.go`.
   null — so eligibility is the `bucketTables` whitelist (the
   `dt.system.table` values of `fetch dt.system.buckets`, plus the
   `dt.davis.*` / `dt.synthetic.*` views over events, all validated live).
-  Bucket facets therefore inject directly after the source + search stages
-  (order validated live), where they also survive `summarize`; the
-  projection is skipped for API views, whose query is analyzer input.
+  A single exact bucket facet on a **real table** becomes the fetch
+  command's `bucket:{"name"}` parameter — Grail's native physical pruning;
+  identical counts to the filter form over a fixed window, and it composes
+  with `| search` + the projection (validated live). The `dt.davis.*` /
+  `dt.synthetic.*` **views reject the parameter**
+  (`PARAMETER_NOT_ALLOWED_FOR_FETCH_VIEW`), and multiple bucket facets must
+  AND (a multi-value parameter would OR) — both keep the old head filter
+  stage directly after source + search (order validated live), where it
+  also survives `summarize`; the projection is skipped for API views, whose
+  query is analyzer input.
 
 ### 1.11 Span lenses — why the traces view fetches spans directly
 
@@ -356,13 +394,15 @@ Validated live on both tenants (box 24h, demo 2h windows):
   `exception.stacktrace` (701 events on demo had ONLY that spelling).
   `catalog.SpanEvent.Exception()` coalesces both. Cause chains produce
   multiple exception events per span (2–31 seen).
-- **Iterative expressions are rejected in `filter`.**
-  `filter in("exception", span.events[][span_event.name])` fails with
-  `ITERATIVE_EXPRESSION_FOR_FILTER`. The exceptions lens instead
-  string-matches the serialized array:
-  `contains(toString(span.events), "\"span_event.name\":\"exception\"")` —
-  `toString` serializes as `{"key":"value", …}` (no space around `:`),
-  validated live. Iterative access works fine after `expand` or in
+- **Raw iterative expressions are rejected in `filter` — but `iAny()` makes
+  them legal.** `filter in("exception", span.events[][span_event.name])`
+  fails with `ITERATIVE_EXPRESSION_FOR_FILTER`, yet
+  `filter iAny(span.events[][span_event.name] == "exception")` collapses
+  the iteration to a scalar boolean and passes — the exceptions lens uses
+  it. Row-for-row equivalent to string-matching the toString-serialized
+  array (`contains(toString(span.events), "\"span_event.name\":\"exception\"")`,
+  the old encoding: 6/6 spans, 0 disagreements, validated live) without the
+  serialize-and-scan cost. Iterative access also works after `expand` or in
   `fieldsAdd`.
 - **The request verdict exists only on entry spans.** A deep span that
   errored carries just `span.status_code == "error"` — `catalog.SpanErrored`
@@ -474,7 +514,7 @@ stays HTTP-free. Rules learned:
   projected-away (null) field and feed the analyzer zero records (found in
   review). The projection is therefore appended by the source, after
   composition (`catalog.LogPatternInput`); a trailing
-  `… | filter toString(loglevel) == "ERROR" | limit 300 | fields
+  `… | filter loglevel == "ERROR" | limit 300 | fields
   timestamp, content` validates live (SUCCESSFUL).
 - Interactive facets stay disabled on API views even when they carry a
   Query: the fetched records (patterns) are not the query's rows (logs),

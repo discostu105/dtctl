@@ -10,15 +10,38 @@ func TestFacetStageEncodings(t *testing.T) {
 		facet Facet
 		want  string
 	}{
-		// Exact values compare via toString: fieldsSummary stringifies every
-		// value, and numeric_field == "2" is silently empty (validated live).
-		{Facet{Field: "phase", Value: "Running"}, `| filter toString(phase) == "Running"`},
-		{Facet{Field: "logical_cores", Value: "2"}, `| filter toString(logical_cores) == "2"`},
-		// '*' switches to case-insensitive wildcard matching.
-		{Facet{Field: "name", Value: "payment*"}, `| filter matchesValue(toString(name), "payment*")`},
-		{Facet{Field: "name", Value: "*ayment*"}, `| filter matchesValue(toString(name), "*ayment*")`},
+		// Plain strings compare with bare == — exact and case-sensitive.
+		// toString(field) == would mute Grail's indexes, and a `~` leg would
+		// token-match ("Running" also matching "Running fast", validated live).
+		{Facet{Field: "phase", Value: "Running"}, `| filter phase == "Running"`},
+		// Numeric-looking values cover long, string, and duration fields:
+		// fieldsSummary stringifies every value ("2" for a numeric field),
+		// `field == "2"` is silently empty on numerics, and duration values
+		// summarize as nanosecond counts only a duration() literal matches
+		// (all validated live).
+		{Facet{Field: "logical_cores", Value: "2"}, `| filter logical_cores == 2 or logical_cores == "2" or logical_cores == duration(2, "ns")`},
+		{Facet{Field: "cpu.load", Value: "2.5"}, `| filter cpu.load == 2.5 or cpu.load == "2.5"`},
+		// Booleans: `~` never matches a boolean field, == true does.
+		{Facet{Field: "has_access", Value: "true"}, `| filter has_access == true or has_access == "true"`},
+		// ID-shaped values add a `~` leg: smartscape-ID/UID/IP-typed fields
+		// never equal a string literal (silently empty), while `~`
+		// auto-converts and matches their exact representation (validated live).
+		{Facet{Field: "dt.smartscape.host", Value: "HOST-0000000000000001"},
+			`| filter dt.smartscape.host == "HOST-0000000000000001" or dt.smartscape.host ~ "HOST-0000000000000001"`},
+		{Facet{Field: "trace.id", Value: "07d906132971314866a3305e9ebb453c"},
+			`| filter trace.id == "07d906132971314866a3305e9ebb453c" or trace.id ~ "07d906132971314866a3305e9ebb453c"`},
+		{Facet{Field: "host.ip", Value: "192.168.0.7"},
+			`| filter host.ip == "192.168.0.7" or host.ip ~ "192.168.0.7"`},
+		// '*' switches to case-insensitive wildcard matching on the bare
+		// field (element-wise on string arrays, validated live).
+		{Facet{Field: "name", Value: "payment*"}, `| filter matchesValue(name, "payment*")`},
+		{Facet{Field: "name", Value: "*ayment*"}, `| filter matchesValue(name, "*ayment*")`},
+		// Tokens facets (elements of record or numeric arrays) search via
+		// `~` — the only operator that matches inside those (validated live).
+		{Facet{Field: "span.events", Value: "java.lang.NullPointerException", Tokens: true},
+			`| filter span.events ~ "java.lang.NullPointerException"`},
 		// Field names DQL rejects bare get backticks.
-		{Facet{Field: "tags:aws", Value: "x"}, "| filter toString(`tags:aws`) == \"x\""},
+		{Facet{Field: "tags:aws", Value: "x"}, "| filter `tags:aws` == \"x\""},
 	}
 	for _, tt := range tests {
 		if got := tt.facet.Stage(); got != tt.want {
@@ -34,12 +57,15 @@ func TestFacetLabel(t *testing.T) {
 	if got := (Facet{Field: "name", Value: "pay*"}).Label(); got != "name~pay*" {
 		t.Errorf("pattern label = %q", got)
 	}
+	if got := (Facet{Field: "span.events", Value: "x", Tokens: true}).Label(); got != "span.events~x" {
+		t.Errorf("tokens label = %q", got)
+	}
 }
 
 func TestInjectStagesBeforeSortLimitTail(t *testing.T) {
 	dql := "fetch logs, from:now() - 2h\n| filter x == 1\n| sort timestamp desc\n| limit 300"
-	got := InjectStages(dql, []string{`| filter toString(status) == "ERROR"`})
-	want := "fetch logs, from:now() - 2h\n| filter x == 1\n| filter toString(status) == \"ERROR\"\n| sort timestamp desc\n| limit 300"
+	got := InjectStages(dql, []string{`| filter status == "ERROR"`})
+	want := "fetch logs, from:now() - 2h\n| filter x == 1\n| filter status == \"ERROR\"\n| sort timestamp desc\n| limit 300"
 	if got != want {
 		t.Errorf("InjectStages =\n%s\nwant\n%s", got, want)
 	}
@@ -47,8 +73,8 @@ func TestInjectStagesBeforeSortLimitTail(t *testing.T) {
 
 func TestInjectStagesNoTailAppends(t *testing.T) {
 	dql := `smartscapeNodes "SERVICE"` + "\n| fieldsRemove references"
-	got := InjectStages(dql, []string{`| filter toString(name) == "x"`})
-	if !strings.HasSuffix(got, `| filter toString(name) == "x"`) {
+	got := InjectStages(dql, []string{`| filter name == "x"`})
+	if !strings.HasSuffix(got, `| filter name == "x"`) {
 		t.Errorf("stages should append when there is no sort/limit tail:\n%s", got)
 	}
 }
@@ -97,13 +123,13 @@ func TestInjectionOnEveryCatalogQuery(t *testing.T) {
 		if strings.HasPrefix(strings.TrimSpace(lines[0]), "|") {
 			t.Errorf("%s: first line is not a source command:\n%s", spec.Name, dql)
 		}
-		got := InjectStages(dql, []string{`| filter toString(x) == "y"`})
+		got := InjectStages(dql, []string{`| filter x == "y"`})
 		gl := strings.Split(got, "\n")
 		last := strings.TrimSpace(gl[len(gl)-1])
 		if !strings.HasPrefix(last, "| limit") && !strings.HasPrefix(last, "| sort") {
 			t.Errorf("%s: query does not end with a sort/limit tail:\n%s", spec.Name, dql)
 		}
-		idx := strings.Index(got, `| filter toString(x)`)
+		idx := strings.Index(got, `| filter x == "y"`)
 		tail := strings.LastIndex(got, "| limit")
 		if idx == -1 || (tail != -1 && idx > tail) {
 			t.Errorf("%s: facet stage not injected before the limit:\n%s", spec.Name, got)
@@ -122,7 +148,7 @@ func TestFieldsSummaryQuery(t *testing.T) {
 	})
 	want := "fetch logs, from:now() - 2h\n" +
 		"| search \"*payment*\"\n" +
-		"| filter toString(k8s.namespace.name) == \"prod\"\n" +
+		"| filter k8s.namespace.name == \"prod\"\n" +
 		"| fieldsSummary loglevel, topValues: 25"
 	if got != want {
 		t.Errorf("FieldsSummaryQuery =\n%s\nwant\n%s", got, want)
@@ -137,7 +163,7 @@ func TestFieldsSummaryQuerySearchPrecedesSummarize(t *testing.T) {
 	want := "fetch spans, from:now() - 2h\n" +
 		"| search \"*checkout*\"\n" +
 		"| summarize spans = count(), by:{trace.id}\n" +
-		"| filter toString(spans) == \"3\"\n" +
+		"| filter spans == 3 or spans == \"3\" or spans == duration(3, \"ns\")\n" +
 		"| fieldsSummary svc, topValues: 25"
 	if got != want {
 		t.Errorf("FieldsSummaryQuery =\n%s\nwant\n%s", got, want)
@@ -195,8 +221,9 @@ func TestBucketEligible(t *testing.T) {
 	}
 }
 
-// The full composition: searches directly after the source, bucket facets
-// next (physical pruning at the source), the bucket projection, then the
+// The full composition: a single exact bucket facet on a real table becomes
+// the fetch command's bucket: parameter — Grail's native physical pruning —
+// then searches directly after the source, the bucket projection, and the
 // remaining facets before the sort/limit tail. Stage order validated live.
 func TestComposeQueryBucketPlacement(t *testing.T) {
 	dql := "fetch logs, from:now() - 2h\n| filter x == 1\n| sort timestamp desc\n| limit 300"
@@ -205,15 +232,47 @@ func TestComposeQueryBucketPlacement(t *testing.T) {
 		{Field: "loglevel", Value: "ERROR"},
 	}, true)
 	want := strings.Join([]string{
-		"fetch logs, from:now() - 2h",
+		`fetch logs, from:now() - 2h, bucket:{"default_logs"}`,
 		`| search "*payment*"`,
-		`| filter toString(dt.system.bucket) == "default_logs"`,
 		"| fieldsAdd dt.system.bucket",
 		"| filter x == 1",
-		`| filter toString(loglevel) == "ERROR"`,
+		`| filter loglevel == "ERROR"`,
 		"| sort timestamp desc",
 		"| limit 300",
 	}, "\n")
+	if got != want {
+		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// The dt.davis.*/dt.synthetic.* views reject the bucket: parameter
+// (PARAMETER_NOT_ALLOWED_FOR_FETCH_VIEW, validated live) — their bucket
+// facet stays a head filter stage that still prunes before the tail.
+func TestComposeQueryBucketOnViewStaysFilter(t *testing.T) {
+	dql := "fetch dt.davis.problems, from:now() - 2h\n| sort event.start desc\n| limit 200"
+	got := ComposeQuery(dql, nil, []Facet{{Field: BucketField, Value: "default_davis_events"}}, true)
+	want := "fetch dt.davis.problems, from:now() - 2h\n" +
+		`| filter dt.system.bucket == "default_davis_events"` + "\n" +
+		"| fieldsAdd dt.system.bucket\n" +
+		"| sort event.start desc\n| limit 200"
+	if got != want {
+		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// Two bucket facets AND together (matching nothing, as the pills promise) —
+// a multi-value bucket: parameter would flip that to OR, so they stay
+// filter stages.
+func TestComposeQueryMultipleBucketFacetsStayFilters(t *testing.T) {
+	dql := "fetch logs, from:now() - 2h\n| sort timestamp desc\n| limit 300"
+	got := ComposeQuery(dql, nil, []Facet{
+		{Field: BucketField, Value: "default_logs"},
+		{Field: BucketField, Value: "custom_logs"},
+	}, false)
+	want := "fetch logs, from:now() - 2h\n" +
+		`| filter dt.system.bucket == "default_logs"` + "\n" +
+		`| filter dt.system.bucket == "custom_logs"` + "\n" +
+		"| sort timestamp desc\n| limit 300"
 	if got != want {
 		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
 	}
@@ -225,7 +284,7 @@ func TestComposeQueryIneligibleUntouched(t *testing.T) {
 	dql := "smartscapeNodes \"HOST\", from:now() - 2h\n| sort name asc\n| limit 300"
 	got := ComposeQuery(dql, nil, []Facet{{Field: BucketField, Value: "x"}}, true)
 	want := "smartscapeNodes \"HOST\", from:now() - 2h\n" +
-		`| filter toString(dt.system.bucket) == "x"` + "\n" +
+		`| filter dt.system.bucket == "x"` + "\n" +
 		"| sort name asc\n| limit 300"
 	if got != want {
 		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
@@ -236,12 +295,12 @@ func TestComposeQueryIneligibleUntouched(t *testing.T) {
 }
 
 // An API view's query is analyzer input, not the records the table shows —
-// the bucket projection is skipped, but bucket facets still prune the source.
+// the bucket projection is skipped, but the bucket facet still prunes the
+// source via the bucket: parameter.
 func TestComposeQueryAnalyzerInputSkipsProjection(t *testing.T) {
 	dql := "fetch logs, from:now() - 2h\n| sort timestamp desc\n| limit 300"
 	got := ComposeQuery(dql, nil, []Facet{{Field: BucketField, Value: "default_logs"}}, false)
-	want := "fetch logs, from:now() - 2h\n" +
-		`| filter toString(dt.system.bucket) == "default_logs"` + "\n" +
+	want := `fetch logs, from:now() - 2h, bucket:{"default_logs"}` + "\n" +
 		"| sort timestamp desc\n| limit 300"
 	if got != want {
 		t.Errorf("ComposeQuery =\n%s\nwant\n%s", got, want)
