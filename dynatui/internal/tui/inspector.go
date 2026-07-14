@@ -481,6 +481,9 @@ func (v *inspectorView) moveCursor(delta int) {
 	if len(v.rows) == 0 {
 		return
 	}
+	if v.scrollTallRow(delta) {
+		return
+	}
 	v.cursor += delta
 	if v.cursor < 0 {
 		v.cursor = 0
@@ -497,6 +500,9 @@ func (v *inspectorView) moveCursor(delta int) {
 // instead of one row at a time.
 func (v *inspectorView) pageCursor(deltaLines int) {
 	if len(v.rows) == 0 {
+		return
+	}
+	if v.scrollTallRow(deltaLines) {
 		return
 	}
 	target := v.rows[v.cursor].line + deltaLines
@@ -520,6 +526,31 @@ func (v *inspectorView) pageCursor(deltaLines int) {
 	v.cursor = i
 	v.refreshVP()
 	v.ensureVisible()
+}
+
+// scrollTallRow scrolls the viewport within the selected row when the row is
+// taller than the screen and movement in that direction still has unseen
+// lines — otherwise the middle of an expanded stack trace or GenAI prompt
+// would be unreachable (the cursor would leap over the whole block). Reports
+// whether it consumed the movement; g/G and enter (collapse) skip the block.
+func (v *inspectorView) scrollTallRow(delta int) bool {
+	row := v.selectedRow()
+	if row == nil || !v.ready || delta == 0 || row.span <= v.vp.Height {
+		return false
+	}
+	if delta > 0 {
+		last := row.line + row.span - 1
+		if v.vp.YOffset+v.vp.Height > last {
+			return false // block bottom already on screen — move on
+		}
+		v.vp.SetYOffset(min(v.vp.YOffset+delta, last-v.vp.Height+1))
+		return true
+	}
+	if v.vp.YOffset <= row.line {
+		return false // block top already on screen
+	}
+	v.vp.SetYOffset(max(v.vp.YOffset+delta, row.line))
+	return true
 }
 
 // ensureVisible scrolls the viewport so the selected row is on screen.
@@ -689,6 +720,14 @@ func (v *inspectorView) rebuild() {
 	}
 
 	rendered := map[string]bool{}
+
+	// A span's recorded events — exceptions above all — render as a
+	// first-class section before everything else: the verdict comes first.
+	// The raw span.events array (a collapsed JSON blob otherwise) is
+	// consumed by it.
+	if v.addSpanEvents(needle) {
+		markSpanEventsConsumed(rendered)
+	}
 
 	// A GenAI span's exchange renders as a first-class conversation section;
 	// the raw message fields (JSON blobs or flat numbered attributes) are

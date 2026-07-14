@@ -47,6 +47,12 @@ type wfRow struct {
 	start  int64 // ns since epoch
 	end    int64
 	failed bool
+	// excs counts the span's exception events and errInfo carries the minimal
+	// error story (HTTP status, gRPC status name, exception type, or status
+	// message) — a failed row without the "why" sends the reader on a
+	// drill-down the waterfall could have answered.
+	excs    int
+	errInfo string
 	// GenAI annotations: the operation badge replaces the span kind and the
 	// token usage rides on the label — an agent trace reads as its
 	// prompts and tool calls, not as anonymous client/internal spans.
@@ -259,15 +265,22 @@ func buildWaterfall(records []map[string]any) []wfRow {
 			}
 		}
 		row := wfRow{
-			rec:      rec,
-			guide:    guide,
-			label:    label,
-			kind:     catalog.Str(rec, "span.kind"),
-			svc:      catalog.SpanService(rec),
-			start:    parseTimeNs(catalog.Str(rec, "start_time")),
-			end:      parseTimeNs(catalog.Str(rec, "end_time")),
-			failed:   catalog.SpanFailed(rec),
+			rec:   rec,
+			guide: guide,
+			label: label,
+			kind:  catalog.Str(rec, "span.kind"),
+			svc:   catalog.SpanService(rec),
+			start: parseTimeNs(catalog.Str(rec, "start_time")),
+			end:   parseTimeNs(catalog.Str(rec, "end_time")),
+			// SpanErrored, not SpanFailed: the request verdict exists only on
+			// entry spans — the deep span that actually errored carries just
+			// span.status_code == "error" and went unmarked before.
+			failed:   catalog.SpanErrored(rec),
+			excs:     len(catalog.SpanExceptions(rec)),
 			category: catalog.SpanCategory(rec),
+		}
+		if row.failed || row.excs > 0 {
+			row.errInfo = catalog.SpanErrorBrief(rec)
 		}
 		if op := catalog.GenAIOp(rec); op != "" {
 			row.genaiOp = catalog.GenAIOpShort(op)
@@ -318,7 +331,7 @@ func (v *waterfallView) renderBody(width, height int) string {
 
 	// Trace-wide time axis.
 	t0, t1 := v.rows[0].start, v.rows[0].end
-	failed := 0
+	failed, threw := 0, 0
 	for _, r := range v.rows {
 		if r.start != 0 && r.start < t0 {
 			t0 = r.start
@@ -329,6 +342,9 @@ func (v *waterfallView) renderBody(width, height int) string {
 		if r.failed {
 			failed++
 		}
+		if r.excs > 0 {
+			threw++
+		}
 	}
 	total := max64(t1-t0, 1)
 
@@ -336,6 +352,9 @@ func (v *waterfallView) renderBody(width, height int) string {
 		theme.Dim.Render(fmt.Sprintf(" · %d spans", len(v.rows)))
 	if failed > 0 {
 		head += theme.Dim.Render(" · ") + theme.Error.Render(fmt.Sprintf("✗ %d failed", failed))
+	}
+	if threw > 0 {
+		head += theme.Dim.Render(" · ") + theme.Class("warn", fmt.Sprintf("⚡ %d threw", threw))
 	}
 	b.WriteString(head + "\n")
 
@@ -396,8 +415,14 @@ func (v *waterfallView) previewLines(w int) []string {
 
 func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, width, treeW, kindW, svcW, barW, durW int) string {
 	label := r.label
+	if r.excs > 0 {
+		label = "⚡ " + label
+	}
 	if r.failed {
 		label = "✗ " + label
+	}
+	if r.errInfo != "" {
+		label += " ⟨" + r.errInfo + "⟩"
 	}
 	if r.tokens != "" {
 		label += " ⟨" + r.tokens + "⟩"
@@ -444,10 +469,15 @@ func (v *waterfallView) renderRow(r wfRow, selected bool, t0, total int64, width
 	// Bars are colored by service, so one service's spans group visually;
 	// the dim track keeps offsets readable across rows.
 	barStyle := theme.ForKey(r.svc)
-	if r.failed {
+	switch {
+	case r.failed:
 		barStyle = theme.Error
 		tree = theme.Error.Render(tree)
-	} else {
+	case r.excs > 0:
+		// Threw but didn't fail (caught/handled) — warn, not error; the bar
+		// keeps its service color so the grouping story survives.
+		tree = theme.Rule.Render(r.guide) + theme.Class("warn", pad(label, max(treeW-lipgloss.Width(r.guide), 0)))
+	default:
 		tree = theme.Rule.Render(r.guide) + pad(label, max(treeW-lipgloss.Width(r.guide), 0))
 	}
 	bar := theme.Track.Render(strings.Repeat("┄", startCell)) +

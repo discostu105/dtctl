@@ -162,7 +162,7 @@ unbounded). Opened via drill-down they inherit the selection's scope.
 |---|---|---|---|
 | Problems | `:problems`, `:pb` | `dt.davis.problems` | severity, status, title, root cause, impact, age; **the investigation entry point** |
 | Logs | `:logs` | `logs` | live-follow toggle, severity coloring, grouped-by-pattern mode, record inspector |
-| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · server · client · db · rpc · messaging · genai · all, tab/[/] cycle — digits stay global at the top level); trace-ID lookup (`:trace <id>`); waterfall view |
+| Traces | `:traces`, `:spans` | `spans` | span list with lenses (roots · errors · exceptions · server · client · db · rpc · messaging · genai · all, tab/[/] cycle — digits stay global at the top level); errors and exceptions deliberately coexist: errors = spans that *failed* (with an ERROR column carrying the minimal why — HTTP status, gRPC status, exception type), exceptions = spans that *threw* (~98% of which are not failed); trace-ID lookup (`:trace <id>`); waterfall view |
 | Metrics | `:metrics` | `timeseries` | metric browser for the scoped entity; braille/sparkline charts |
 | Events | `:events` | `events`, `dt.davis.events` | deployments, K8s events, Davis events; filterable by kind |
 | Security | `:security`, `:vulns` | `security.events` | vulnerabilities: DSS score + Davis badges (exposure/exploit/fix), open·muted·all lenses, entity pins; enter → tabbed page (overview · entities · attacks · entry points · timeline · details), markdown description via glamour |
@@ -610,8 +610,13 @@ Category attributes come in two semconv eras per tenant (see ../dev/learnings.md
 ```
 
 Tree from `span.parent_id`; bars proportional on the trace's time axis; kind
-and service columns; failed spans (`transaction.is_failed`, falling back to
-its deprecated alias `request.is_failed`) marked `✗` red.
+and service columns; failed spans (`transaction.is_failed` / its deprecated
+alias `request.is_failed`, **or** `span.status_code == "error"` — the request
+verdict exists only on entry spans) marked `✗` red; spans that recorded
+exception events marked `⚡` yellow. Both carry a minimal error brief on the
+row (`⟨HTTP 503⟩`, `⟨DEADLINE_EXCEEDED⟩`, `⟨*fmt.wrapError⟩`, or the status
+message) so the "why" doesn't need a drill-down, and the header counts both:
+`✗ 10 failed · ⚡ 5 threw`.
 `enter` on a span → attribute inspector; `l` → logs with the same `trace.id`
 (both directions of the logs↔traces link); `x` → the span's service entity.
 
@@ -639,6 +644,24 @@ Value rendering rules (implemented in `render.go` / `inspector.go`):
 - **Long values expand by default**: `content`, multi-line strings, and any
   string > 160 chars render as a wrapped block instead of a `▸` preview —
   a log record must be readable without a keypress. `enter` still collapses.
+- **Callstacks collapse behind their top frame**: stack-shaped fields
+  (`code.call_stack`, `code.stacktrace`, `exception.stack_trace` /
+  `exception.stacktrace`, `error.stack_trace`) preview as
+  `top frame ⋯ 24 frames ▸` — the top frame answers "where", the rest is one
+  keypress away. (`vulnerability.stack` is a tech-stack enum, not a stack —
+  suffix-matched.)
+- **Span events are a first-class section**: a span's `span.events` renders
+  as its own section ahead of everything else (instead of a collapsed JSON
+  blob in the `span` group) — exceptions loud, `type — message @ file:line`
+  always visible with the stack trace collapsed beneath; other events
+  (bizevent, feature_flag, message) as compact `k=v` rows that expand
+  per-field. Exceptions surface regardless of the status verdict: ~98% of
+  exception-bearing spans have `span.status_code` null or `ok` (validated
+  live), so nothing else would reveal them.
+- **Tall blocks scroll, not leap**: when the selected row is taller than the
+  screen (an expanded stack trace, a GenAI prompt), `j`/`k` and the page keys
+  scroll the viewport through it before the cursor moves on — the middle is
+  readable. `g`/`G` and `enter` (collapse) remain the skip.
 - **Expanded JSON is row-per-key**: an expanded object/array contributes one
   selectable row per key/element (`details.nested.service`), so `y` yanks the
   leaf (or a container's subtree as compact JSON) and `enter` follows entity

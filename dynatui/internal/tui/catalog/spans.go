@@ -2,6 +2,7 @@ package catalog
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -35,8 +36,20 @@ import (
 var spanLenses = []Lens{
 	{Name: "roots", Desc: "trace root spans (no parent) — one row per trace",
 		Filter: "isNull(span.parent_id)"},
-	{Name: "errors", Desc: "failed spans of any kind",
-		Filter: `span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`},
+	// errors and exceptions deliberately coexist: errors selects spans that
+	// FAILED (status verdict), exceptions spans that THREW — ~98% of
+	// exception-bearing spans are not failed (caught/handled), and the
+	// populations barely overlap (validated live).
+	{Name: "errors", Desc: "failed spans of any kind, with the minimal why",
+		Filter: `span.status_code == "error" or request.is_failed == true or transaction.is_failed == true`,
+		Columns: errorSpanColumns},
+	// Exceptions hide from every status filter: ~98% of exception-bearing
+	// spans have span.status_code null or "ok" (validated live). Iterative
+	// expressions (span.events[][span_event.name]) are rejected inside filter
+	// (ITERATIVE_EXPRESSION_FOR_FILTER), so this string-matches the exact
+	// serialized discriminator — validated against toString(span.events).
+	{Name: "exceptions", Desc: "spans that recorded exception events (mostly non-failed spans)",
+		Filter: `contains(toString(span.events), "\"span_event.name\":\"exception\"")`, Columns: exceptionSpanColumns},
 	{Name: "server", Desc: "incoming requests handled by a service",
 		Filter: `span.kind == "server"`},
 	{Name: "client", Desc: "outgoing calls (HTTP, RPC, DB drivers)",
@@ -130,6 +143,45 @@ var dbSpanColumns = []Column{
 	{Title: "DATABASE", Width: 14, Value: func(rec map[string]any) string {
 		return firstNonEmpty(Str(rec, "db.namespace"), Str(rec, "db.name"))
 	}},
+	spanServiceColumn,
+	spanDurationColumn,
+}
+
+// errorSpanColumns (errors lens): the failure verdict plus the minimal "why"
+// — the HTTP status, gRPC status name, exception type, or status message —
+// on the row itself instead of a drill-down away.
+var errorSpanColumns = []Column{
+	spanStartColumn,
+	{Title: "NAME", Value: spanLabel},
+	{Title: "ERROR", Width: 22, Value: SpanErrorBrief, Class: func(string) string { return "error" }},
+	{Title: "STATUS", Width: 6, Value: spanStatus, Class: classSpanStatus},
+	spanServiceColumn,
+	spanDurationColumn,
+}
+
+// exceptionSpanColumns lead with what was thrown (exceptions lens): the first
+// exception event's type and message. STATUS stays — watching "ok" and null
+// spans throw is the lens's whole point.
+var exceptionSpanColumns = []Column{
+	spanStartColumn,
+	{Title: "EXCEPTION", Width: 28, Value: func(rec map[string]any) string {
+		excs := SpanExceptions(rec)
+		if len(excs) == 0 {
+			return ""
+		}
+		t := ExceptionTypeShort(firstNonEmpty(excs[0].Type, "exception"))
+		if len(excs) > 1 {
+			t += fmt.Sprintf(" +%d", len(excs)-1)
+		}
+		return t
+	}, Class: func(string) string { return "error" }},
+	{Title: "MESSAGE", Value: func(rec map[string]any) string {
+		if excs := SpanExceptions(rec); len(excs) > 0 && excs[0].Message != "" {
+			return excs[0].Message
+		}
+		return spanLabel(rec)
+	}},
+	{Title: "STATUS", Width: 6, Value: spanStatus, Class: classSpanStatus},
 	spanServiceColumn,
 	spanDurationColumn,
 }
@@ -234,6 +286,52 @@ func SpanCategory(rec map[string]any) string {
 		return "messaging"
 	}
 	return ""
+}
+
+// SpanErrored reports whether a span failed by ANY verdict: the Dynatrace
+// request verdict (entry spans only) or the OTel status code. SpanFailed
+// alone misses every non-entry error span — a span with
+// span.status_code == "error" and no request verdict.
+func SpanErrored(rec map[string]any) bool {
+	return SpanFailed(rec) || Str(rec, "span.status_code") == "error"
+}
+
+// SpanErrorBrief is a failed/throwing span's minimal error info for
+// badge-sized slots (waterfall rows): the HTTP error status, the gRPC status
+// name, the exception type, or the status message — first present wins, ""
+// when none is stamped (~2% of failed spans live).
+func SpanErrorBrief(rec map[string]any) string {
+	status := firstNonEmpty(FormatValue(rec["http.response.status_code"]), FormatValue(rec["http.status_code"]))
+	if n, err := strconv.Atoi(status); err == nil && n >= 400 {
+		return "HTTP " + status
+	}
+	if name := GRPCStatusName(FormatValue(rec["rpc.grpc.status_code"])); name != "" && name != "OK" {
+		return name
+	}
+	if excs := SpanExceptions(rec); len(excs) > 0 {
+		return ExceptionTypeShort(firstNonEmpty(excs[0].Type, "exception"))
+	}
+	return compactText(Str(rec, "span.status_message"), 40)
+}
+
+// grpcStatusNames maps numeric gRPC status codes to their canonical names —
+// "DEADLINE_EXCEEDED" places blame, "4" doesn't (demo tenant emits the
+// numeric rpc.grpc.status_code, validated live).
+var grpcStatusNames = map[string]string{
+	"0": "OK", "1": "CANCELLED", "2": "UNKNOWN", "3": "INVALID_ARGUMENT",
+	"4": "DEADLINE_EXCEEDED", "5": "NOT_FOUND", "6": "ALREADY_EXISTS",
+	"7": "PERMISSION_DENIED", "8": "RESOURCE_EXHAUSTED", "9": "FAILED_PRECONDITION",
+	"10": "ABORTED", "11": "OUT_OF_RANGE", "12": "UNIMPLEMENTED", "13": "INTERNAL",
+	"14": "UNAVAILABLE", "15": "DATA_LOSS", "16": "UNAUTHENTICATED",
+}
+
+// GRPCStatusName names a numeric gRPC status code ("" when absent; unknown
+// codes pass through as-is).
+func GRPCStatusName(code string) string {
+	if name, ok := grpcStatusNames[code]; ok {
+		return name
+	}
+	return code
 }
 
 // spanStatus renders the span's failure state: Dynatrace's request verdict

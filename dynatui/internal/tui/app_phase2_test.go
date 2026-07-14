@@ -210,17 +210,29 @@ func TestSpanLensSwitching(t *testing.T) {
 	if tv.Crumb() != "traces·errors" {
 		t.Errorf("crumb = %q, want traces·errors", tv.Crumb())
 	}
+	if got := tv.columns()[2].Title; got != "ERROR" {
+		t.Errorf("errors lens column[2] = %q, want ERROR (the minimal why)", got)
+	}
+	// The exceptions lens: a string-match filter (iterative expressions are
+	// rejected inside DQL filter) and its own thrown-first columns.
+	press(a, key("]"))
+	if !strings.Contains(tv.dql, `span_event.name`) {
+		t.Errorf("] should advance to exceptions lens:\n%s", tv.dql)
+	}
+	if got := tv.columns()[1].Title; got != "EXCEPTION" {
+		t.Errorf("exceptions lens column[1] = %q, want EXCEPTION", got)
+	}
 	press(a, key("]"))
 	if !strings.Contains(tv.dql, `span.kind == "server"`) {
 		t.Errorf("] should advance to server lens:\n%s", tv.dql)
 	}
 	press(a, key("["))
-	if !strings.Contains(tv.dql, `span.status_code == "error"`) {
-		t.Errorf("[ should return to errors lens:\n%s", tv.dql)
+	if !strings.Contains(tv.dql, `span_event.name`) {
+		t.Errorf("[ should return to exceptions lens:\n%s", tv.dql)
 	}
 
 	// The db lens swaps in its curated statement columns.
-	for range 3 { // errors → server → client → db
+	for range 3 { // exceptions → server → client → db
 		press(a, key("]"))
 	}
 	if got := tv.columns()[1].Title; got != "STATEMENT" {

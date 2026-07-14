@@ -335,6 +335,50 @@ attribute available. Facts validated live (box tenant, 2h window, ~280k spans):
   row grid. The table cell primitives (`pad`/`cell` in `table.go`) flatten
   whitespace runs before truncation.
 
+### 1.11b span.events, exceptions, and error visibility
+
+Validated live on both tenants (box 24h, demo 2h windows):
+
+- **`span.events` is an array of records** discriminated by `span_event.name`
+  — `exception`, `bizevent`, `feature_flag`, `message`, or free
+  instrumentation text ("Enqueued", "Fetch cart"). Box emits only exception
+  events; demo has the full zoo (1M+ bizevent, 250k exception per day).
+- **Exceptions mostly ride on NON-failed spans.** ~98% of exception-bearing
+  spans on demo have `span.status_code` null or `"ok"` (a caught-and-handled
+  error, a 404 recorded via `HttpServletResponse.sendError`). Any exception
+  surfacing keyed off the status verdict misses nearly all of them — hence
+  the dedicated exceptions lens, the preview facts, and the waterfall `⚡`
+  badge that are independent of `✗ failed`.
+- **Two exception spellings, both live on one tenant.** Grail/OneAgent
+  serializes `exception.stack_trace` (plus `exception.id`,
+  `exception.file.full`, `exception.line_number`,
+  `exception.is_caused_by_root`); pure-OTel SDK events carry
+  `exception.stacktrace` (701 events on demo had ONLY that spelling).
+  `catalog.SpanEvent.Exception()` coalesces both. Cause chains produce
+  multiple exception events per span (2–31 seen).
+- **Iterative expressions are rejected in `filter`.**
+  `filter in("exception", span.events[][span_event.name])` fails with
+  `ITERATIVE_EXPRESSION_FOR_FILTER`. The exceptions lens instead
+  string-matches the serialized array:
+  `contains(toString(span.events), "\"span_event.name\":\"exception\"")` —
+  `toString` serializes as `{"key":"value", …}` (no space around `:`),
+  validated live. Iterative access works fine after `expand` or in
+  `fieldsAdd`.
+- **The request verdict exists only on entry spans.** A deep span that
+  errored carries just `span.status_code == "error"` — `catalog.SpanErrored`
+  (verdict OR status code) is what the waterfall marks; `SpanFailed` alone
+  left every non-entry error span unmarked.
+- **Minimal error briefs cover ~98% of failed spans**: HTTP status ≥ 400
+  (3.3k of 7.7k failed demo spans carried one) → gRPC status code (numeric;
+  `4` = DEADLINE_EXCEEDED — name it) → exception type → `span.status_message`.
+  Only ~2% of failed spans carry none of the four (`catalog.SpanErrorBrief`).
+- **`code.call_stack` is OneAgent-only and sparse.** 683k demo spans in 4h
+  carry it (box: zero; OTel's `code.stacktrace` spelling: zero anywhere), but
+  per-endpoint only ~2–17% of spans have it stamped. Stack-shaped fields are
+  suffix-matched (`call_stack`/`stack_trace`/`stacktrace`) and collapse
+  behind their top frame — `vulnerability.stack` is a tech-stack enum and
+  must not match.
+
 ### 1.12 The expansion tables (RUM, bizevents, dictionary, dt.system, synthetic)
 
 Validated live for Phase 3.5 (box tenant; synthetic on the demo tenant):

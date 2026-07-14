@@ -120,6 +120,9 @@ func renderString(key, s string, width int) valueView {
 
 	case strings.HasPrefix(s, "http://") || strings.HasPrefix(s, "https://"):
 		return valueView{lines: wrapLines(theme.URL.Render(s), width), compact: theme.URL.Render(s), raw: raw}
+
+	case isStackKey(key) && (strings.ContainsRune(s, '\n') || len(s) > 160):
+		return stackValue(s, width)
 	}
 
 	// A string holding a JSON document (log content, k8s manifests) renders as
@@ -132,6 +135,29 @@ func renderString(key, s string, width int) valueView {
 	}
 
 	return valueView{lines: wrapLines(s, width), compact: compactText(s), raw: raw, block: blockString(key, s)}
+}
+
+// isStackKey matches callstack-shaped fields across the conventions:
+// OneAgent's code.call_stack (683k spans on one tenant, validated live),
+// OTel's code.stacktrace, and the exception/error stack spellings
+// (exception.stack_trace / exception.stacktrace / error.stack_trace).
+// Suffix-matched — vulnerability.stack (a tech-stack enum) must NOT match.
+func isStackKey(key string) bool {
+	key = strings.ToLower(key)
+	return strings.HasSuffix(key, "call_stack") || strings.HasSuffix(key, "stack_trace") ||
+		strings.HasSuffix(key, "stacktrace")
+}
+
+// stackValue renders a callstack collapsed behind its top frame
+// ("frame ⋯ 44 frames") — the top frame answers "where", the other
+// forty lines are one keypress away instead of swamping the record.
+func stackValue(s string, width int) valueView {
+	frames := strings.Split(strings.TrimSpace(s), "\n")
+	compact := compactText(frames[0])
+	if len(frames) > 1 {
+		compact += theme.Dim.Render(fmt.Sprintf("  ⋯ %d frames", len(frames)))
+	}
+	return valueView{lines: wrapLines(s, width), compact: compact, raw: s, block: false}
 }
 
 // maxAutoExpandLines caps default expansion of JSON blocks: a k8s.object

@@ -157,6 +157,17 @@ func spanPreview(rec map[string]any) []PreviewFact {
 	if exited, _ := rec["span.is_exit_by_exception"].(bool); exited {
 		b.classed("exception", "span exited by exception", "error")
 	}
+	// Exceptions recorded in span.events — surfaced regardless of the status
+	// verdict: most exception-bearing spans are NOT failed (validated live,
+	// ~98% had status null/ok), so the verdict line alone would hide them.
+	if excs := SpanExceptions(rec); len(excs) > 0 {
+		label := "exception"
+		if len(excs) > 1 {
+			label = fmt.Sprintf("exceptions ×%d", len(excs))
+		}
+		b.classed(label, firstNonEmpty(excs[0].Type, "recorded"), "error")
+		b.wrapped("thrown", excs[0].Message)
+	}
 	b.wrapped("status message", Str(rec, "span.status_message"))
 	b.add("duration", FormatNs(rec["duration"]))
 	switch {
@@ -188,6 +199,16 @@ func spanPreview(rec map[string]any) []PreviewFact {
 		b.add("peer", spanPeer(rec))
 	case Str(rec, "rpc.service") != "" || Str(rec, "rpc.system") != "":
 		b.add("call", joinNonEmpty(".", Str(rec, "rpc.service"), Str(rec, "rpc.method")))
+		// The gRPC verdict, named — "DEADLINE_EXCEEDED" places blame, "4"
+		// doesn't. OK renders dim: absence of the line must not read as ok.
+		if code := FormatValue(rec["rpc.grpc.status_code"]); code != "" {
+			name := GRPCStatusName(code)
+			class := "error"
+			if name == "OK" {
+				class = "dim"
+			}
+			b.classed("grpc", name, class)
+		}
 		b.add("rpc", Str(rec, "rpc.system"))
 		b.add("peer", spanPeer(rec))
 	case Str(rec, "faas.name") != "":
@@ -200,8 +221,11 @@ func spanPreview(rec map[string]any) []PreviewFact {
 	default:
 		// Both semconv eras: http.request.method/http.response.status_code
 		// (stable OTel) next to http.method/http.status_code (OneAgent).
-		if method := firstNonEmpty(Str(rec, "http.request.method"), Str(rec, "http.method")); method != "" {
-			status := firstNonEmpty(FormatValue(rec["http.response.status_code"]), FormatValue(rec["http.status_code"]))
+		// Status without method still renders — a failed span's 503 must not
+		// vanish because the instrumentation skipped the method.
+		method := firstNonEmpty(Str(rec, "http.request.method"), Str(rec, "http.method"))
+		status := firstNonEmpty(FormatValue(rec["http.response.status_code"]), FormatValue(rec["http.status_code"]))
+		if method != "" || status != "" {
 			b.classed("http", strings.TrimSpace(method+" "+status), classHTTPStatus(status))
 			b.add("url", firstNonEmpty(Str(rec, "url.full"), Str(rec, "http.url"), Str(rec, "url.path"), Str(rec, "http.target")))
 			if Str(rec, "span.kind") == "server" {
