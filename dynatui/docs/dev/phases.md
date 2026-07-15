@@ -375,7 +375,8 @@ pass (all validated live on the demo tenant):
   cycle it in the editor with the live draft stashed — up/down stay cursor
   movement in the multi-line editor. Live progress and renderer cycling
   remain open.
-- **`:ctx <name>` switches contexts in-session** (no argument lists them).
+- **`:ctx <name>` switches contexts in-session** (no argument opens a picker
+  over the configured contexts, the current one highlighted).
   The dynatui main package supplies a wiring factory (`Options.SwitchContext`)
   that reloads the config, points it at the requested context **in memory
   only** — the session-local contract of `--context` holds; an open TUI

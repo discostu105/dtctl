@@ -482,11 +482,14 @@ func TestCtxCommandSwitchesContext(t *testing.T) {
 	a := testApp(t, "hosts")
 	a.opts.Contexts = []string{"test", "prod"}
 	a.opts.SwitchContext = func(name string) (*ContextWiring, error) {
-		if name != "prod" {
+		env := map[string]string{
+			"test": "https://test.example.invalid",
+			"prod": "https://prod.example.invalid",
+		}[name]
+		if env == "" {
 			return nil, fmt.Errorf("context %q not found", name)
 		}
-		return &ContextWiring{ContextName: "prod", Environment: "https://prod.example.invalid",
-			SafetyLevel: "readonly"}, nil
+		return &ContextWiring{ContextName: name, Environment: env, SafetyLevel: "readonly"}, nil
 	}
 	// Tenant-specific state that must not survive the switch.
 	a.pin = &catalog.Entity{ID: "HOST-0000000000000001", Type: "HOST"}
@@ -524,12 +527,37 @@ func TestCtxCommandSwitchesContext(t *testing.T) {
 		t.Fatalf("failed switch must keep the session and report: ctx=%s status=%q", a.opts.ContextName, a.status)
 	}
 
-	// No argument lists what exists instead of switching.
+	// No argument opens the picker over the configured contexts, highlighting
+	// the one the session is on; selecting another switches through the same
+	// session-local path.
 	press(a, key(":"))
 	press(a, key("ctx"))
 	press(a, key("enter"))
-	if !strings.Contains(a.status, "prod") || a.statusErr {
-		t.Fatalf(":ctx without argument should list contexts, status = %q", a.status)
+	if !a.ctxPickActive {
+		t.Fatal("bare :ctx should open the context picker")
+	}
+	if a.opts.Contexts[a.ctxPickSel] != "prod" {
+		t.Fatalf("picker should highlight the current context, got %q", a.opts.Contexts[a.ctxPickSel])
+	}
+	if out := a.View(); !strings.Contains(out, "switch context") || !strings.Contains(out, "current") {
+		t.Fatalf("picker should render the context list with a current badge:\n%s", out)
+	}
+	press(a, key("up")) // "prod" (index 1) → "test" (index 0)
+	press(a, key("enter"))
+	if a.ctxPickActive {
+		t.Fatal("enter should close the picker")
+	}
+	if a.opts.ContextName != "test" {
+		t.Fatalf("picker switch did not apply: ctx = %s", a.opts.ContextName)
+	}
+
+	// esc dismisses the picker without touching the session.
+	press(a, key(":"))
+	press(a, key("ctx"))
+	press(a, key("enter"))
+	press(a, key("esc"))
+	if a.ctxPickActive || a.opts.ContextName != "test" {
+		t.Fatalf("esc must close the picker and keep the context, ctx = %s", a.opts.ContextName)
 	}
 }
 

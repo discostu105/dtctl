@@ -168,6 +168,10 @@ type app struct {
 	// Variable value sub-picker (space on an unbound segment, or 'v').
 	segVar segVarState
 
+	// Context picker overlay (':ctx' without a name).
+	ctxPickActive bool
+	ctxPickSel    int
+
 	hist  *historyStore
 	qhist *queryHistory
 
@@ -522,6 +526,9 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 	if a.segPickActive {
 		return a.updateSegPicker(msg)
 	}
+	if a.ctxPickActive {
+		return a.updateCtxPicker(msg)
+	}
 	if a.helpActive {
 		a.helpActive = false
 		return nil
@@ -685,20 +692,16 @@ func (a *app) jumpTo(name, filter string) tea.Cmd {
 // openNav routes a command-bar navigator jump: no argument opens the
 // overview, an entity id walks from it, anything else browses it as a type
 // (case-insensitive — Smartscape types are upper snake case).
-// switchContext handles :ctx — without an argument it reports where you are
-// and what exists; with a name it rebuilds the tenant wiring in a background
-// command and resets the session onto the new context. Session-local by
-// contract (the same rule as --context / DTCTL_CONTEXT): the switcher never
+// switchContext handles :ctx — without an argument it opens the picker over
+// the configured contexts; with a name it rebuilds the tenant wiring in a
+// background command and resets the session onto the new context. Session-local
+// by contract (the same rule as --context / DTCTL_CONTEXT): the switcher never
 // writes the shared config, so an open TUI cannot repoint scripts and agents
 // using dtctl on the same machine.
 func (a *app) switchContext(arg string) tea.Cmd {
 	arg = strings.TrimSpace(arg)
 	if arg == "" {
-		if len(a.opts.Contexts) > 0 {
-			return status(fmt.Sprintf("context %s — ctx <name> switches: %s",
-				a.opts.ContextName, strings.Join(a.opts.Contexts, " · ")))
-		}
-		return status(fmt.Sprintf("context %s — ctx <name> switches (session-local)", a.opts.ContextName))
+		return a.openContextPicker()
 	}
 	if a.opts.SwitchContext == nil {
 		return statusErr("context switching is not wired up in this session")
@@ -1277,6 +1280,9 @@ func (a *app) renderBody() string {
 	if a.segPickActive {
 		return overlay(a.width, bodyH, a.renderSegPicker())
 	}
+	if a.ctxPickActive {
+		return overlay(a.width, bodyH, a.renderCtxPicker())
+	}
 	if a.cmdActive {
 		return lipgloss.Place(a.width, bodyH, lipgloss.Center, lipgloss.Position(0.2),
 			theme.OverlayBox.Render(a.renderCmdPalette()))
@@ -1298,6 +1304,8 @@ func (a *app) renderFooter() string {
 		hints = []keyHint{{"space", "toggle"}, {"/", "filter"}, {"enter", "bind"}, {"esc", "back"}}
 	case a.segPickActive:
 		hints = []keyHint{{"space", "toggle"}, {"v", "values"}, {"enter", "apply"}, {"c", "clear"}, {"esc", "cancel"}}
+	case a.ctxPickActive:
+		hints = []keyHint{{"enter", "switch"}, {"j/k", "move"}, {"esc", "cancel"}}
 	case a.top().InputActive():
 		// A view's text input (filter, search, query editor) is focused — the
 		// global keys would just type characters, so show only the view's own
@@ -1338,7 +1346,7 @@ func (a *app) renderHelp() string {
 		keys  []keyHint
 	}{
 		{"Navigation", []keyHint{
-			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>, :nav <type|id|name>, :ctx <name>)"},
+			{":", "command bar — fuzzy view names, args filter (:pods checkout, :trace <id>, :nav <type|id|name>, :ctx [name] — bare :ctx opens a picker)"},
 			{"enter", "detail / drill into children / follow entity link / expand value / waterfall / session timeline"},
 			{"0-9", "global bookmarks: 0 home · 1 problems · 2 services · 3 hosts · 4 pods · 5 logs · 6 traces · 7 workloads · 8 events · 9 aws — on an entered page 1-9 address the innermost numbered strip: its tabs, or the active tab's lens strip when it shows one (0 still jumps home, esc restores all bookmarks)"},
 			{"esc / -", "back / toggle last two views"},

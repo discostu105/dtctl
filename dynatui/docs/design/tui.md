@@ -195,7 +195,8 @@ This is the heart of the design. Navigation has four mechanisms that compose:
 - `:` opens the command bar; typing fuzzy-matches view names and aliases
   (`:po` → pods, `:sv` → services) with an inline completion popup.
 - Arguments narrow the jump: `:logs error`, `:pods checkout`, `:trace <id>`,
-  `:ctx prod-eu`.
+  `:ctx prod-eu`. A bare `:ctx` (no name) opens a picker over the configured
+  contexts with the current one marked.
 - `:q` quits, `:help` opens the key reference.
 
 ### 2. Drill-down vocabulary — the same keys everywhere
