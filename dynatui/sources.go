@@ -29,10 +29,36 @@ func tuiSources(c *session.Client) map[string]tui.Source {
 	}
 }
 
+// The source constructors take the slice of their handler they actually
+// call, as interfaces, so the adaptation logic — record flattening, the SLO
+// evaluation fan-out, pattern sorting — tests without HTTP.
+
+// sloAPI is the slice of *slo.Handler sloSource uses.
+type sloAPI interface {
+	List(filter string, chunkSize int64) (*slo.SLOList, error)
+	Evaluate(id string) (*slo.EvaluationResponse, error)
+	PollEvaluation(token string, timeoutMs int) (*slo.EvaluationResponse, error)
+}
+
+// detectorAPI is the slice of *anomalydetector.Handler detectorSource uses.
+type detectorAPI interface {
+	List(opts anomalydetector.ListOptions) ([]anomalydetector.AnomalyDetector, error)
+}
+
+// analyzerAPI is the slice of *analyzer.Handler logPatternSource uses.
+type analyzerAPI interface {
+	ExecuteAndWait(ctx context.Context, name string, input map[string]interface{}, maxWaitSeconds int) (*analyzer.ExecuteResult, error)
+}
+
+// segmentAPI is the slice of *segment.Handler segmentSource uses.
+type segmentAPI interface {
+	List() (*segment.FilterSegmentList, error)
+}
+
 // segmentSource adapts the segment resource handler to the TUI's picker and
 // workspace seeding (the handler's List already requests the VARIABLES
 // add-field). Construction here keeps internal/tui free of HTTP.
-func segmentSource(h *segment.Handler) tui.SegmentLister {
+func segmentSource(h segmentAPI) tui.SegmentLister {
 	return func(_ context.Context) ([]tui.SegmentOption, error) {
 		list, err := h.List()
 		if err != nil {
@@ -69,7 +95,7 @@ const sloEvalTimeout = 12 * time.Second
 // live view runs the evaluation endpoint per SLO and merges the result of
 // the first criteria into the record. Evaluation failures degrade to blank
 // status cells, never errors: the list is the primary content.
-func sloSource(h *slo.Handler) tui.Source {
+func sloSource(h sloAPI) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, dql string) ([]map[string]any, error) {
 		list, err := h.List("", 400)
 		if err != nil {
@@ -120,7 +146,7 @@ func sloSource(h *slo.Handler) tui.Source {
 
 // mergeSLOEvaluation runs one SLO's evaluation (with polling) and folds the
 // first result into the record. Errors leave the record untouched.
-func mergeSLOEvaluation(ctx context.Context, h *slo.Handler, rec map[string]any, id string) {
+func mergeSLOEvaluation(ctx context.Context, h sloAPI, rec map[string]any, id string) {
 	resp, err := h.Evaluate(id)
 	if err != nil {
 		return
@@ -165,7 +191,7 @@ func mergeSLOEvaluation(ctx context.Context, h *slo.Handler, rec map[string]any,
 
 // detectorSource lists Davis anomaly detectors (Settings API), flattened for
 // the table with the raw settings value kept for the inspector.
-func detectorSource(h *anomalydetector.Handler) tui.Source {
+func detectorSource(h detectorAPI) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, dql string) ([]map[string]any, error) {
 		detectors, err := h.List(anomalydetector.ListOptions{})
 		if err != nil {
@@ -194,7 +220,7 @@ const logPatternTimeout = 120
 // logPatternSource executes the Davis log-pattern analyzer over the composed
 // logs query (dql — scope and server searches already injected by the view)
 // and returns one record per extracted pattern, sorted by match count.
-func logPatternSource(h *analyzer.Handler) tui.Source {
+func logPatternSource(h analyzerAPI) tui.Source {
 	return func(ctx context.Context, scope catalog.Scope, dql string) ([]map[string]any, error) {
 		if strings.TrimSpace(dql) == "" {
 			return nil, fmt.Errorf("log-pattern extraction needs a logs query")
