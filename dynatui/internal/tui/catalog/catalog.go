@@ -4,6 +4,31 @@
 // and drill-down targets. Adding a view is configuration, not plumbing (see
 // docs/design/tui.md, "The ViewSpec catalog"). The package is free of any
 // TUI framework dependency so query composition can be tested as plain data.
+//
+// # Curating an entity type
+//
+// Per-entity-type behavior is dispatched at these points — when curating a
+// new Smartscape type, walk this list (most are optional; the scope filters
+// derive from the type name and often need nothing):
+//
+//   - KeyFacts (detail.go): the detail page's curated facts panel.
+//   - MetricsFor (specs.go): the canned metric charts ('m'); uncurated
+//     types fall back to the metric explorer automatically.
+//   - smartscapeField / legacyField / k8sNameFilter (catalog.go): how
+//     signal records reference the entity — smartscapeField derives from
+//     the type name (GENAI_* excepted), the other two enumerate the
+//     live-validated exceptions.
+//   - SpanScopable (catalog.go): whether the 's' spans drill is offered —
+//     prefix rules (K8S_*, GENAI_*) keep new subtypes covered.
+//   - k8sScopeFilter (k8s.go): K8s list narrowing by containment.
+//   - VulnEntityFilter (security.go): security.events scoping — the ID-era
+//     mapping is per-type and live-validated; unknown types refuse.
+//   - PreviewTitle/PreviewFacts (preview.go) and PriorityFields
+//     (detail.go): record-kind curation for the preview pane and inspector.
+//
+// These stay separate switches on purpose: each encodes independently
+// live-validated semantics (several with open-ended prefix rules a keyed
+// table would lose), and most types need only a subset.
 package catalog
 
 import (
