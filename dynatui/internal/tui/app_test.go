@@ -1051,3 +1051,14 @@ func deliverView(v viewModel, cmd tea.Cmd) {
 	}
 	deliverView(v, v.Update(msg))
 }
+
+func podRow(name, ns, phase string, restarts float64) map[string]any {
+	return map[string]any{
+		"id": "K8S_POD-" + name, "name": name, "namespace": ns, "phase": phase,
+		"restarts": restarts, "ready": "1", "total": "1",
+		"created": "2026-07-01T10:00:00.000000000Z",
+	}
+}
+func serviceRow() map[string]any {
+	return map[string]any{"id": "SERVICE-1", "name": "checkout", "type": "SERVICE"}
+}

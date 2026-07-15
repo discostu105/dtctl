@@ -425,3 +425,32 @@ func TestNavFilterNarrowsAndEscClears(t *testing.T) {
 		t.Fatalf("esc must clear the filter first: rows = %d top = %T", len(v.rows), a.top())
 	}
 }
+
+// TestNavigatorSpacePagesZFolds: space pages down like every other list; z
+// folds the selected group.
+func TestNavigatorSpacePagesZFolds(t *testing.T) {
+	a := testApp(t, "pods")
+	seedRows(t, a, []map[string]any{podRow("checkout-1", "shop", "Running", 0)})
+	press(a, key("X"))
+	v := seedNav(t, a, []map[string]any{
+		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
+		edgeRec("SERVICE-1", "SERVICE", "routes_to", "K8S_POD-checkout-1", "K8S_POD"),
+	})
+	disablePreview(a)
+
+	press(a, key("j")) // onto the runs_on group row
+	rows := len(v.rows)
+	press(a, key("z"))
+	if len(v.rows) >= rows {
+		t.Errorf("z should fold the group (%d → %d rows)", rows, len(v.rows))
+	}
+	press(a, key("z")) // unfold again
+	before := v.cursor
+	press(a, key(" "))
+	if len(v.rows) != rows {
+		t.Error("space must not fold groups anymore")
+	}
+	if v.cursor <= before {
+		t.Errorf("space should page the cursor down (%d → %d)", before, v.cursor)
+	}
+}

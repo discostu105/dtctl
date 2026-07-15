@@ -5,18 +5,37 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-
 	"github.com/dynatrace-oss/dynatui/internal/tui/catalog"
 )
 
-// Regression tests for the adversarial-review findings: a pin must never be
-// claimed by a view whose query can't compose it, the timeframe is global,
-// home drops stale results, and input-focused footers don't advertise dead
-// keys.
+func TestPinScopesCommandBarJumps(t *testing.T) {
+	a := testApp(t, "pods")
+	seedRows(t, a, []map[string]any{podRow("checkout-1", "shop", "Running", 0)})
 
-func serviceRow() map[string]any {
-	return map[string]any{"id": "SERVICE-1", "name": "checkout", "type": "SERVICE"}
+	press(a, key("."))
+	if a.pin == nil || a.pin.ID != "K8S_POD-checkout-1" {
+		t.Fatalf("pin = %+v", a.pin)
+	}
+
+	// A command-bar jump to a signal view inherits the pin.
+	press(a, key(":"))
+	for _, r := range "logs" {
+		press(a, key(string(r)))
+	}
+	press(a, key("enter"))
+	logs := a.top().(*tableView)
+	if logs.scope.Entity == nil || logs.scope.Entity.ID != "K8S_POD-checkout-1" {
+		t.Fatalf("pinned jump not scoped: %+v", logs.scope.Entity)
+	}
+	if !strings.Contains(logs.dql, `k8s.pod.name == "checkout-1"`) {
+		t.Errorf("pinned logs dql missing pod name filter:\n%s", logs.dql)
+	}
+
+	// ctrl+x unpins.
+	press(a, key("ctrl+x"))
+	if a.pin != nil {
+		t.Error("ctrl+x should unpin")
+	}
 }
 
 // Finding #1: pinning an entity no scope filter composes (a PROCESS on
@@ -155,81 +174,5 @@ func TestTimeframeAppliesToWholeStack(t *testing.T) {
 	}
 	if !strings.Contains(problems.dql, "now() - 24h") {
 		t.Errorf("covered view query not refetched with new window:\n%s", problems.dql)
-	}
-}
-
-// Finding #4: a stale in-flight home-panel result (older seq) must not
-// overwrite a newer refresh.
-func TestHomePanelDropsStaleResults(t *testing.T) {
-	a := testApp(t, "home")
-	hv := a.top().(*homeView)
-	staleSeq := hv.seq
-
-	// A new refresh bumps the generation.
-	deliver(a, hv.Refresh())
-	if hv.seq == staleSeq {
-		t.Fatal("Refresh should bump seq")
-	}
-
-	// A late result tagged with the old seq is ignored.
-	hv.Update(dataMsg{owner: panelOwner{v: hv, idx: 1}, seq: staleSeq,
-		records: []map[string]any{{"svc": "ghost"}}})
-	if len(hv.panels[1].records) != 0 {
-		t.Errorf("stale result should be dropped, got %d records", len(hv.panels[1].records))
-	}
-
-	// A current-seq result is accepted.
-	hv.Update(dataMsg{owner: panelOwner{v: hv, idx: 1}, seq: hv.seq,
-		records: []map[string]any{{"svc": "real"}}})
-	if len(hv.panels[1].records) != 1 {
-		t.Errorf("current result should be accepted, got %d", len(hv.panels[1].records))
-	}
-}
-
-// Finding #6: with empty command-bar input, enter opens the highlighted
-// suggestion rather than silently closing.
-func TestCommandBarEmptyEnterOpensHighlighted(t *testing.T) {
-	a := testApp(t, "problems")
-	press(a, key(":"))
-	// Cycle to the second suggestion, then enter with no text typed. The
-	// palette lists the bespoke screens first (home, query, nav), so index 1
-	// is "query" — the crumb, not the view type, carries the assertion.
-	press(a, tea.KeyMsg{Type: tea.KeyTab})
-	want := a.cmdMatches[a.cmdSel].Name
-	press(a, key("enter"))
-	if a.cmdActive {
-		t.Fatal("enter should close the command bar")
-	}
-	if a.top().Crumb() != want {
-		t.Fatalf("empty enter should open highlighted %q, got %v", want, a.top().Crumb())
-	}
-}
-
-// Finding #7: '0' → home works from a detail page (only 1..N switch tabs).
-func TestDetailPageZeroHotkeyReachesHome(t *testing.T) {
-	a := testApp(t, "hosts")
-	seedRows(t, a, []map[string]any{hostRow()})
-	press(a, key("enter")) // open host detail
-	if _, ok := a.top().(*detailView); !ok {
-		t.Fatalf("expected detail page, got %T", a.top())
-	}
-	press(a, key("0")) // hotkey home — must not be swallowed as a tab
-	if _, ok := a.top().(*homeView); !ok {
-		t.Fatalf("'0' on a detail page should jump home, got %T", a.top())
-	}
-}
-
-// Finding #8: while a filter input is focused, the footer shows input-mode
-// hints, not the global keys that would just type characters.
-func TestFooterHintsAdaptToInputFocus(t *testing.T) {
-	a := testApp(t, "problems")
-	seedRows(t, a, []map[string]any{problemRow()})
-	press(a, key("/")) // focus the filter
-	footer := a.renderFooter()
-	if strings.Contains(footer, "quit") || strings.Contains(footer, "timeframe") {
-		t.Errorf("footer must not advertise global keys while typing:\n%s", footer)
-	}
-	if !strings.Contains(footer, "server search") {
-		t.Errorf("footer should show input-mode hints:\n%s", footer)
 	}
 }

@@ -341,3 +341,15 @@ func TestPGIIDPrefixSwap(t *testing.T) {
 		t.Errorf("pgiID legacy passthrough = %q", got)
 	}
 }
+
+func TestVulnsQueryFloorsLookbackAt24h(t *testing.T) {
+	spec := Lookup("vulnerabilities")
+	short := spec.Query(Scope{Timeframe: Timeframe{Label: "2h", Dur: 2 * time.Hour}})
+	if !strings.Contains(short, "from:now() - 24h") {
+		t.Errorf("short window should floor to 24h:\n%s", short)
+	}
+	long := spec.Query(Scope{Timeframe: Timeframe{Label: "7d", Dur: 7 * 24 * time.Hour}})
+	if !strings.Contains(long, "from:now() - 7d") {
+		t.Errorf("long window should stay:\n%s", long)
+	}
+}

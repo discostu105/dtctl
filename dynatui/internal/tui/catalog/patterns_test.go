@@ -78,3 +78,46 @@ func TestLogsPatternQuery(t *testing.T) {
 		t.Error("unpatterned scope must keep standard columns")
 	}
 }
+
+func TestPatternsQueryShape(t *testing.T) {
+	pod := Entity{ID: "K8S_POD-1", Name: "checkout-1", Type: "K8S_POD"}
+	dql := patternsSpec.Query(Scope{Timeframe: DefaultTimeframe, Entity: &pod,
+		TraceID: "abc123", Pattern: `'x' DQS:f_1`})
+	if !strings.Contains(dql, `k8s.pod.name == "checkout-1"`) {
+		t.Errorf("patterns must compose the entity scope:\n%s", dql)
+	}
+	// The full list scope carries over — trace- and pattern-narrowed logs
+	// views must analyze their own subset, not the whole tenant.
+	if !strings.Contains(dql, `trace_id == "abc123"`) || !strings.Contains(dql, "matchesPattern(content,") {
+		t.Errorf("patterns must compose trace and pattern scope:\n%s", dql)
+	}
+	// The projection the analyzer schema demands is appended by the source
+	// AFTER facet injection — a projection inside Query would null every
+	// faceted field (found in review). LogPatternInput adds it last.
+	if strings.Contains(dql, "| fields timestamp, content") {
+		t.Errorf("patterns Query must not project (facets inject before the tail):\n%s", dql)
+	}
+	input := LogPatternInput(injectFacet(dql))
+	if !strings.HasSuffix(input, "| fields timestamp, content") {
+		t.Errorf("LogPatternInput must append the schema projection last:\n%s", input)
+	}
+	if strings.Contains(input, "\n") {
+		t.Errorf("LogPatternInput must flatten to one line:\n%s", input)
+	}
+	if patternsSpec.API != "log-patterns" {
+		t.Errorf("patterns view must run through the log-patterns source, got %q", patternsSpec.API)
+	}
+}
+
+// injectFacet simulates the table view's facet injection so the test
+// proves faceted fields survive until the source's appended projection.
+func injectFacet(dql string) string {
+	return InjectStages(dql, []string{`| filter loglevel == "ERROR"`})
+}
+
+func TestLogsPatternScope(t *testing.T) {
+	dql := logsSpec.Query(Scope{Timeframe: DefaultTimeframe, Pattern: `IPADDR:ip ' - - '`})
+	if !strings.Contains(dql, `| filter matchesPattern(content, "IPADDR:ip ' - - '")`) {
+		t.Errorf("logs must compose the pattern scope:\n%s", dql)
+	}
+}

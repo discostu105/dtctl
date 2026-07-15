@@ -210,3 +210,78 @@ func TestFormatHelpers(t *testing.T) {
 		t.Error("Age should be empty for unparseable input")
 	}
 }
+
+// TestLookupResolvesShortAliases pins the command-bar shorthand for every
+// registered view family.
+func TestLookupResolvesShortAliases(t *testing.T) {
+	cases := map[string]string{
+		"po":    "pods",
+		"pods":  "pods",
+		"wl":    "workloads",
+		"ns":    "namespaces",
+		"no":    "nodes",
+		"cl":    "clusters",
+		"tr":    "traces",
+		"spans": "traces",
+		"cloud": "aws",
+		"topo":  "entities",
+		"fe":    "frontends",
+		"db":    "databases",
+		"ai":    "genai",
+		"vulns": "vulnerabilities",
+		"res":   "resources",
+		"se":    "sessions", "ue": "userevents", "biz": "bizevents",
+		"dict": "dictionary", "models": "dictionary", "fields": "dictionary",
+		"tbl": "tables",
+		"bkt": "buckets", "lookups": "files", "syn": "synthetic",
+		"slo": "slos", "ad": "detectors", "pat": "patterns", "runs": "executions",
+	}
+	for input, want := range cases {
+		spec := Lookup(input)
+		if spec == nil || spec.Name != want {
+			t.Errorf("Lookup(%q) = %v, want %q", input, spec, want)
+		}
+	}
+}
+
+func TestLogsQueryScopesByTraceAndK8sNames(t *testing.T) {
+	spec := Lookup("logs")
+
+	byTrace := spec.Query(Scope{Timeframe: Timeframe{Label: "2h"}, TraceID: "abc123"})
+	if !strings.Contains(byTrace, `| filter trace_id == "abc123"`) {
+		t.Errorf("trace scope not composed (plain string, no toUid on logs):\n%s", byTrace)
+	}
+
+	// Log records carry k8s.* names but no dt.smartscape.k8s_* fields — the
+	// filter must match by name too, or pod-scoped logs are silently empty.
+	byPod := spec.Query(fixtureScope(&Entity{ID: "K8S_POD-42", Name: "checkout-1", Type: "K8S_POD"}))
+	if !strings.Contains(byPod, `k8s.pod.name == "checkout-1"`) {
+		t.Errorf("pod name filter missing:\n%s", byPod)
+	}
+	byWL := spec.Query(fixtureScope(&Entity{ID: "K8S_DEPLOYMENT-1", Name: "checkout", Type: "K8S_DEPLOYMENT"}))
+	if !strings.Contains(byWL, `(k8s.workload.kind == "deployment" and k8s.workload.name == "checkout")`) {
+		t.Errorf("workload name filter missing:\n%s", byWL)
+	}
+}
+
+func TestEnrichSpecs(t *testing.T) {
+	tf := Timeframe{Label: "2h", Dur: 2 * time.Hour}
+
+	hosts := Lookup("hosts").Enrich
+	q := hosts.Query(tf, []string{"HOST-1", "HOST-2"})
+	if !strings.Contains(q, `in(dt.smartscape.host, {toSmartscapeId("HOST-1"), toSmartscapeId("HOST-2")})`) {
+		t.Errorf("host enrichment must wrap ids in toSmartscapeId:\n%s", q)
+	}
+	if !strings.Contains(q, "interval: 5m") {
+		t.Errorf("2h window should use 5m buckets:\n%s", q)
+	}
+
+	pods := Lookup("pods").Enrich
+	q = pods.Query(tf, []string{"pod-a"})
+	if !strings.Contains(q, `in(k8s.pod.name, {"pod-a"})`) {
+		t.Errorf("pod enrichment joins by plain pod name:\n%s", q)
+	}
+	if pods.Key(map[string]any{"name": "pod-a"}) != "pod-a" || pods.By != "k8s.pod.name" {
+		t.Error("pod enrichment join key mismatch")
+	}
+}
