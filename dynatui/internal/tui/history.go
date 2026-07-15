@@ -218,152 +218,259 @@ func (h *historyStore) save() {
 // pageRefOf describes a live view as a restorable page. Every stack view kind
 // is covered; the inner views (detail tabs, the query results table) never
 // sit on the stack themselves.
+// historyCodec pairs one view kind's snapshot and rebuild directions, so
+// adding a stack view means one entry here — the two halves can't drift
+// apart in separate switches. ref snapshots a live view into its identity
+// descriptor (returning false for other view types; Kind is stamped by the
+// registry); make rebuilds a fresh view from a persisted descriptor.
+type historyCodec struct {
+	kind string
+	ref  func(v viewModel) (pageRef, bool)
+	make func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error)
+}
+
+var historyCodecs = []historyCodec{
+	{kind: "home",
+		ref: func(v viewModel) (pageRef, bool) {
+			hv, ok := v.(*homeView)
+			if !ok {
+				return pageRef{}, false
+			}
+			return pageRef{Crumb: hv.Crumb()}, true
+		},
+		make: func(a *app, _ pageRef, tf catalog.Timeframe) (viewModel, error) {
+			return newHomeView(a.ds, tf), nil
+		}},
+	{kind: "table",
+		ref: func(v viewModel) (pageRef, bool) {
+			tv, ok := v.(*tableView)
+			if !ok {
+				return pageRef{}, false
+			}
+			ref := pageRef{Crumb: tv.Crumb(), View: tv.spec.Name,
+				Filter: tv.filter, Searches: tv.searches, Facets: tv.facets,
+				Arg: tv.scope.Arg, Lens: tv.scope.Lens, TraceID: tv.scope.TraceID,
+				Pattern: tv.scope.Pattern}
+			if tv.scope.Entity != nil {
+				e := *tv.scope.Entity
+				ref.Entity = &e
+			}
+			return ref, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			spec := catalog.Lookup(ref.View)
+			if spec == nil {
+				return nil, fmt.Errorf("unknown view %q", ref.View)
+			}
+			scope := catalog.Scope{
+				Timeframe: tf, Arg: ref.Arg, TraceID: ref.TraceID, Entity: ref.Entity,
+				Pattern: ref.Pattern}
+			if ref.Lens > 0 && ref.Lens < len(spec.Lenses) {
+				scope.Lens = ref.Lens
+			}
+			v := newTableView(a.ds, spec, scope)
+			if ref.Filter != "" {
+				v.setFilter(ref.Filter)
+			}
+			v.searches = ref.Searches
+			if ref.Search != "" { // an entry saved before searches stacked
+				v.searches = append(v.searches, ref.Search)
+			}
+			v.facets = ref.Facets
+			return v, nil
+		}},
+	{kind: "query",
+		ref: func(v viewModel) (pageRef, bool) {
+			qv, ok := v.(*queryView)
+			if !ok {
+				return pageRef{}, false
+			}
+			dql := qv.current
+			if dql == "" {
+				dql = strings.TrimSpace(qv.editor.Value())
+			}
+			return pageRef{Crumb: qv.Crumb(), DQL: dql}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			v := newQueryView(a.ds, ref.DQL, tf, a.qhist)
+			if ref.DQL != "" {
+				// Arrive on results, not the editor: Init re-runs a submitted query.
+				v.current = ref.DQL
+				v.editing = false
+				v.editor.Blur()
+			}
+			return v, nil
+		}},
+	{kind: "detail",
+		ref: func(v viewModel) (pageRef, bool) {
+			dv, ok := v.(*detailView)
+			if !ok {
+				return pageRef{}, false
+			}
+			e := dv.entity
+			return pageRef{Crumb: dv.Crumb(), Entity: &e}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			if ref.Entity == nil {
+				return nil, fmt.Errorf("detail page without entity")
+			}
+			return newDetailView(a.ds, *ref.Entity, nil, tf), nil
+		}},
+	{kind: "metrics",
+		ref: func(v viewModel) (pageRef, bool) {
+			mv, ok := v.(*metricsView)
+			if !ok {
+				return pageRef{}, false
+			}
+			e := mv.entity
+			return pageRef{Crumb: mv.Crumb(), Entity: &e}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			if ref.Entity == nil {
+				return nil, fmt.Errorf("metrics page without entity")
+			}
+			return newMetricsView(a.ds, *ref.Entity, tf), nil
+		}},
+	{kind: "relations",
+		ref: func(v viewModel) (pageRef, bool) {
+			rv, ok := v.(*relationsView)
+			if !ok {
+				return pageRef{}, false
+			}
+			e := rv.entity
+			return pageRef{Crumb: rv.Crumb(), Entity: &e}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			if ref.Entity == nil {
+				return nil, fmt.Errorf("relations page without entity")
+			}
+			return newRelationsView(a.ds, *ref.Entity, tf), nil
+		}},
+	{kind: "nav",
+		ref: func(v viewModel) (pageRef, bool) {
+			nv, ok := v.(*navView)
+			if !ok {
+				return pageRef{}, false
+			}
+			ref := pageRef{Crumb: nv.Crumb(), View: navModeName(nv.mode), Arg: nv.typ}
+			if nv.mode == navBrowser && nv.search != "" {
+				ref.View, ref.Arg = "search", nv.search
+			}
+			if nv.mode == navWalk {
+				e := nv.root
+				ref.Entity = &e
+				ref.Trail = append([]catalog.Entity{}, nv.trail...)
+			}
+			return ref, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			switch ref.View {
+			case "walk":
+				if ref.Entity == nil {
+					return nil, fmt.Errorf("walk page without entity")
+				}
+				v := newNavWalkView(a.ds, *ref.Entity, tf)
+				v.trail = append([]catalog.Entity{}, ref.Trail...)
+				return v, nil
+			case "types":
+				if ref.Arg == "" {
+					return nil, fmt.Errorf("type browser without a type")
+				}
+				return newNavBrowserView(a.ds, ref.Arg, tf), nil
+			case "search":
+				if ref.Arg == "" {
+					return nil, fmt.Errorf("name search without a term")
+				}
+				return newNavSearchView(a.ds, ref.Arg, tf), nil
+			default:
+				return newNavView(a.ds, tf), nil
+			}
+		}},
+	{kind: "waterfall",
+		ref: func(v viewModel) (pageRef, bool) {
+			wv, ok := v.(*waterfallView)
+			if !ok {
+				return pageRef{}, false
+			}
+			return pageRef{Crumb: wv.Crumb(), TraceID: wv.traceID}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			return newWaterfallView(a.ds, ref.TraceID, "", tf), nil
+		}},
+	{kind: "timeline",
+		ref: func(v viewModel) (pageRef, bool) {
+			tv, ok := v.(*timelineView)
+			if !ok {
+				return pageRef{}, false
+			}
+			return pageRef{Crumb: tv.Crumb(), Arg: tv.sessionID, Lens: tv.lens}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			v := newTimelineView(a.ds, ref.Arg, nil, tf)
+			if ref.Lens > 0 && ref.Lens < len(catalog.SessionTimelineLenses) {
+				v.lens = ref.Lens
+			}
+			return v, nil
+		}},
+	{kind: "problem",
+		ref: func(v viewModel) (pageRef, bool) {
+			pv, ok := v.(*problemView)
+			if !ok {
+				return pageRef{}, false
+			}
+			return pageRef{Crumb: pv.Crumb(), Rec: pv.rec}, true
+		},
+		make: func(a *app, ref pageRef, _ catalog.Timeframe) (viewModel, error) {
+			if ref.Rec == nil {
+				return nil, fmt.Errorf("problem page without record")
+			}
+			return newProblemView(a.ds, ref.Rec, time.Now()), nil
+		}},
+	{kind: "vulnerability",
+		ref: func(v viewModel) (pageRef, bool) {
+			vv, ok := v.(*vulnerabilityView)
+			if !ok {
+				return pageRef{}, false
+			}
+			return pageRef{Crumb: vv.Crumb(), Rec: vv.rec}, true
+		},
+		make: func(a *app, ref pageRef, tf catalog.Timeframe) (viewModel, error) {
+			if ref.Rec == nil {
+				return nil, fmt.Errorf("vulnerability page without record")
+			}
+			return newVulnerabilityView(a.ds, ref.Rec, tf), nil
+		}},
+	{kind: "inspector",
+		ref: func(v viewModel) (pageRef, bool) {
+			iv, ok := v.(*inspectorView)
+			if !ok {
+				return pageRef{}, false
+			}
+			return pageRef{Crumb: iv.Crumb(), Title: iv.title, Rec: iv.rec}, true
+		},
+		make: func(a *app, ref pageRef, _ catalog.Timeframe) (viewModel, error) {
+			return newInspectorView(a.ds, ref.Title, ref.Rec), nil
+		}},
+}
+
+// pageRefOf snapshots a live view through the codec registry ("" ok for
+// view types that don't persist, e.g. page tabs).
 func pageRefOf(v viewModel) (pageRef, bool) {
-	switch v := v.(type) {
-	case *homeView:
-		return pageRef{Kind: "home", Crumb: v.Crumb()}, true
-	case *tableView:
-		ref := pageRef{Kind: "table", Crumb: v.Crumb(), View: v.spec.Name,
-			Filter: v.filter, Searches: v.searches, Facets: v.facets,
-			Arg: v.scope.Arg, Lens: v.scope.Lens, TraceID: v.scope.TraceID,
-			Pattern: v.scope.Pattern}
-		if v.scope.Entity != nil {
-			e := *v.scope.Entity
-			ref.Entity = &e
+	for _, c := range historyCodecs {
+		if ref, ok := c.ref(v); ok {
+			ref.Kind = c.kind
+			return ref, true
 		}
-		return ref, true
-	case *queryView:
-		dql := v.current
-		if dql == "" {
-			dql = strings.TrimSpace(v.editor.Value())
-		}
-		return pageRef{Kind: "query", Crumb: v.Crumb(), DQL: dql}, true
-	case *detailView:
-		e := v.entity
-		return pageRef{Kind: "detail", Crumb: v.Crumb(), Entity: &e}, true
-	case *metricsView:
-		e := v.entity
-		return pageRef{Kind: "metrics", Crumb: v.Crumb(), Entity: &e}, true
-	case *relationsView:
-		e := v.entity
-		return pageRef{Kind: "relations", Crumb: v.Crumb(), Entity: &e}, true
-	case *navView:
-		ref := pageRef{Kind: "nav", Crumb: v.Crumb(), View: navModeName(v.mode), Arg: v.typ}
-		if v.mode == navBrowser && v.search != "" {
-			ref.View, ref.Arg = "search", v.search
-		}
-		if v.mode == navWalk {
-			e := v.root
-			ref.Entity = &e
-			ref.Trail = append([]catalog.Entity{}, v.trail...)
-		}
-		return ref, true
-	case *waterfallView:
-		return pageRef{Kind: "waterfall", Crumb: v.Crumb(), TraceID: v.traceID}, true
-	case *timelineView:
-		return pageRef{Kind: "timeline", Crumb: v.Crumb(), Arg: v.sessionID, Lens: v.lens}, true
-	case *problemView:
-		return pageRef{Kind: "problem", Crumb: v.Crumb(), Rec: v.rec}, true
-	case *vulnerabilityView:
-		return pageRef{Kind: "vulnerability", Crumb: v.Crumb(), Rec: v.rec}, true
-	case *inspectorView:
-		return pageRef{Kind: "inspector", Crumb: v.Crumb(), Title: v.title, Rec: v.rec}, true
 	}
 	return pageRef{}, false
 }
 
 // viewFromRef rebuilds a fresh view from a persisted page descriptor.
 func (a *app) viewFromRef(ref pageRef, tf catalog.Timeframe) (viewModel, error) {
-	switch ref.Kind {
-	case "home":
-		return newHomeView(a.ds, tf), nil
-	case "table":
-		spec := catalog.Lookup(ref.View)
-		if spec == nil {
-			return nil, fmt.Errorf("unknown view %q", ref.View)
+	for _, c := range historyCodecs {
+		if c.kind == ref.Kind {
+			return c.make(a, ref, tf)
 		}
-		scope := catalog.Scope{
-			Timeframe: tf, Arg: ref.Arg, TraceID: ref.TraceID, Entity: ref.Entity,
-			Pattern: ref.Pattern}
-		if ref.Lens > 0 && ref.Lens < len(spec.Lenses) {
-			scope.Lens = ref.Lens
-		}
-		v := newTableView(a.ds, spec, scope)
-		if ref.Filter != "" {
-			v.setFilter(ref.Filter)
-		}
-		v.searches = ref.Searches
-		if ref.Search != "" { // an entry saved before searches stacked
-			v.searches = append(v.searches, ref.Search)
-		}
-		v.facets = ref.Facets
-		return v, nil
-	case "query":
-		v := newQueryView(a.ds, ref.DQL, tf, a.qhist)
-		if ref.DQL != "" {
-			// Arrive on results, not the editor: Init re-runs a submitted query.
-			v.current = ref.DQL
-			v.editing = false
-			v.editor.Blur()
-		}
-		return v, nil
-	case "detail":
-		if ref.Entity == nil {
-			return nil, fmt.Errorf("detail page without entity")
-		}
-		return newDetailView(a.ds, *ref.Entity, nil, tf), nil
-	case "metrics":
-		if ref.Entity == nil {
-			return nil, fmt.Errorf("metrics page without entity")
-		}
-		return newMetricsView(a.ds, *ref.Entity, tf), nil
-	case "relations":
-		if ref.Entity == nil {
-			return nil, fmt.Errorf("relations page without entity")
-		}
-		return newRelationsView(a.ds, *ref.Entity, tf), nil
-	case "nav":
-		switch ref.View {
-		case "walk":
-			if ref.Entity == nil {
-				return nil, fmt.Errorf("walk page without entity")
-			}
-			v := newNavWalkView(a.ds, *ref.Entity, tf)
-			v.trail = append([]catalog.Entity{}, ref.Trail...)
-			return v, nil
-		case "types":
-			if ref.Arg == "" {
-				return nil, fmt.Errorf("type browser without a type")
-			}
-			return newNavBrowserView(a.ds, ref.Arg, tf), nil
-		case "search":
-			if ref.Arg == "" {
-				return nil, fmt.Errorf("name search without a term")
-			}
-			return newNavSearchView(a.ds, ref.Arg, tf), nil
-		default:
-			return newNavView(a.ds, tf), nil
-		}
-	case "waterfall":
-		return newWaterfallView(a.ds, ref.TraceID, "", tf), nil
-	case "timeline":
-		v := newTimelineView(a.ds, ref.Arg, nil, tf)
-		if ref.Lens > 0 && ref.Lens < len(catalog.SessionTimelineLenses) {
-			v.lens = ref.Lens
-		}
-		return v, nil
-	case "problem":
-		if ref.Rec == nil {
-			return nil, fmt.Errorf("problem page without record")
-		}
-		return newProblemView(a.ds, ref.Rec, time.Now()), nil
-	case "vulnerability":
-		if ref.Rec == nil {
-			return nil, fmt.Errorf("vulnerability page without record")
-		}
-		return newVulnerabilityView(a.ds, ref.Rec, tf), nil
-	case "inspector":
-		return newInspectorView(a.ds, ref.Title, ref.Rec), nil
 	}
 	return nil, fmt.Errorf("unknown page kind %q", ref.Kind)
 }

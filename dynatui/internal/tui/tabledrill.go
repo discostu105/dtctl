@@ -10,6 +10,53 @@ import (
 	"github.com/dynatrace-oss/dynatui/internal/tui/catalog"
 )
 
+// enterHandler resolves one bespoke Spec.EnterTarget sentinel: open runs on
+// the selected row; hint labels the footer's enter key ("" = no hint in the
+// current state).
+type enterHandler struct {
+	open func(v *tableView, rec map[string]any) tea.Cmd
+	hint func(v *tableView) string
+}
+
+// enterHandlers registers the EnterTarget sentinels that are NOT catalog
+// view names. Every Spec.EnterTarget must be a key here or resolve via
+// catalog.Lookup — TestEnterTargetsAndDrillsResolve enforces it.
+var enterHandlers = map[string]enterHandler{
+	"waterfall": {
+		open: (*tableView).openTrace,
+		hint: func(*tableView) string { return "waterfall" },
+	},
+	"chart": {
+		open: (*tableView).openChart,
+		hint: func(*tableView) string { return "chart" },
+	},
+	"pattern-logs": {
+		open: (*tableView).openPatternLogs,
+		hint: func(*tableView) string { return "matching logs" },
+	},
+	"session-timeline": {
+		open: (*tableView).openSession,
+		hint: func(*tableView) string { return "session timeline" },
+	},
+	"model-fields": {
+		open: (*tableView).openModelFields,
+		hint: func(v *tableView) string {
+			// Only the models lens drills; the field lenses inspect.
+			if v.spec.LensAt(v.scope.Lens).Name == "models" {
+				return "model fields"
+			}
+			return "definition"
+		},
+	},
+	// Page tabs whose rows are slices of the page's own subject (a
+	// vulnerability's entities/timeline): enter shows the full record
+	// instead of re-routing to the same page it came from.
+	"inspect": {
+		open: (*tableView).inspect,
+		hint: func(*tableView) string { return "inspect" },
+	},
+}
+
 // inspect opens the raw record inspector for a row, titled by the most
 // specific identity the record offers (a "detectors › detectors" crumb says
 // nothing).
@@ -92,6 +139,50 @@ func (v *tableView) drill(target string) tea.Cmd {
 		scope.Lens = catalog.DefaultSpanLens(entity.Type)
 	}
 	return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
+}
+
+// openChart opens the explorer chart for a metric-explorer row, carrying the
+// explorer's own entity scope.
+func (v *tableView) openChart(rec map[string]any) tea.Cmd {
+	key := catalog.Str(rec, "metric.key")
+	if key == "" {
+		return statusErr("row carries no metric key")
+	}
+	var entity *catalog.Entity
+	if v.scope.Entity != nil {
+		e := *v.scope.Entity
+		entity = &e
+	}
+	return func() tea.Msg { return metricChartMsg{key: key, entity: entity} }
+}
+
+// openPatternLogs opens the logs matching the selected pattern, keeping the
+// patterns view's own scope (entity + timeframe) so the drill stays honest.
+func (v *tableView) openPatternLogs(rec map[string]any) tea.Cmd {
+	pattern := catalog.PatternOf(rec)
+	if pattern == "" {
+		return statusErr("row carries no pattern")
+	}
+	spec := catalog.Lookup("logs")
+	scope := catalog.Scope{Timeframe: v.scope.Timeframe, Entity: v.scope.Entity, Pattern: pattern}
+	return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
+}
+
+// openModelFields drills the dictionary's models lens into the model's
+// fields — the same view, fields lens, scoped by Arg; on the field lenses
+// enter opens the full definition (examples, enums) in the inspector.
+func (v *tableView) openModelFields(rec map[string]any) tea.Cmd {
+	if v.spec.LensAt(v.scope.Lens).Name == "models" {
+		name := catalog.Str(rec, "name")
+		if name == "" {
+			return statusErr("row carries no model name")
+		}
+		spec, scope := v.spec, v.scope
+		scope.Arg = name
+		scope.Lens = catalog.DictFieldsLens
+		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
+	}
+	return v.inspect(rec)
 }
 
 // openTrace jumps to the waterfall of the selected row's trace, anchored on

@@ -284,26 +284,22 @@ func (v *tableView) Hints() []keyHint {
 	if !v.ds.previewOn() {
 		hints = append(hints, keyHint{"P", "preview"})
 	}
-	switch {
-	case v.spec.EnterTarget == "pattern-logs":
-		hints = append(hints, keyHint{"enter", "matching logs"})
-	case v.spec.EnterTarget == "session-timeline":
-		hints = append(hints, keyHint{"enter", "session timeline"})
-	case v.spec.EnterTarget == "model-fields":
-		if v.spec.LensAt(v.scope.Lens).Name == "models" {
-			hints = append(hints, keyHint{"enter", "model fields"})
-		} else {
-			hints = append(hints, keyHint{"enter", "definition"})
+	if h, sentinel := enterHandlers[v.spec.EnterTarget]; sentinel {
+		if label := h.hint(v); label != "" {
+			hints = append(hints, keyHint{"enter", label})
 		}
-	case v.spec.EnterTarget != "":
-		hints = append(hints, keyHint{"enter", v.spec.EnterTarget})
-		if v.spec.EnterArg == nil && v.spec.Kind == catalog.KindEntity {
-			hints = append(hints, keyHint{"d", "details"})
+	} else {
+		switch {
+		case v.spec.EnterTarget != "":
+			hints = append(hints, keyHint{"enter", v.spec.EnterTarget})
+			if v.spec.EnterArg == nil && v.spec.Kind == catalog.KindEntity {
+				hints = append(hints, keyHint{"d", "details"})
+			}
+		case v.spec.Kind == catalog.KindEntity && v.spec.Entity != nil:
+			hints = append(hints, keyHint{"enter", "details"}, keyHint{"d", "record"})
+		default:
+			hints = append(hints, keyHint{"enter", "inspect"})
 		}
-	case v.spec.Kind == catalog.KindEntity && v.spec.Entity != nil:
-		hints = append(hints, keyHint{"enter", "details"}, keyHint{"d", "record"})
-	default:
-		hints = append(hints, keyHint{"enter", "inspect"})
 	}
 	// Stable order for the drill keys.
 	for _, k := range []string{"l", "s", "m", "p", "v", "u", "e", "a"} {
@@ -567,58 +563,11 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 			return nil
 		}
 		// Containment navigation (k9s-style) when the spec declares it:
-		// workload → its pods, census row → typed list, trace → waterfall,
-		// metric-explorer row → chart (carrying the explorer's own scope).
-		if v.spec.EnterTarget == "waterfall" {
-			return v.openTrace(rec)
-		}
-		if v.spec.EnterTarget == "chart" {
-			key := catalog.Str(rec, "metric.key")
-			if key == "" {
-				return statusErr("row carries no metric key")
-			}
-			var entity *catalog.Entity
-			if v.scope.Entity != nil {
-				e := *v.scope.Entity
-				entity = &e
-			}
-			return func() tea.Msg { return metricChartMsg{key: key, entity: entity} }
-		}
-		if v.spec.EnterTarget == "pattern-logs" {
-			// Logs matching the selected pattern, keeping the patterns view's
-			// own scope (entity + timeframe) so the drill stays honest.
-			pattern := catalog.PatternOf(rec)
-			if pattern == "" {
-				return statusErr("row carries no pattern")
-			}
-			spec := catalog.Lookup("logs")
-			scope := catalog.Scope{Timeframe: v.scope.Timeframe, Entity: v.scope.Entity, Pattern: pattern}
-			return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
-		}
-		if v.spec.EnterTarget == "session-timeline" {
-			return v.openSession(rec)
-		}
-		if v.spec.EnterTarget == "model-fields" {
-			// The dictionary's models lens drills into the model's fields —
-			// the same view, fields lens, scoped by Arg; on the field lenses
-			// enter opens the full definition (examples, enums).
-			if v.spec.LensAt(v.scope.Lens).Name == "models" {
-				name := catalog.Str(rec, "name")
-				if name == "" {
-					return statusErr("row carries no model name")
-				}
-				spec, scope := v.spec, v.scope
-				scope.Arg = name
-				scope.Lens = catalog.DictFieldsLens
-				return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
-			}
-			return v.inspect(rec)
-		}
-		if v.spec.EnterTarget == "inspect" {
-			// Page tabs whose rows are slices of the page's own subject (a
-			// vulnerability's entities/timeline): enter shows the full record
-			// instead of re-routing to the same page it came from.
-			return v.inspect(rec)
+		// bespoke sentinels resolve through the enterHandlers registry
+		// (waterfall, chart, pattern-logs, …); anything else is a catalog
+		// view name (workload → its pods, census row → typed list).
+		if h, ok := enterHandlers[v.spec.EnterTarget]; ok {
+			return h.open(v, rec)
 		}
 		if v.spec.EnterTarget != "" {
 			if target := catalog.Lookup(v.spec.EnterTarget); target != nil {
