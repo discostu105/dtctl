@@ -41,19 +41,17 @@ func TestHistoryRecordsTrailsAndRestoresStack(t *testing.T) {
 	}
 
 	press(a, key("H"))
-	if !a.histActive {
-		t.Fatal("'H' should open the history picker")
-	}
+	hp := overlayAs[*historyPicker](t, a)
 	// The current page (hosts) is hidden; the drill trail leads the list.
-	if len(a.histList) != 1 || a.histList[0].Stack[1].View != "logs" {
-		t.Fatalf("history list = %+v", a.histList)
+	if len(hp.list) != 1 || hp.list[0].Stack[1].View != "logs" {
+		t.Fatalf("history list = %+v", hp.list)
 	}
 	if !strings.Contains(a.View(), "problems › logs") {
 		t.Errorf("picker should render the breadcrumb trail:\n%s", a.View())
 	}
 
 	press(a, key("enter"))
-	if a.histActive {
+	if a.overlay != nil {
 		t.Fatal("enter should close the picker")
 	}
 	if len(a.stack) != 2 {
@@ -100,10 +98,11 @@ func TestHistorySurvivesSessions(t *testing.T) {
 	// Next session: the trail (with the search) is offered and restorable.
 	b := testAppHist(t, "home", path)
 	press(b, key("H"))
-	if !b.histActive || len(b.histList) == 0 {
-		t.Fatalf("previous session's history missing, list = %+v", b.histList)
+	hp := overlayAs[*historyPicker](t, b)
+	if len(hp.list) == 0 {
+		t.Fatalf("previous session's history missing, list = %+v", hp.list)
 	}
-	top := b.histList[0].Stack[len(b.histList[0].Stack)-1]
+	top := hp.list[0].Stack[len(hp.list[0].Stack)-1]
 	if top.View != "logs" || len(top.Searches) != 1 || top.Searches[0] != "co" {
 		t.Fatalf("persisted top page = %+v, want logs with search co", top)
 	}
@@ -262,7 +261,7 @@ func TestHistorySkipsUnrestorablePages(t *testing.T) {
 func TestHistoryPickerEmptyShowsStatus(t *testing.T) {
 	a := testApp(t, "hosts")
 	press(a, key("H"))
-	if a.histActive {
+	if a.overlay != nil {
 		t.Fatal("picker must not open with no history")
 	}
 	if a.status == "" {

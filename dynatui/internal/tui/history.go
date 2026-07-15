@@ -387,46 +387,49 @@ func (a *app) currentSignature() string {
 }
 
 // openHistory opens the history picker ('H', :history).
+// historyPicker is the 'H' overlay over the persistent trail history; list
+// is a snapshot taken when it opened.
+type historyPicker struct {
+	app  *app
+	list []historyEntry
+	sel  int
+}
+
 func (a *app) openHistory() tea.Cmd {
 	a.hist.refresh() // pick up trails from other open sessions
 	list := a.hist.forContext(a.currentSignature())
 	if len(list) == 0 {
 		return status("no history yet — it fills up as you navigate")
 	}
-	a.histList = list
-	a.histSel = 0
-	a.histActive = true
+	a.overlay = &historyPicker{app: a, list: list}
 	return nil
 }
 
-func (a *app) updateHistPicker(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
+func (p *historyPicker) Hints() []keyHint {
+	return []keyHint{{"enter", "restore"}, {"j/k", "move"}, {"esc", "close"}}
+}
+
+func (p *historyPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
+	a := p.app
+	key := msg.String()
+	switch key {
 	case "esc", "H":
-		a.histActive = false
-		return nil
-	case "up", "k":
-		if a.histSel > 0 {
-			a.histSel--
-		}
-		return nil
-	case "down", "j":
-		if a.histSel < len(a.histList)-1 {
-			a.histSel++
-		}
+		a.overlay = nil
 		return nil
 	case "home", "g":
-		a.histSel = 0
+		p.sel = 0
 		return nil
 	case "end", "G":
-		a.histSel = len(a.histList) - 1
+		p.sel = len(p.list) - 1
 		return nil
 	case "enter":
-		a.histActive = false
-		if a.histSel >= 0 && a.histSel < len(a.histList) {
-			return a.restoreEntry(a.histList[a.histSel])
+		a.overlay = nil
+		if p.sel >= 0 && p.sel < len(p.list) {
+			return a.restoreEntry(p.list[p.sel])
 		}
 		return nil
 	}
+	moveSel(key, &p.sel, len(p.list))
 	return nil
 }
 
@@ -459,7 +462,7 @@ func (a *app) restoreEntry(entry historyEntry) tea.Cmd {
 		cmds = append(cmds, v.Update(size), v.Init())
 	}
 	if tfIdx >= 0 && tf.Label != a.tf.Label {
-		a.tf, a.tfSel = tf, tfIdx
+		a.tf = tf
 		// Covered views keep the window the header advertises (setTimeframe
 		// semantics), so the toggled-away stack refreshes too.
 		for _, v := range a.prev {
@@ -472,35 +475,23 @@ func (a *app) restoreEntry(entry historyEntry) tea.Cmd {
 	return tea.Batch(cmds...)
 }
 
-func (a *app) renderHistory() string {
+func (p *historyPicker) View(width, height int) string {
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("history") + "\n\n")
 	ageW, trailW, tfW := 5, 58, 8
 	rowW := ageW + trailW + tfW + 3
-	limit := len(a.histList)
-	if m := max(a.bodyHeight()-8, 4); limit > m {
-		limit = m
-	}
-	offset := 0
-	if a.histSel >= limit {
-		offset = a.histSel - limit + 1
-	}
-	for i := offset; i < offset+limit && i < len(a.histList); i++ {
-		e := a.histList[i]
+	limit := max(height-8, 4)
+	overlayRows(&b, len(p.list), p.sel, limit, func(i int) string {
+		e := p.list[i]
 		age := catalog.FormatDuration(time.Since(e.Visited))
-		if i == a.histSel {
+		if i == p.sel {
 			row := pad(age, ageW) + " " + pad(e.trail(), trailW) + " " + pad("last "+e.Timeframe, tfW)
-			b.WriteString(theme.Selected.Render(pad(" "+row, rowW)))
-		} else {
-			b.WriteString(" " + theme.Dim.Render(pad(age, ageW)) + " " +
-				theme.HeaderVal.Render(pad(e.trail(), trailW)) + " " +
-				theme.CrumbDim.Render(pad("last "+e.Timeframe, tfW)))
+			return theme.Selected.Render(pad(" "+row, rowW))
 		}
-		b.WriteString("\n")
-	}
-	if rest := len(a.histList) - offset - limit; rest > 0 {
-		b.WriteString(theme.Dim.Render(fmt.Sprintf(" … %d more", rest)) + "\n")
-	}
+		return " " + theme.Dim.Render(pad(age, ageW)) + " " +
+			theme.HeaderVal.Render(pad(e.trail(), trailW)) + " " +
+			theme.CrumbDim.Render(pad("last "+e.Timeframe, tfW))
+	})
 	b.WriteString("\n" + theme.Dim.Render("enter restore · j/k move · esc close — survives restarts"))
-	return b.String()
+	return centerOverlay(width, height, b.String())
 }

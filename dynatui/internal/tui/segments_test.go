@@ -34,10 +34,22 @@ func varSegmentList() []SegmentOption {
 	}
 }
 
+// segVars returns the open segment picker's variable value sub-picker.
+func segVars(t *testing.T, a *app) *segVarPicker {
+	t.Helper()
+	sp := overlayAs[*segmentPicker](t, a)
+	if sp.vars == nil {
+		t.Fatal("segment variable sub-picker is not open")
+	}
+	return sp.vars
+}
+
 // deliverSegVarRows feeds the value sub-picker its query result (deliver
 // drops dataMsg, so tests inject it like seedRows does for tables).
-func deliverSegVarRows(a *app, rows []map[string]any) {
-	a.Update(dataMsg{owner: segVarOwner{}, seq: a.segVar.seq, records: rows})
+func deliverSegVarRows(t *testing.T, a *app, rows []map[string]any) {
+	t.Helper()
+	v := segVars(t, a)
+	a.Update(dataMsg{owner: v, seq: v.seq, records: rows})
 }
 
 func namespaceRows() []map[string]any {
@@ -93,9 +105,7 @@ func TestSegmentPickerToggleApplyClear(t *testing.T) {
 	a.opts.SegmentSource = segStubSource(testSegmentList(), nil)
 
 	press(a, key("S"))
-	if !a.segPickActive {
-		t.Fatal("S did not open the segment picker")
-	}
+	overlayAs[*segmentPicker](t, a)
 	if len(a.segList) != 3 {
 		t.Fatalf("picker list = %d entries, want 3", len(a.segList))
 	}
@@ -105,7 +115,7 @@ func TestSegmentPickerToggleApplyClear(t *testing.T) {
 	press(a, key("j"))
 	press(a, key(" ")) // toggle team-checkout
 	press(a, key("enter"))
-	if a.segPickActive {
+	if a.overlay != nil {
 		t.Fatal("enter did not close the picker")
 	}
 	if len(a.ds.segments) != 2 || a.ds.segments[0].ID != "uid-a" || a.ds.segments[1].ID != "uid-b" {
@@ -157,14 +167,15 @@ func TestSegmentPickerRefusesEleventh(t *testing.T) {
 	a := testApp(t, "logs")
 	a.opts.SegmentSource = segStubSource(list, nil)
 	press(a, key("S"))
+	sp := overlayAs[*segmentPicker](t, a)
 	for i := 0; i <= maxSegments; i++ {
 		press(a, key(" "))
 		if i < maxSegments {
 			press(a, key("j")) // any key clears the transient status — keep the 11th toggle's
 		}
 	}
-	if len(a.segChecked) != maxSegments {
-		t.Fatalf("checked %d segments, want the Grail cap %d", len(a.segChecked), maxSegments)
+	if len(sp.checked) != maxSegments {
+		t.Fatalf("checked %d segments, want the Grail cap %d", len(sp.checked), maxSegments)
 	}
 	if !a.statusErr || !strings.Contains(a.status, "at most 10") {
 		t.Errorf("status = %q (err=%v), want the cap notice", a.status, a.statusErr)
@@ -177,9 +188,7 @@ func TestSegmentsCommandOpensPicker(t *testing.T) {
 	press(a, key(":"))
 	press(a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("segments")})
 	press(a, key("enter"))
-	if !a.segPickActive {
-		t.Fatal(":segments did not open the picker")
-	}
+	overlayAs[*segmentPicker](t, a)
 }
 
 func TestWorkspaceSegmentSeeding(t *testing.T) {
@@ -276,30 +285,26 @@ func TestSegVarSubPickerBindsValues(t *testing.T) {
 
 	press(a, key("S"))
 	press(a, key(" ")) // toggling the unbound vars segment opens the sub-picker
-	if !a.segVar.active {
-		t.Fatal("space on an unbound vars segment did not open the value sub-picker")
-	}
-	if !a.segVar.loading {
+	v := segVars(t, a)
+	if !v.loading {
 		t.Fatal("sub-picker not in loading state")
 	}
-	deliverSegVarRows(a, namespaceRows())
-	if a.segVar.loading || len(a.segVar.rows) != 3 {
-		t.Fatalf("rows not delivered: loading=%v rows=%d", a.segVar.loading, len(a.segVar.rows))
+	deliverSegVarRows(t, a, namespaceRows())
+	if v.loading || len(v.rows) != 3 {
+		t.Fatalf("rows not delivered: loading=%v rows=%d", v.loading, len(v.rows))
 	}
-	if len(a.segVar.cols) != 1 || a.segVar.cols[0] != "namespace" {
-		t.Fatalf("cols = %v, want [namespace]", a.segVar.cols)
+	if len(v.cols) != 1 || v.cols[0] != "namespace" {
+		t.Fatalf("cols = %v, want [namespace]", v.cols)
 	}
 
 	press(a, key("j"))
 	press(a, key(" ")) // check easytrade
 	press(a, key("enter"))
-	if a.segVar.active {
+	sp := overlayAs[*segmentPicker](t, a) // sub-picker enter returns to the segment picker
+	if sp.vars != nil {
 		t.Fatal("enter did not close the sub-picker")
 	}
-	if !a.segPickActive {
-		t.Fatal("sub-picker enter should return to the segment picker")
-	}
-	if !a.segChecked["uid-var"] {
+	if !sp.checked["uid-var"] {
 		t.Fatal("segment lost its check after binding")
 	}
 	binds := a.segVars["uid-var"]
@@ -321,12 +326,13 @@ func TestSegVarSubPickerEscCancelsToggle(t *testing.T) {
 	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
 	press(a, key("S"))
 	press(a, key(" "))
-	deliverSegVarRows(a, namespaceRows())
+	deliverSegVarRows(t, a, namespaceRows())
 	press(a, key("esc"))
-	if a.segVar.active {
+	sp := overlayAs[*segmentPicker](t, a)
+	if sp.vars != nil {
 		t.Fatal("esc did not close the sub-picker")
 	}
-	if a.segChecked["uid-var"] {
+	if sp.checked["uid-var"] {
 		t.Fatal("esc from the value prompt should cancel the segment toggle")
 	}
 	if len(a.segVars["uid-var"]) != 0 {
@@ -339,11 +345,9 @@ func TestSegVarSubPickerEnterNeedsAValue(t *testing.T) {
 	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
 	press(a, key("S"))
 	press(a, key(" "))
-	deliverSegVarRows(a, namespaceRows())
+	deliverSegVarRows(t, a, namespaceRows())
 	press(a, key("enter")) // nothing checked
-	if !a.segVar.active {
-		t.Fatal("enter with no values should keep the sub-picker open")
-	}
+	segVars(t, a)          // still open
 	if !a.statusErr || !strings.Contains(a.status, "at least one value") {
 		t.Errorf("status = %q, want the pick-a-value hint", a.status)
 	}
@@ -354,17 +358,18 @@ func TestSegVarSubPickerFilter(t *testing.T) {
 	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
 	press(a, key("S"))
 	press(a, key(" "))
-	deliverSegVarRows(a, namespaceRows())
+	deliverSegVarRows(t, a, namespaceRows())
 
 	press(a, key("/"))
 	press(a, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("boutique")})
 	press(a, key("enter")) // leave filter mode, keep the filter
-	visible := a.segVarVisible()
+	v := segVars(t, a)
+	visible := v.visible()
 	if len(visible) != 1 || visible[0] != 2 {
 		t.Fatalf("visible = %v, want just online-boutique's row", visible)
 	}
 	press(a, key(" ")) // toggles the filtered row's absolute index
-	if !a.segVar.checked[2] {
+	if !v.checked[2] {
 		t.Fatal("toggle under filter hit the wrong row")
 	}
 	press(a, key("enter"))
@@ -381,19 +386,17 @@ func TestSegVarVOpensWithExistingBindingsPrechecked(t *testing.T) {
 	}
 	press(a, key("S"))
 	press(a, key("v"))
-	if !a.segVar.active {
-		t.Fatal("v did not open the sub-picker")
-	}
-	deliverSegVarRows(a, namespaceRows())
-	if !a.segVar.checked[0] || a.segVar.checked[1] {
-		t.Fatalf("pre-check wrong: %+v (want only astroshop's row)", a.segVar.checked)
+	v := segVars(t, a)
+	deliverSegVarRows(t, a, namespaceRows())
+	if !v.checked[0] || v.checked[1] {
+		t.Fatalf("pre-check wrong: %+v (want only astroshop's row)", v.checked)
 	}
 
 	// v on a segment without variables refuses.
 	press(a, key("esc"))
 	press(a, key("j"))
 	press(a, key("v"))
-	if a.segVar.active {
+	if overlayAs[*segmentPicker](t, a).vars != nil {
 		t.Fatal("v opened a sub-picker for a variable-less segment")
 	}
 	if !a.statusErr || !strings.Contains(a.status, "no variables") {
@@ -406,14 +409,15 @@ func TestSegVarSubPickerFetchError(t *testing.T) {
 	a.opts.SegmentSource = segStubSource(varSegmentList(), nil)
 	press(a, key("S"))
 	press(a, key(" "))
-	a.Update(dataMsg{owner: segVarOwner{}, seq: a.segVar.seq, err: errors.New("HTTP 500")})
-	if a.segVar.loading || a.segVar.err == "" {
-		t.Fatalf("fetch error not surfaced: loading=%v err=%q", a.segVar.loading, a.segVar.err)
+	v := segVars(t, a)
+	a.Update(dataMsg{owner: v, seq: v.seq, err: errors.New("HTTP 500")})
+	if v.loading || v.err == "" {
+		t.Fatalf("fetch error not surfaced: loading=%v err=%q", v.loading, v.err)
 	}
 	// Space-toggling already checked the segment; the segment stays checked
 	// unless the user esc's out — verify esc still cancels cleanly.
 	press(a, key("esc"))
-	if a.segChecked["uid-var"] {
+	if overlayAs[*segmentPicker](t, a).checked["uid-var"] {
 		t.Fatal("esc after a fetch error left the segment checked")
 	}
 }
@@ -535,8 +539,10 @@ func TestInitialTimeframeFromWorkspace(t *testing.T) {
 	if a.tf.Label != "24h" {
 		t.Errorf("tf = %q, want 24h", a.tf.Label)
 	}
-	if a.tfSel != 2 {
-		t.Errorf("tfSel = %d, want the 24h picker index", a.tfSel)
+	// The picker derives its highlight from the applied window on open.
+	press(a, key("t"))
+	if sel := overlayAs[*timeframePicker](t, a).sel; sel != 2 {
+		t.Errorf("picker highlight = %d, want the 24h preset index", sel)
 	}
 }
 

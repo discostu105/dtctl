@@ -82,9 +82,10 @@ func TestCommandBarEmptyEnterOpensHighlighted(t *testing.T) {
 	// palette lists the bespoke screens first (home, query, nav), so index 1
 	// is "query" — the crumb, not the view type, carries the assertion.
 	press(a, tea.KeyMsg{Type: tea.KeyTab})
-	want := a.cmdMatches[a.cmdSel].Name
+	cp := overlayAs[*cmdPalette](t, a)
+	want := cp.matches[cp.sel].Name
 	press(a, key("enter"))
-	if a.cmdActive {
+	if a.overlay != nil {
 		t.Fatal("enter should close the command bar")
 	}
 	if a.top().Crumb() != want {

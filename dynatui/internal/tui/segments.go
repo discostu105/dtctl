@@ -252,15 +252,24 @@ func rewriteSegmentVarError(err error) error {
 
 // --- segment picker overlay -----------------------------------------------------
 
+// segmentPicker is the 'S' multi-select overlay; checked is the scratch
+// selection until enter commits (esc discards). While one segment's variable
+// values are being bound, the sub-picker (vars) covers it and owns the keys.
+type segmentPicker struct {
+	app     *app
+	sel     int
+	checked map[string]bool
+	vars    *segVarPicker
+}
+
 // openSegmentPicker opens the multi-select overlay, seeding the scratch
-// selection from what is currently applied; enter commits, esc discards.
+// selection from what is currently applied.
 func (a *app) openSegmentPicker() tea.Cmd {
-	a.segPickActive = true
-	a.segPickSel = 0
-	a.segChecked = map[string]bool{}
+	p := &segmentPicker{app: a, checked: map[string]bool{}}
 	for _, s := range a.segApplied {
-		a.segChecked[s.UID] = true
+		p.checked[s.UID] = true
 	}
+	a.overlay = p
 	if len(a.segList) == 0 && !a.segLoading && !a.segPending {
 		a.segLoading = true
 		a.segErr = ""
@@ -269,59 +278,61 @@ func (a *app) openSegmentPicker() tea.Cmd {
 	return nil
 }
 
-func (a *app) updateSegPicker(msg tea.KeyMsg) tea.Cmd {
-	switch msg.String() {
+func (p *segmentPicker) Hints() []keyHint {
+	if p.vars != nil {
+		return p.vars.Hints()
+	}
+	return []keyHint{{"space", "toggle"}, {"v", "values"}, {"enter", "apply"}, {"c", "clear"}, {"esc", "cancel"}}
+}
+
+func (p *segmentPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
+	if p.vars != nil {
+		return p.vars.HandleKey(msg)
+	}
+	a := p.app
+	key := msg.String()
+	switch key {
 	case "esc", "S":
-		a.segPickActive = false
-		return nil
-	case "up", "k":
-		if a.segPickSel > 0 {
-			a.segPickSel--
-		}
-		return nil
-	case "down", "j", "tab":
-		if a.segPickSel < len(a.segList)-1 {
-			a.segPickSel++
-		}
+		a.overlay = nil
 		return nil
 	case " ":
-		if a.segPickSel >= len(a.segList) {
+		if p.sel >= len(a.segList) {
 			return nil
 		}
-		s := a.segList[a.segPickSel]
-		if a.segChecked[s.UID] {
-			delete(a.segChecked, s.UID)
+		s := a.segList[p.sel]
+		if p.checked[s.UID] {
+			delete(p.checked, s.UID)
 			return nil
 		}
-		if len(a.segChecked) >= maxSegments {
+		if len(p.checked) >= maxSegments {
 			return statusErr(fmt.Sprintf("Grail applies at most %d segments per query", maxSegments))
 		}
-		a.segChecked[s.UID] = true
+		p.checked[s.UID] = true
 		// Selecting an unbound variable segment prompts for values right
 		// away (mirrors the web UI's secondary selection); esc there cancels
 		// the whole toggle.
 		if s.VariablesQuery != "" && len(a.segVars[s.UID]) == 0 {
-			return a.openSegVarPicker(s, true)
+			return p.openVarPicker(s, true)
 		}
 		return nil
 	case "v":
-		if a.segPickSel >= len(a.segList) {
+		if p.sel >= len(a.segList) {
 			return nil
 		}
-		if s := a.segList[a.segPickSel]; s.VariablesQuery != "" {
-			return a.openSegVarPicker(s, false)
+		if s := a.segList[p.sel]; s.VariablesQuery != "" {
+			return p.openVarPicker(s, false)
 		}
 		return statusErr("segment defines no variables")
 	case "c":
-		a.segChecked = map[string]bool{}
+		p.checked = map[string]bool{}
 		return nil
 	case "r":
 		a.segLoading = true
 		a.segErr = ""
 		return a.loadSegmentList()
 	case "enter":
-		a.segPickActive = false
-		sel := a.checkedSegments()
+		a.overlay = nil
+		sel := p.checkedSegments()
 		// Applying the unchanged set is a no-op — unless it is paused, where
 		// re-applying is the intent (resume).
 		if !a.segPaused && segmentUIDsEqual(sel, a.segApplied) {
@@ -333,15 +344,16 @@ func (a *app) updateSegPicker(msg tea.KeyMsg) tea.Cmd {
 		}
 		return tea.Batch(a.applySegments(sel), status(note))
 	}
+	moveSel(key, &p.sel, len(a.segList))
 	return nil
 }
 
 // checkedSegments returns the scratch selection in list order (deterministic
 // regardless of toggle order).
-func (a *app) checkedSegments() []SegmentOption {
+func (p *segmentPicker) checkedSegments() []SegmentOption {
 	var out []SegmentOption
-	for _, s := range a.segList {
-		if a.segChecked[s.UID] {
+	for _, s := range p.app.segList {
+		if p.checked[s.UID] {
 			out = append(out, s)
 		}
 	}
@@ -360,7 +372,11 @@ func segmentUIDsEqual(a, b []SegmentOption) bool {
 	return true
 }
 
-func (a *app) renderSegPicker() string {
+func (p *segmentPicker) View(width, height int) string {
+	if p.vars != nil {
+		return p.vars.View(width, height)
+	}
+	a := p.app
 	var b strings.Builder
 	b.WriteString(theme.OverlayTitle.Render("filter segments") + "  " +
 		theme.Dim.Render("AND-combined · applied to every DQL view") + "\n\n")
@@ -373,15 +389,11 @@ func (a *app) renderSegPicker() string {
 		b.WriteString(theme.Dim.Render(" no segments in this environment") + "\n")
 	default:
 		nameW, descW := 26, 34
-		limit := max(a.bodyHeight()-9, 4)
-		start := 0
-		if a.segPickSel >= limit {
-			start = a.segPickSel - limit + 1
-		}
-		for i := start; i < len(a.segList) && i < start+limit; i++ {
+		limit := max(height-9, 4)
+		overlayRows(&b, len(a.segList), p.sel, limit, func(i int) string {
 			s := a.segList[i]
 			mark := "[ ]"
-			if a.segChecked[s.UID] {
+			if p.checked[s.UID] {
 				mark = "[x]"
 			}
 			badge := ""
@@ -392,32 +404,29 @@ func (a *app) renderSegPicker() string {
 				badge = " " + theme.Badge.Render("vars")
 			}
 			row := mark + " " + pad(ansi.Truncate(s.Name, nameW, "…"), nameW)
-			if i == a.segPickSel {
-				b.WriteString(theme.Selected.Render(" "+row) + " " +
-					theme.Dim.Render(pad(ansi.Truncate(s.Description, descW, "…"), descW)) + badge)
-			} else {
-				b.WriteString(" " + theme.HeaderVal.Render(row) + " " +
-					theme.CrumbDim.Render(pad(ansi.Truncate(s.Description, descW, "…"), descW)) + badge)
+			if i == p.sel {
+				return theme.Selected.Render(" "+row) + " " +
+					theme.Dim.Render(pad(ansi.Truncate(s.Description, descW, "…"), descW)) + badge
 			}
-			b.WriteString("\n")
-		}
-		if rest := len(a.segList) - start - limit; rest > 0 {
-			b.WriteString(theme.Dim.Render(fmt.Sprintf(" … %d more", rest)) + "\n")
-		}
-		b.WriteString("\n" + theme.Dim.Render(fmt.Sprintf(" %d of max %d selected", len(a.segChecked), maxSegments)) + "\n")
+			return " " + theme.HeaderVal.Render(row) + " " +
+				theme.CrumbDim.Render(pad(ansi.Truncate(s.Description, descW, "…"), descW)) + badge
+		})
+		b.WriteString("\n" + theme.Dim.Render(fmt.Sprintf(" %d of max %d selected", len(p.checked), maxSegments)) + "\n")
 	}
 	b.WriteString("\n" + theme.Dim.Render("space toggle · v values · enter apply · c clear · r reload · esc cancel"))
-	return b.String()
+	return centerOverlay(width, height, b.String())
 }
 
 // --- variable value sub-picker --------------------------------------------------
 
-// segVarState is the second-stage overlay for one segment's variable values:
+// segVarPicker is the second-stage overlay for one segment's variable values:
 // the variable definition DQL runs through the shared dataSource, its result
 // columns are the variable names, its rows the candidate values, and the
-// checked rows become FilterSegmentVariable bindings.
-type segVarState struct {
-	active     bool
+// checked rows become FilterSegmentVariable bindings. It is always opened
+// from (and returns to) the segment picker; the picker instance itself is
+// the dataMsg owner, so results for a closed picker die unrouted.
+type segVarPicker struct {
+	parent     *segmentPicker
 	uid, name  string
 	seq        int
 	rows       []map[string]any
@@ -432,55 +441,51 @@ type segVarState struct {
 	query      string
 }
 
-// segVarOwner tags the value fetch; the app routes its result into the
-// sub-picker instead of a view (like dictOwner).
-type segVarOwner struct{}
-
 // segVarMaxRows caps the candidate list — variable queries enumerate
 // entities (namespaces, clusters) and stay small; a runaway one must not.
 const segVarMaxRows = 500
 
-// openSegVarPicker opens the value sub-picker for one segment and fires its
+// openVarPicker opens the value sub-picker for one segment and fires its
 // variable definition query.
-func (a *app) openSegVarPicker(s SegmentOption, fromToggle bool) tea.Cmd {
-	a.segVar = segVarState{
-		active:     true,
+func (p *segmentPicker) openVarPicker(s SegmentOption, fromToggle bool) tea.Cmd {
+	p.vars = &segVarPicker{
+		parent:     p,
 		uid:        s.UID,
 		name:       s.Name,
-		seq:        a.segVar.seq + 1,
+		seq:        1,
 		checked:    map[int]bool{},
 		loading:    true,
 		fromToggle: fromToggle,
 		query:      s.VariablesQuery,
 	}
-	return a.ds.queryCapped(segVarOwner{}, a.segVar.seq, s.VariablesQuery, segVarMaxRows)
+	return p.app.ds.queryCapped(p.vars, p.vars.seq, s.VariablesQuery, segVarMaxRows)
 }
 
-// handleSegVarData routes the value fetch into the sub-picker, pre-checking
-// rows already covered by existing bindings (workspace or a previous visit).
-func (a *app) handleSegVarData(msg dataMsg) tea.Cmd {
-	if !a.segVar.active || msg.seq != a.segVar.seq {
+// handleData routes the value fetch into the sub-picker, pre-checking rows
+// already covered by existing bindings (workspace or a previous visit).
+func (v *segVarPicker) handleData(msg dataMsg) tea.Cmd {
+	if msg.seq != v.seq {
 		return nil
 	}
-	a.segVar.loading = false
+	v.loading = false
 	if msg.err != nil {
-		a.segVar.err = msg.err.Error()
+		v.err = msg.err.Error()
 		return nil
 	}
-	a.segVar.rows = msg.records
-	a.segVar.cols = segVarColumns(msg.records)
+	v.rows = msg.records
+	v.cols = segVarColumns(msg.records)
 	bound := map[string]map[string]bool{}
-	for _, v := range a.segVars[a.segVar.uid] {
+	for _, b := range v.parent.app.segVars[v.uid] {
 		vals := map[string]bool{}
-		for _, val := range v.Values {
+		for _, val := range b.Values {
 			vals[val] = true
 		}
-		bound[v.Name] = vals
+		bound[b.Name] = vals
 	}
-	for i, row := range a.segVar.rows {
-		for _, col := range a.segVar.cols {
+	for i, row := range v.rows {
+		for _, col := range v.cols {
 			if bound[col][catalog.Str(row, col)] {
-				a.segVar.checked[i] = true
+				v.checked[i] = true
 				break
 			}
 		}
@@ -502,16 +507,16 @@ func segVarColumns(rows []map[string]any) []string {
 	return cols
 }
 
-// segVarVisible returns the absolute indices of rows matching the filter.
-func (a *app) segVarVisible() []int {
-	idx := make([]int, 0, len(a.segVar.rows))
-	needle := strings.ToLower(a.segVar.filter)
-	for i, row := range a.segVar.rows {
+// visible returns the absolute indices of rows matching the filter.
+func (v *segVarPicker) visible() []int {
+	idx := make([]int, 0, len(v.rows))
+	needle := strings.ToLower(v.filter)
+	for i, row := range v.rows {
 		if needle == "" {
 			idx = append(idx, i)
 			continue
 		}
-		for _, col := range a.segVar.cols {
+		for _, col := range v.cols {
 			if strings.Contains(strings.ToLower(catalog.Str(row, col)), needle) {
 				idx = append(idx, i)
 				break
@@ -521,104 +526,101 @@ func (a *app) segVarVisible() []int {
 	return idx
 }
 
-func (a *app) updateSegVarPicker(msg tea.KeyMsg) tea.Cmd {
-	if a.segVar.filtering {
+func (v *segVarPicker) Hints() []keyHint {
+	return []keyHint{{"space", "toggle"}, {"/", "filter"}, {"enter", "bind"}, {"esc", "back"}}
+}
+
+func (v *segVarPicker) HandleKey(msg tea.KeyMsg) tea.Cmd {
+	a := v.parent.app
+	if v.filtering {
 		switch msg.String() {
 		case "enter":
-			a.segVar.filtering = false
+			v.filtering = false
 			return nil
 		case "esc":
-			a.segVar.filtering = false
-			a.segVar.filter = ""
-			a.segVar.sel = 0
+			v.filtering = false
+			v.filter = ""
+			v.sel = 0
 			return nil
 		case "backspace":
-			if a.segVar.filter != "" {
-				r := []rune(a.segVar.filter)
-				a.segVar.filter = string(r[:len(r)-1])
+			if v.filter != "" {
+				r := []rune(v.filter)
+				v.filter = string(r[:len(r)-1])
 			}
-			a.segVar.sel = 0
+			v.sel = 0
 			return nil
 		}
 		if msg.Type == tea.KeyRunes {
-			a.segVar.filter += string(msg.Runes)
-			a.segVar.sel = 0
+			v.filter += string(msg.Runes)
+			v.sel = 0
 		}
 		return nil
 	}
-	visible := a.segVarVisible()
-	switch msg.String() {
+	visible := v.visible()
+	key := msg.String()
+	switch key {
 	case "esc":
-		a.segVar.active = false
-		if a.segVar.fromToggle {
+		v.parent.vars = nil
+		if v.fromToggle {
 			// The gesture was "select this segment, then pick its values" —
 			// backing out of the values cancels the selection too.
-			delete(a.segChecked, a.segVar.uid)
+			delete(v.parent.checked, v.uid)
 		}
 		return nil
 	case "/":
-		a.segVar.filtering = true
-		a.segVar.filter = ""
-		return nil
-	case "up", "k":
-		if a.segVar.sel > 0 {
-			a.segVar.sel--
-		}
-		return nil
-	case "down", "j", "tab":
-		if a.segVar.sel < len(visible)-1 {
-			a.segVar.sel++
-		}
+		v.filtering = true
+		v.filter = ""
 		return nil
 	case " ":
-		if a.segVar.sel < len(visible) {
-			i := visible[a.segVar.sel]
-			if a.segVar.checked[i] {
-				delete(a.segVar.checked, i)
+		if v.sel < len(visible) {
+			i := visible[v.sel]
+			if v.checked[i] {
+				delete(v.checked, i)
 			} else {
-				a.segVar.checked[i] = true
+				v.checked[i] = true
 			}
 		}
 		return nil
 	case "r":
-		a.segVar.loading = true
-		a.segVar.err = ""
-		a.segVar.rows, a.segVar.cols = nil, nil
-		a.segVar.checked = map[int]bool{}
-		a.segVar.seq++
-		return a.ds.queryCapped(segVarOwner{}, a.segVar.seq, a.segVar.query, segVarMaxRows)
+		v.loading = true
+		v.err = ""
+		v.rows, v.cols = nil, nil
+		v.checked = map[int]bool{}
+		v.seq++
+		return a.ds.queryCapped(v, v.seq, v.query, segVarMaxRows)
 	case "enter":
-		binds := a.segVarBindings()
+		binds := v.bindings()
 		if len(binds) == 0 {
 			return statusErr("pick at least one value (esc cancels the segment)")
 		}
 		if a.segVars == nil {
 			a.segVars = map[string][]exec.FilterSegmentVariable{}
 		}
-		a.segVars[a.segVar.uid] = binds
-		a.segChecked[a.segVar.uid] = true
-		a.segVar.active = false
-		return status(fmt.Sprintf("%s: values bound — enter in the picker applies", a.segVar.name))
+		a.segVars[v.uid] = binds
+		v.parent.checked[v.uid] = true
+		v.parent.vars = nil
+		return status(fmt.Sprintf("%s: values bound — enter in the picker applies", v.name))
 	}
+	moveSel(key, &v.sel, len(visible))
 	return nil
 }
 
-// segVarBindings turns the checked rows into per-column variable bindings.
-func (a *app) segVarBindings() []exec.FilterSegmentVariable {
+// bindings turns the checked rows into per-column variable bindings.
+func (v *segVarPicker) bindings() []exec.FilterSegmentVariable {
 	var binds []exec.FilterSegmentVariable
-	for _, col := range a.segVar.cols {
+	for _, col := range v.cols {
 		seen := map[string]bool{}
 		var vals []string
-		for i, row := range a.segVar.rows {
-			if !a.segVar.checked[i] {
+		for i, row := range v.rows {
+			if !v.checked[i] {
 				continue
 			}
-			v := catalog.Str(row, col)
-			if v == "" || seen[v] {
+			val := catalog.Str(row, col)
+			if val == "" || seen[val] {
 				continue
 			}
-			seen[v] = true
-			vals = append(vals, v)
+			seen[val] = true
+			vals = append(vals, val)
 		}
 		if len(vals) > 0 {
 			binds = append(binds, exec.FilterSegmentVariable{Name: col, Values: vals})
@@ -627,62 +629,53 @@ func (a *app) segVarBindings() []exec.FilterSegmentVariable {
 	return binds
 }
 
-func (a *app) renderSegVarPicker() string {
+func (v *segVarPicker) View(width, height int) string {
 	var b strings.Builder
-	b.WriteString(theme.OverlayTitle.Render("values — "+a.segVar.name) + "  " +
-		theme.Dim.Render(strings.Join(a.segVar.cols, " · ")) + "\n\n")
+	b.WriteString(theme.OverlayTitle.Render("values — "+v.name) + "  " +
+		theme.Dim.Render(strings.Join(v.cols, " · ")) + "\n\n")
 	switch {
-	case a.segVar.loading:
+	case v.loading:
 		b.WriteString(theme.Dim.Render(" loading values…") + "\n")
-	case a.segVar.err != "":
-		b.WriteString(" " + theme.Error.Render("✗ "+a.segVar.err) + "\n")
-	case len(a.segVar.rows) == 0:
+	case v.err != "":
+		b.WriteString(" " + theme.Error.Render("✗ "+v.err) + "\n")
+	case len(v.rows) == 0:
 		b.WriteString(theme.Dim.Render(" the variable query returned no values") + "\n")
 	default:
-		visible := a.segVarVisible()
-		width := 64
-		limit := max(a.bodyHeight()-9, 4)
-		start := 0
-		if a.segVar.sel >= limit {
-			start = a.segVar.sel - limit + 1
-		}
-		for pos := start; pos < len(visible) && pos < start+limit; pos++ {
+		visible := v.visible()
+		rowW := 64
+		limit := max(height-9, 4)
+		overlayRows(&b, len(visible), v.sel, limit, func(pos int) string {
 			i := visible[pos]
 			mark := "[ ]"
-			if a.segVar.checked[i] {
+			if v.checked[i] {
 				mark = "[x]"
 			}
-			vals := make([]string, 0, len(a.segVar.cols))
-			for _, col := range a.segVar.cols {
-				vals = append(vals, catalog.Str(a.segVar.rows[i], col))
+			vals := make([]string, 0, len(v.cols))
+			for _, col := range v.cols {
+				vals = append(vals, catalog.Str(v.rows[i], col))
 			}
-			row := mark + " " + ansi.Truncate(strings.Join(vals, " · "), width, "…")
-			if pos == a.segVar.sel {
-				b.WriteString(theme.Selected.Render(" " + pad(row, width+5)))
-			} else {
-				b.WriteString(" " + theme.HeaderVal.Render(row))
+			row := mark + " " + ansi.Truncate(strings.Join(vals, " · "), rowW, "…")
+			if pos == v.sel {
+				return theme.Selected.Render(" " + pad(row, rowW+5))
 			}
-			b.WriteString("\n")
-		}
-		if rest := len(visible) - start - limit; rest > 0 {
-			b.WriteString(theme.Dim.Render(fmt.Sprintf(" … %d more", rest)) + "\n")
-		}
+			return " " + theme.HeaderVal.Render(row)
+		})
 		if len(visible) == 0 {
 			b.WriteString(theme.Dim.Render(" no value matches the filter") + "\n")
 		}
-		b.WriteString("\n" + theme.Dim.Render(fmt.Sprintf(" %d selected", len(a.segVar.checked))))
-		if a.segVar.filter != "" || a.segVar.filtering {
-			b.WriteString(theme.Dim.Render(" · /" + a.segVar.filter))
-			if a.segVar.filtering {
+		b.WriteString("\n" + theme.Dim.Render(fmt.Sprintf(" %d selected", len(v.checked))))
+		if v.filter != "" || v.filtering {
+			b.WriteString(theme.Dim.Render(" · /" + v.filter))
+			if v.filtering {
 				b.WriteString(theme.Crumb.Render("▌"))
 			}
 		}
 		b.WriteString("\n")
 	}
-	if a.segVar.filtering {
+	if v.filtering {
 		b.WriteString("\n" + theme.Dim.Render("type to filter · enter done · esc clear"))
 	} else {
 		b.WriteString("\n" + theme.Dim.Render("space toggle · / filter · enter bind · esc back"))
 	}
-	return b.String()
+	return centerOverlay(width, height, b.String())
 }

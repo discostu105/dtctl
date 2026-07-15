@@ -47,6 +47,16 @@ func disablePreview(a *app) {
 	a.ds.previewOff = true
 }
 
+// overlayAs asserts the open overlay's concrete type.
+func overlayAs[T overlay](t *testing.T, a *app) T {
+	t.Helper()
+	o, ok := a.overlay.(T)
+	if !ok {
+		t.Fatalf("overlay is %T, want %T", a.overlay, *new(T))
+	}
+	return o
+}
+
 func key(s string) tea.KeyMsg {
 	switch s {
 	case "esc":
@@ -456,9 +466,7 @@ func TestCommandBarJumpReplacesStack(t *testing.T) {
 	press(a, key("l")) // depth 2
 
 	press(a, key(":"))
-	if !a.cmdActive {
-		t.Fatal("':' should open the command bar")
-	}
+	overlayAs[*cmdPalette](t, a)
 	for _, r := range "ho" {
 		press(a, key(string(r)))
 	}
@@ -475,11 +483,9 @@ func TestCommandBarJumpReplacesStack(t *testing.T) {
 func TestTimeframePickerAppliesGlobally(t *testing.T) {
 	a := testApp(t, "hosts")
 	press(a, key("t"))
-	if !a.tfActive {
-		t.Fatal("'t' should open the timeframe picker")
-	}
+	overlayAs[*timeframePicker](t, a)
 	press(a, key("1"))
-	if a.tfActive || a.tf.Label != "30m" {
+	if a.overlay != nil || a.tf.Label != "30m" {
 		t.Fatalf("picker did not apply: tf = %s", a.tf.Label)
 	}
 }
@@ -542,18 +548,16 @@ func TestCtxCommandSwitchesContext(t *testing.T) {
 	press(a, key(":"))
 	press(a, key("ctx"))
 	press(a, key("enter"))
-	if !a.ctxPickActive {
-		t.Fatal("bare :ctx should open the context picker")
-	}
-	if a.opts.Contexts[a.ctxPickSel] != "prod" {
-		t.Fatalf("picker should highlight the current context, got %q", a.opts.Contexts[a.ctxPickSel])
+	cp := overlayAs[*contextPicker](t, a)
+	if a.opts.Contexts[cp.sel] != "prod" {
+		t.Fatalf("picker should highlight the current context, got %q", a.opts.Contexts[cp.sel])
 	}
 	if out := a.View(); !strings.Contains(out, "switch context") || !strings.Contains(out, "current") {
 		t.Fatalf("picker should render the context list with a current badge:\n%s", out)
 	}
 	press(a, key("up")) // "prod" (index 1) → "test" (index 0)
 	press(a, key("enter"))
-	if a.ctxPickActive {
+	if a.overlay != nil {
 		t.Fatal("enter should close the picker")
 	}
 	if a.opts.ContextName != "test" {
@@ -565,7 +569,7 @@ func TestCtxCommandSwitchesContext(t *testing.T) {
 	press(a, key("ctx"))
 	press(a, key("enter"))
 	press(a, key("esc"))
-	if a.ctxPickActive || a.opts.ContextName != "test" {
+	if a.overlay != nil || a.opts.ContextName != "test" {
 		t.Fatalf("esc must close the picker and keep the context, ctx = %s", a.opts.ContextName)
 	}
 }
@@ -576,30 +580,31 @@ func TestTimeframePickerCustomEntry(t *testing.T) {
 	a := testApp(t, "hosts")
 	press(a, key("t"))
 	press(a, key("5")) // the custom entry follows the four presets
-	if !a.tfCustom {
+	if !overlayAs[*timeframePicker](t, a).custom {
 		t.Fatal("digit 5 should open the custom window input")
 	}
 	press(a, key("45m"))
 	press(a, key("enter"))
-	if a.tfActive || a.tfCustom || a.tf.Label != "45m" {
+	if a.overlay != nil || a.tf.Label != "45m" {
 		t.Fatalf("custom window did not apply: tf = %s", a.tf.Label)
 	}
 
 	// Reopening lands the highlight on custom (45m is no preset) and an
 	// invalid label refuses with a status instead of applying garbage.
 	press(a, key("t"))
-	if a.tfSel != len(catalog.Timeframes) {
-		t.Fatalf("picker highlight = %d, want the custom entry", a.tfSel)
+	tp := overlayAs[*timeframePicker](t, a)
+	if tp.sel != len(catalog.Timeframes) {
+		t.Fatalf("picker highlight = %d, want the custom entry", tp.sel)
 	}
 	press(a, key("enter"))
 	press(a, key("nonsense"))
 	press(a, key("enter"))
-	if !a.tfCustom || a.tf.Label != "45m" {
+	if !tp.custom || a.tf.Label != "45m" {
 		t.Fatalf("invalid label must keep the input open and the window unchanged, tf = %s", a.tf.Label)
 	}
 	press(a, key("esc")) // back to the pills
 	press(a, key("esc")) // close the picker
-	if a.tfCustom || a.tfActive {
+	if a.overlay != nil {
 		t.Fatal("esc should unwind the custom input, then the picker")
 	}
 }
@@ -643,15 +648,13 @@ func TestViewRendersChrome(t *testing.T) {
 
 func TestQuitAndHelpKeys(t *testing.T) {
 	a := testApp(t, "hosts")
-	press(a, key("?")) // may batch a spinner tick alongside — helpActive is what matters
-	if !a.helpActive {
-		t.Fatal("'?' should open help")
-	}
+	press(a, key("?"))
+	overlayAs[*helpOverlay](t, a)
 	if !strings.Contains(a.View(), "dtctl tui — keys") {
 		t.Error("help overlay not rendered")
 	}
 	press(a, key("esc"))
-	if a.helpActive {
+	if a.overlay != nil {
 		t.Error("esc should close help")
 	}
 

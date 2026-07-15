@@ -47,9 +47,10 @@ func TestNavCommandOpensOverview(t *testing.T) {
 func TestCmdPaletteListsBespokeViews(t *testing.T) {
 	a := testApp(t, "problems")
 	press(a, key(":"))
+	cp := overlayAs[*cmdPalette](t, a)
 	names := func() []string {
 		var out []string
-		for _, s := range a.cmdMatches {
+		for _, s := range cp.matches {
 			out = append(out, s.Name)
 		}
 		return out
@@ -61,7 +62,7 @@ func TestCmdPaletteListsBespokeViews(t *testing.T) {
 		}
 	}
 	press(a, key("nav")) // typed input must match the entry
-	if len(a.cmdMatches) == 0 || names()[0] != "nav" {
+	if len(cp.matches) == 0 || names()[0] != "nav" {
 		t.Fatalf("typing nav must rank the navigator first, matches = %v", names())
 	}
 	// Partial input + highlighted suggestion routes through the bespoke path.
