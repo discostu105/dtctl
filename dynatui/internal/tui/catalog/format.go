@@ -7,8 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/dynatrace-oss/dtctl/pkg/output"
 )
 
 // FormatValue renders an arbitrary record value as table-cell text.
@@ -238,7 +236,7 @@ func SparkColumn(title, alias string, width int, unit string) Column {
 				return ""
 			}
 			value := FormatUnitShort(series[len(series)-1], unit)
-			return fmt.Sprintf("%s %*s", output.MiniGraph(series, graphW), width-graphW-1, value)
+			return fmt.Sprintf("%s %*s", Spark(series, graphW), width-graphW-1, value)
 		},
 		Sort: func(rec map[string]any) any {
 			if last := SeriesLast(rec, key); !math.IsNaN(last) {

@@ -9,7 +9,6 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dynatui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dynatui/internal/tui/theme"
 )
@@ -600,7 +599,7 @@ func enrichSparks(rec map[string]any) []string {
 			continue
 		}
 		alias := strings.TrimPrefix(k, "__enrich.")
-		out = append(out, theme.Dim.Render(alias+" ")+theme.Chart.Render(output.MiniGraph(series, 8)))
+		out = append(out, theme.Dim.Render(alias+" ")+theme.Chart.Render(catalog.Spark(series, 8)))
 	}
 	return out
 }

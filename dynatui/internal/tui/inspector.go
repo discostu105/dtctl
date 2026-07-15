@@ -12,7 +12,6 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 
-	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dynatui/internal/tui/catalog"
 	"github.com/dynatrace-oss/dynatui/internal/tui/theme"
 )
@@ -883,7 +882,7 @@ func (v *inspectorView) addVitalRows() {
 			gauge = "  " + strings.Repeat(" ", meterW)
 		}
 		line := " " + theme.FactLabel.Render(fmt.Sprintf("%-*s", labelW, label)) + "  " +
-			theme.Chart.Render(output.MiniGraph(s.series, 16)) + gauge + "  " + value +
+			theme.Chart.Render(catalog.Spark(s.series, 16)) + gauge + "  " + value +
 			theme.Dim.Render(fmt.Sprintf("   avg %s · max %s", fmtUnit(avg, s.unit), fmtUnit(maxV, s.unit)))
 		var entity *catalog.Entity
 		if v.entity != nil {
