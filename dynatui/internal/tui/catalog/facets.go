@@ -8,7 +8,15 @@ import (
 )
 
 // Server-side narrowing for table views: the '/'-promoted full-text search
-// and the 'f' facet picker. Validated live (see docs/dev/learnings.md §1.10):
+// and the 'f' facet picker.
+//
+// The injectors below rewrite generated DQL by LINE CONVENTION rather than a
+// structured pipeline type: the source command owns the first line and every
+// query ends in a `| sort`/`| limit` tail. convention_test.go enforces both
+// on every spec, so a Query closure that drifts fails the suite instead of
+// silently mis-splicing here.
+//
+// Validated live (see docs/dev/learnings.md §1.10):
 //   - `| search "text"` matches case-insensitively across all fields on
 //     fetch and smartscapeNodes pipelines alike, but is rejected after
 //     transforming commands — parse/expand/summarize —
