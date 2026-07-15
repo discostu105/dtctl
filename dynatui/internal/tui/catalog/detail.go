@@ -107,7 +107,9 @@ func PriorityFields(rec map[string]any) []string {
 // phase, the nodes list precomputes version/os/cpus — validated against the
 // specs' own queries). Where the substance lives only in the k8s.object
 // manifest (replica readiness, cron schedules, PVC capacity), the fact digs
-// into the parsed manifest.
+// into the parsed manifest. Curating a new type? Walk the package doc's
+// "Curating an entity type" checklist — this switch is one of several
+// per-type dispatch points.
 func KeyFacts(entityType string) []Fact {
 	common := []Fact{{Label: "id", Value: factField("id")}}
 	switch entityType {

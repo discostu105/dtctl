@@ -446,7 +446,10 @@ func smartscapeEq(entityType string) func(e Entity) string {
 }
 
 // MetricsFor returns the canned metrics spec for an entity type, or nil when
-// the type has no curated charts yet.
+// the type has no curated charts yet (the view falls back to the metric
+// explorer). Curating a new type? Walk the package doc's "Curating an
+// entity type" checklist — this switch is one of several per-type dispatch
+// points.
 func MetricsFor(entityType string) *MetricsSpec {
 	switch entityType {
 	case "HOST":
