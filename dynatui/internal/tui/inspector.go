@@ -697,11 +697,28 @@ func (v *inspectorView) docFooter() string {
 	return ansi.Truncate(" "+theme.Label.Render("ⓘ ")+theme.Dim.Render(text), v.vp.Width, "…")
 }
 
+// inspectorSection is a first-class record section: render draws it when the
+// record carries its signal (a span's events, a GenAI exchange) and reports
+// whether it applied; consume then marks the raw fields the section covered
+// so the generic namespace groups don't repeat them as JSON blobs.
+type inspectorSection struct {
+	render  func(v *inspectorView, needle string) bool
+	consume func(rec map[string]any, rendered map[string]bool)
+}
+
+// inspectorSections are the first-class sections in render order. Teaching
+// the inspector a new record kind means adding an entry here (with its
+// render/consume pair in its own file), not growing rebuild().
+var inspectorSections = []inspectorSection{
+	{render: (*inspectorView).addSpanEvents, consume: markSpanEventsConsumed},
+	{render: (*inspectorView).addConversation, consume: markConversationConsumed},
+}
+
 // rebuild renders the record into content lines and selectable rows: the
 // curated facts panel (entity mode), the signals block (entity mode), the
-// per-kind priority-field highlights, the links block (record mode), then
-// namespace groups (k8s.*, event.*, …) sorted by name. A search needle
-// narrows fields by key or value.
+// first-class sections, the per-kind priority-field highlights, the links
+// block (record mode), then namespace groups (k8s.*, event.*, …) sorted by
+// name. A search needle narrows fields by key or value.
 func (v *inspectorView) rebuild() {
 	if !v.ready || v.rec == nil {
 		return
@@ -732,19 +749,13 @@ func (v *inspectorView) rebuild() {
 
 	rendered := map[string]bool{}
 
-	// A span's recorded events — exceptions above all — render as a
-	// first-class section before everything else: the verdict comes first.
-	// The raw span.events array (a collapsed JSON blob otherwise) is
-	// consumed by it.
-	if v.addSpanEvents(needle) {
-		markSpanEventsConsumed(rendered)
-	}
-
-	// A GenAI span's exchange renders as a first-class conversation section;
-	// the raw message fields (JSON blobs or flat numbered attributes) are
-	// consumed by it.
-	if v.addConversation(needle) {
-		markConversationConsumed(v.rec, rendered)
+	// First-class record sections — the verdict comes first: a span's
+	// exceptions and events, a GenAI span's conversation — render before the
+	// generic field groups and consume the raw fields they cover.
+	for _, s := range inspectorSections {
+		if s.render(v, needle) {
+			s.consume(v.rec, rendered)
+		}
 	}
 
 	var prio []string

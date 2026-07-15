@@ -20,7 +20,7 @@ import (
 
 // markSpanEventsConsumed flags the record key the span-events section renders
 // itself; the namespace-group renderer skips it.
-func markSpanEventsConsumed(rendered map[string]bool) {
+func markSpanEventsConsumed(_ map[string]any, rendered map[string]bool) {
 	rendered["span.events"] = true
 }
 
