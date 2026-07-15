@@ -828,17 +828,24 @@ tied to view lifetime.
 
 ### Testing
 
+(As built — the original sketch called for golden files and httptest; the
+implementation landed on cheaper, less brittle seams.)
+
 - **Model tests**: bubbletea models are pure (`Update(msg) → model, cmd`) —
-  drive with synthetic messages, assert navigation, scope composition, and
-  safety gating. No TTY needed.
-- **Catalog tests**: every ViewSpec's `QueryTemplate` renders against fixture
-  scopes to golden DQL strings — catching scope-composition regressions
-  cheaply.
-- **View snapshots**: `View()` output → golden files via the existing
-  `cmd/testutil/golden.go` harness (fixed dimensions, plain styling, synthetic
-  data per the privacy rules).
-- **Datasource tests**: httptest mocks, same patterns (and pagination guards)
-  as existing resource tests.
+  the harness in `app_test.go` drives the real app with synthetic key
+  messages and asserts navigation, scope composition, and safety gating. No
+  TTY needed; inputs run static-cursor and timers at zero delay so no test
+  ever sleeps.
+- **Catalog tests**: every Spec's `Query` renders against fixture scopes and
+  the tests pin the DQL shape with substring checks — catching
+  scope-composition regressions cheaply.
+- **View assertions**: `View(w, h)` output is checked for content and
+  classification via `ansi.Strip` + substring matching — no golden files, so
+  styling and layout tweaks don't invalidate tests. Synthetic data only, per
+  the privacy rules.
+- **Datasource tests**: no HTTP anywhere — the `dataSource.runFn` func seam
+  replaces the executor, and API-backed views stub the injected `Source`
+  closures. Canned rows are injected via `seedRows`.
 
 ---
 
