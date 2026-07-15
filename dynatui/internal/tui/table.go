@@ -25,10 +25,9 @@ type tableView struct {
 	spec  *catalog.Spec
 	scope catalog.Scope
 
-	all    []map[string]any // as fetched
-	rows   []map[string]any // after /-filter and sort
-	cursor int
-	offset int
+	all  []map[string]any // as fetched
+	rows []map[string]any // after /-filter and sort
+	scroller
 
 	loading bool
 	err     error
@@ -615,20 +614,11 @@ func (v *tableView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return nil
 	}
 
+	if v.scroller.handleKey(msg.String(), len(v.rows), v.pageSize()) {
+		return nil
+	}
+
 	switch msg.String() {
-	case "up", "k":
-		v.move(-1)
-	case "down", "j":
-		v.move(1)
-	case "pgup", "ctrl+b":
-		v.move(-v.pageSize())
-	case "pgdown", "ctrl+f", " ":
-		v.move(v.pageSize())
-	case "home", "g":
-		v.cursor = 0
-		v.offset = 0
-	case "end", "G":
-		v.move(len(v.rows))
 	case "J": // next sort column (wraps through "no sort")
 		v.sortCol++
 		if v.sortCol >= len(v.columns()) {
@@ -1357,20 +1347,6 @@ func (v *tableView) selected() map[string]any {
 	return nil
 }
 
-func (v *tableView) move(delta int) {
-	v.cursor += delta
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	if v.cursor >= len(v.rows) {
-		v.cursor = len(v.rows) - 1
-	}
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	v.clampOffset()
-}
-
 func (v *tableView) pageSize() int {
 	chrome := 3
 	if len(v.spec.Lenses) > 0 {
@@ -1383,19 +1359,6 @@ func (v *tableView) pageSize() int {
 		return v.height - chrome
 	}
 	return 10
-}
-
-func (v *tableView) clampOffset() {
-	visible := v.pageSize()
-	if v.cursor < v.offset {
-		v.offset = v.cursor
-	}
-	if v.cursor >= v.offset+visible {
-		v.offset = v.cursor - visible + 1
-	}
-	if v.offset < 0 {
-		v.offset = 0
-	}
 }
 
 // applyFilter recomputes rows from the fetched page (client-side, consistent
@@ -1417,13 +1380,8 @@ func (v *tableView) applyFilter() {
 		}
 	}
 	v.sortRows()
-	if v.cursor >= len(v.rows) {
-		v.cursor = len(v.rows) - 1
-	}
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	v.clampOffset()
+	// A parked cursor may now point past the narrowed rows.
+	v.scroller.move(0, len(v.rows), v.pageSize())
 }
 
 // sortKey extracts a column's sort key for a record.

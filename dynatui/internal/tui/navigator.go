@@ -83,12 +83,12 @@ type navView struct {
 	filter       string
 	filterInput  textinput.Model
 
-	cursor, offset int
-	loading        bool
-	err            error
-	seq            int
-	dql            string
-	width, height  int
+	scroller
+	loading       bool
+	err           error
+	seq           int
+	dql           string
+	width, height int
 }
 
 type navMode int
@@ -876,20 +876,10 @@ func (v *navView) visibleEdges(f string) []catalog.Edge {
 	return out
 }
 
+// move keeps the navigator's movement-with-preview call sites one-argument;
+// the clamp math lives on the shared scroller.
 func (v *navView) move(delta int) {
-	v.cursor += delta
-	if v.cursor >= len(v.rows) {
-		v.cursor = len(v.rows) - 1
-	}
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	if v.cursor < v.offset {
-		v.offset = v.cursor
-	}
-	if vis := maxInt(v.listHeight(), 1); v.cursor >= v.offset+vis {
-		v.offset = v.cursor - vis + 1
-	}
+	v.scroller.move(delta, len(v.rows), maxInt(v.listHeight(), 1))
 }
 
 // --- preview --------------------------------------------------------------------

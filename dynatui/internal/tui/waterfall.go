@@ -26,9 +26,8 @@ type waterfallView struct {
 	focusSpan string
 	tf        catalog.Timeframe
 
-	rows    []wfRow
-	cursor  int
-	offset  int
+	rows []wfRow
+	scroller
 	loading bool
 	widened bool // auto-retried with a 24h window after an empty result
 	err     error
@@ -156,7 +155,7 @@ func (v *waterfallView) Update(msg tea.Msg) tea.Cmd {
 				if catalog.Str(r.rec, "span.id") == v.focusSpan {
 					v.cursor = i
 					v.offset = 0
-					v.move(0) // clamp the window around the anchored row
+					v.clamp(v.visible()) // scroll the window around the anchored row
 					break
 				}
 			}
@@ -171,19 +170,10 @@ func (v *waterfallView) Update(msg tea.Msg) tea.Cmd {
 }
 
 func (v *waterfallView) handleKey(msg tea.KeyMsg) tea.Cmd {
+	if v.scroller.handleKey(msg.String(), len(v.rows), v.visible()) {
+		return nil
+	}
 	switch msg.String() {
-	case "up", "k":
-		v.move(-1)
-	case "down", "j":
-		v.move(1)
-	case "pgup", "ctrl+b":
-		v.move(-v.visible())
-	case "pgdown", "ctrl+f", " ":
-		v.move(v.visible())
-	case "home", "g":
-		v.cursor, v.offset = 0, 0
-	case "end", "G":
-		v.move(len(v.rows))
 	case "enter", "d":
 		if rec, _ := v.Selection(); rec != nil {
 			// GenAI labels carry whole prompts — keep the crumb short.
@@ -199,25 +189,6 @@ func (v *waterfallView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 	}
 	return nil
-}
-
-func (v *waterfallView) move(delta int) {
-	v.cursor += delta
-	if v.cursor >= len(v.rows) {
-		v.cursor = len(v.rows) - 1
-	}
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	if v.cursor < v.offset {
-		v.offset = v.cursor
-	}
-	if vis := v.visible(); v.cursor >= v.offset+vis {
-		v.offset = v.cursor - vis + 1
-	}
-	if v.offset < 0 {
-		v.offset = 0
-	}
 }
 
 // visible is the row budget under the header, minus the bottom preview

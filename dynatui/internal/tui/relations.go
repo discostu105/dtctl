@@ -23,10 +23,9 @@ type relationsView struct {
 	entity catalog.Entity
 	tf     catalog.Timeframe
 
-	rows   []catalog.Edge
-	names  map[string]string // id → display name (second query)
-	cursor int
-	offset int
+	rows  []catalog.Edge
+	names map[string]string // id → display name (second query)
+	scroller
 
 	embedded bool // detail-page tab: the page header already names the entity
 
@@ -144,15 +143,10 @@ func (v *relationsView) resolveNames() tea.Cmd {
 }
 
 func (v *relationsView) handleKey(msg tea.KeyMsg) tea.Cmd {
+	if v.scroller.handleKey(msg.String(), len(v.rows), v.visible()) {
+		return nil
+	}
 	switch msg.String() {
-	case "up", "k":
-		v.move(-1)
-	case "down", "j":
-		v.move(1)
-	case "home", "g":
-		v.cursor, v.offset = 0, 0
-	case "end", "G":
-		v.move(len(v.rows))
 	case "enter":
 		if _, e := v.Selection(); e != nil {
 			entity := *e
@@ -162,21 +156,8 @@ func (v *relationsView) handleKey(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
-func (v *relationsView) move(delta int) {
-	v.cursor += delta
-	if v.cursor >= len(v.rows) {
-		v.cursor = len(v.rows) - 1
-	}
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	if v.cursor < v.offset {
-		v.offset = v.cursor
-	}
-	if vis := max(v.height-2, 1); v.cursor >= v.offset+vis {
-		v.offset = v.cursor - vis + 1
-	}
-}
+// visible is the row budget under the header line.
+func (v *relationsView) visible() int { return max(v.height-2, 1) }
 
 // relationLabel renders the edge together with the neighbor's type so each
 // row reads as a sentence around the arrow: "calls → HOST" (we do it to the

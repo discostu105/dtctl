@@ -107,10 +107,15 @@ func (d *dataSource) fieldDoc(key string) (catalog.FieldDoc, bool) {
 	return doc, ok
 }
 
-// dataMsg is the result of an async query. owner identifies the view that
-// issued it (results for popped or superseded views are discarded by seq).
-// metrics is the response's metric-catalogue metadata (metadata.metrics[]);
-// it is populated only for queries issued via queryEnriched.
+// dataMsg is the result of an async query. owner identifies the query slot
+// that issued it: the view itself for its main query, or a per-slot tag type
+// (enrichOwner, pulseOwner, …) for secondary queries. The tag TYPE is the
+// slot's compile-checked routing key — tags may carry routing payload
+// (panelOwner.idx, facetOwner.field) — while seq guards staleness; most
+// slots deliberately share their view's seq so one Refresh invalidates every
+// in-flight secondary at once. metrics is the response's metric-catalogue
+// metadata (metadata.metrics[]); it is populated only for queries issued via
+// queryEnriched.
 type dataMsg struct {
 	owner   any
 	seq     int

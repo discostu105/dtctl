@@ -23,9 +23,8 @@ type timelineView struct {
 	tf        catalog.Timeframe
 	lens      int
 
-	rows    []catalog.TimelineRow
-	cursor  int
-	offset  int
+	rows []catalog.TimelineRow
+	scroller
 	loading bool
 	err     error
 	seq     int
@@ -169,19 +168,10 @@ func (v *timelineView) setLens(i int, wrap bool) tea.Cmd {
 }
 
 func (v *timelineView) handleKey(msg tea.KeyMsg) tea.Cmd {
+	if v.scroller.handleKey(msg.String(), len(v.rows), v.visible()) {
+		return nil
+	}
 	switch key := msg.String(); key {
-	case "up", "k":
-		v.move(-1)
-	case "down", "j":
-		v.move(1)
-	case "pgup", "ctrl+b":
-		v.move(-v.visible())
-	case "pgdown", "ctrl+f", " ":
-		v.move(v.visible())
-	case "home", "g":
-		v.cursor, v.offset = 0, 0
-	case "end", "G":
-		v.move(len(v.rows))
 	case "]", "tab":
 		return v.setLens(v.lens+1, true)
 	case "[", "shift+tab":
@@ -217,25 +207,6 @@ func (v *timelineView) handleKey(msg tea.KeyMsg) tea.Cmd {
 		return func() tea.Msg { return pushViewMsg{spec: spec, scope: scope} }
 	}
 	return nil
-}
-
-func (v *timelineView) move(delta int) {
-	v.cursor += delta
-	if v.cursor >= len(v.rows) {
-		v.cursor = len(v.rows) - 1
-	}
-	if v.cursor < 0 {
-		v.cursor = 0
-	}
-	if v.cursor < v.offset {
-		v.offset = v.cursor
-	}
-	if vis := v.visible(); v.cursor >= v.offset+vis {
-		v.offset = v.cursor - vis + 1
-	}
-	if v.offset < 0 {
-		v.offset = 0
-	}
 }
 
 // visible is the row budget under the header and lens strip, minus the
