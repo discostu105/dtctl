@@ -200,11 +200,11 @@ type refreshTickMsg struct{ gen int }
 type spinnerTickMsg struct{}
 
 func newApp(opts Options) (*app, error) {
-	ci := textinput.New()
+	ci := newTextInput()
 	ci.Prompt = ":"
 	ci.PromptStyle = theme.Crumb
 	ci.CharLimit = 64
-	ti := textinput.New()
+	ti := newTextInput()
 	ti.Prompt = "last "
 	ti.PromptStyle = theme.Crumb
 	ti.Placeholder = "45m · 12h · 3d"
@@ -481,7 +481,7 @@ func (a *app) ensureSpin() tea.Cmd {
 }
 
 func spinTick() tea.Cmd {
-	return tea.Tick(90*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
+	return tick(90*time.Millisecond, func(time.Time) tea.Msg { return spinnerTickMsg{} })
 }
 
 // navigate pushes a view (or replaces the stack for command-bar jumps),
@@ -943,7 +943,7 @@ func (a *app) quit() tea.Cmd {
 
 func (a *app) scheduleRefresh() tea.Cmd {
 	gen := a.refreshGen
-	return tea.Tick(refreshIntervals[a.refreshIdx], func(time.Time) tea.Msg {
+	return tick(refreshIntervals[a.refreshIdx], func(time.Time) tea.Msg {
 		return refreshTickMsg{gen: gen}
 	})
 }

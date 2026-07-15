@@ -166,7 +166,7 @@ type navPreviewOwner struct {
 type navPreviewTickMsg struct{ gen int }
 
 func newNavView(ds *dataSource, tf catalog.Timeframe) *navView {
-	fi := textinput.New()
+	fi := newTextInput()
 	fi.Prompt = "/"
 	fi.CharLimit = 64
 	return &navView{
@@ -910,7 +910,7 @@ func (v *navView) schedulePreview() tea.Cmd {
 	}
 	v.previewGen++
 	gen := v.previewGen
-	return tea.Tick(250*time.Millisecond, func(time.Time) tea.Msg { return navPreviewTickMsg{gen: gen} })
+	return tick(250*time.Millisecond, func(time.Time) tea.Msg { return navPreviewTickMsg{gen: gen} })
 }
 
 func (v *navView) rightPaneVisible() bool {

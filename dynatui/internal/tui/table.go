@@ -208,10 +208,10 @@ type facetOwner struct {
 }
 
 func newTableView(ds *dataSource, spec *catalog.Spec, scope catalog.Scope) *tableView {
-	ti := textinput.New()
+	ti := newTextInput()
 	ti.Prompt = "/"
 	ti.CharLimit = 64
-	fi := textinput.New()
+	fi := newTextInput()
 	fi.Prompt = "⌕ "
 	fi.CharLimit = 64
 	return &tableView{ds: ds, spec: spec, scope: scope, filterInput: ti, facetInput: fi, sortCol: -1, facetEdit: -1}

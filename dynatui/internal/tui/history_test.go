@@ -83,7 +83,7 @@ func TestHistorySurvivesSessions(t *testing.T) {
 	seedRows(t, a, []map[string]any{problemRow()})
 	press(a, key("l")) // problems › logs
 	press(a, key("/"))
-	for _, r := range "co" { // each simulated keystroke costs a blink tick — keep it short
+	for _, r := range "co" {
 		press(a, key(string(r)))
 	}
 	press(a, key("enter")) // promote to a server-side search

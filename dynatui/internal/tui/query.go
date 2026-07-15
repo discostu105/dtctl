@@ -33,7 +33,7 @@ type queryView struct {
 }
 
 func newQueryView(ds *dataSource, dql string, tf catalog.Timeframe, hist *queryHistory) *queryView {
-	ta := textarea.New()
+	ta := newTextArea()
 	ta.Placeholder = "fetch logs | filter status == \"ERROR\"  (enter runs · ctrl+j newline · tab results)"
 	ta.SetHeight(3)
 	ta.CharLimit = 4096

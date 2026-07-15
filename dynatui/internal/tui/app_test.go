@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 
@@ -16,6 +17,16 @@ import (
 // or network is needed. Commands returned by Update are executed manually
 // only when they are known to be side-effect free (navigation messages) —
 // data-source commands are never run.
+
+// A blinking cursor's focus/keystroke commands block for the 530ms blink
+// interval, which deliver() would pay on every simulated key press into a
+// focused input — static mode never emits them. Timer commands (spinner,
+// preview debounce) would likewise sleep their full interval when deliver()
+// executes them, so tests run them at zero delay.
+func init() {
+	inputCursorMode = cursor.CursorStatic
+	tickDelay = func(time.Duration) time.Duration { return 0 }
+}
 
 func testApp(t *testing.T, initial string) *app {
 	t.Helper()
@@ -98,8 +109,10 @@ func deliver(a *app, cmd tea.Cmd) {
 		return
 	}
 	// Spinner ticks would re-arm themselves forever while a view waits on
-	// data that never arrives in tests.
-	if _, isTick := msg.(spinnerTickMsg); isTick {
+	// data that never arrives in tests; refresh ticks re-arm too, and at the
+	// zero test tick delay either would recurse without bound.
+	switch msg.(type) {
+	case spinnerTickMsg, refreshTickMsg:
 		return
 	}
 	_, next := a.Update(msg)

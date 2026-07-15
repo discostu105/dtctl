@@ -96,7 +96,7 @@ type fieldRow struct {
 }
 
 func newInspectorView(ds *dataSource, title string, rec map[string]any) *inspectorView {
-	si := textinput.New()
+	si := newTextInput()
 	si.Prompt = "/"
 	si.CharLimit = 64
 	return &inspectorView{title: title, rec: rec, ds: ds, searchInput: si,
