@@ -158,7 +158,6 @@ func TestNavNameSearchMultiMatchDisambiguates(t *testing.T) {
 
 // `dynatui nav <arg>` — the CLI form of the :nav argument (Options.InitialArg).
 func TestNavCLIArgumentRoutesTheInitialView(t *testing.T) {
-	previewEnabled = true
 	a, err := newApp(Options{ContextName: "test", SafetyLevel: "readonly",
 		InitialView: "nav", InitialArg: "HOST-0D8DA6F3E704257C"})
 	if err != nil {
@@ -200,7 +199,7 @@ func TestWalkGroupsHopsAndBacktracks(t *testing.T) {
 		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
 		edgeRec("SERVICE-1", "SERVICE", "routes_to", "K8S_POD-checkout-1", "K8S_POD"),
 	})
-	disablePreview(t) // keep the test synchronous (no debounce ticks)
+	disablePreview(a) // keep the test synchronous (no debounce ticks)
 
 	// Flattened tree: root, runs_on group, node, routes_to group, service.
 	kinds := make([]navRowKind, len(v.rows))
@@ -247,7 +246,7 @@ func TestWalkDirectionAndMeshToggles(t *testing.T) {
 		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
 		edgeRec("SERVICE-1", "SERVICE", "routes_to", "K8S_POD-checkout-1", "K8S_POD"),
 	})
-	disablePreview(t)
+	disablePreview(a)
 
 	neighborIDs := func() []string {
 		var out []string
@@ -284,7 +283,7 @@ func TestWalkGroupCapAndExpand(t *testing.T) {
 			fmt.Sprintf("SERVICE-%02d", i), "SERVICE"))
 	}
 	v := seedNav(t, a, recs)
-	disablePreview(t)
+	disablePreview(a)
 
 	count := func(kind navRowKind) int {
 		n := 0
@@ -322,7 +321,7 @@ func TestOverviewEnterOpensBrowserThenWalk(t *testing.T) {
 	seedNav(t, a, []map[string]any{
 		{"id": "SERVICE-1", "name": "checkout", "display": "checkout", "type": "SERVICE"},
 	})
-	disablePreview(t)
+	disablePreview(a)
 	press(a, key("enter"))
 	wv, ok := a.top().(*navView)
 	if !ok || wv.mode != navWalk || wv.root.ID != "SERVICE-1" || wv.root.Name != "checkout" {
@@ -396,7 +395,7 @@ func TestWalkDrillScopesToHighlightedNode(t *testing.T) {
 	seedNav(t, a, []map[string]any{
 		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
 	})
-	disablePreview(t)
+	disablePreview(a)
 	press(a, key("j"))
 	press(a, key("j")) // the K8S_NODE neighbor
 	press(a, key("l"))

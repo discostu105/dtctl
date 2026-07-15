@@ -101,7 +101,7 @@ func (v *waterfallView) Hints() []keyHint {
 		{"enter", "span attributes"}, {"l", "trace logs"}, {"x", "topology"},
 		{"y", "yank trace id"}, {"o", "open"},
 	}
-	if !previewEnabled {
+	if !v.ds.previewOn() {
 		hints = append(hints, keyHint{"P", "preview"})
 	}
 	return hints
@@ -224,7 +224,7 @@ func (v *waterfallView) move(delta int) {
 // panel's bite when that layout is active.
 func (v *waterfallView) visible() int {
 	h := v.height - 1
-	if previewBottomOn(v.width, v.height) {
+	if previewBottomOn(v.ds.previewOn(), v.width, v.height) {
 		h -= previewBottomH + 1
 	}
 	return max(h, 1)
@@ -313,7 +313,7 @@ func parseTimeNs(iso string) int64 {
 
 func (v *waterfallView) View(width, height int) string {
 	v.width, v.height = width, height
-	return previewLayout(width, height, v.renderBody, v.previewLines)
+	return previewLayout(v.ds.previewOn(), width, height, v.renderBody, v.previewLines)
 }
 
 func (v *waterfallView) renderBody(width, height int) string {

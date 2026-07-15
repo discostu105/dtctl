@@ -91,7 +91,7 @@ func (v *timelineView) Hints() []keyHint {
 	}
 	hints = append(hints,
 		keyHint{"e", "events table"}, keyHint{"x", "relations"}, keyHint{"o", "open"})
-	if !previewEnabled {
+	if !v.ds.previewOn() {
 		hints = append(hints, keyHint{"P", "preview"})
 	}
 	return hints
@@ -242,7 +242,7 @@ func (v *timelineView) move(delta int) {
 // bottom preview panel's bite when that layout is active.
 func (v *timelineView) visible() int {
 	h := v.height - 2
-	if previewBottomOn(v.width, v.height) {
+	if previewBottomOn(v.ds.previewOn(), v.width, v.height) {
 		h -= previewBottomH + 1
 	}
 	return max(h, 1)
@@ -250,7 +250,7 @@ func (v *timelineView) visible() int {
 
 func (v *timelineView) View(width, height int) string {
 	v.width, v.height = width, height
-	return previewLayout(width, height, v.renderBody, v.previewLines)
+	return previewLayout(v.ds.previewOn(), width, height, v.renderBody, v.previewLines)
 }
 
 func (v *timelineView) renderBody(width, height int) string {

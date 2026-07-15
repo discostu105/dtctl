@@ -592,8 +592,8 @@ func (a *app) handleKey(msg tea.KeyMsg) tea.Cmd {
 			// The peek pane is an app-wide preference, not per-view state:
 			// every table and navigator pane follows it, nested ones
 			// included, and views pushed later inherit it.
-			previewEnabled = !previewEnabled
-			if !previewEnabled {
+			a.ds.previewOff = !a.ds.previewOff
+			if a.ds.previewOff {
 				return status("preview pane off (P restores it)")
 			}
 			cmd := status("preview pane on")

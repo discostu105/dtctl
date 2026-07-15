@@ -80,14 +80,6 @@ type tableView struct {
 	width, height int
 }
 
-// previewEnabled is the app-wide peek-pane preference, toggled with P. A
-// package global on purpose: every table and navigator pane — including ones
-// nested inside detail tabs — honors the one preference, and views pushed
-// later inherit it without plumbing. The pane costs nothing (it renders the
-// row already fetched), so it defaults to on; the size gates below hide it
-// where it cannot fit.
-var previewEnabled = true
-
 // previewPaneMinWidth is the narrowest screen that fits a side preview; below
 // it the preview renders as a bottom panel instead.
 const previewPaneMinWidth = 110
@@ -102,21 +94,24 @@ const previewBottomMinHeight = 30
 
 // previewSideOn / previewBottomOn are the shared size gates — every
 // record-list view (tables, the trace waterfall, the session timeline)
-// places its preview pane by the same rules.
-func previewSideOn(width int) bool { return previewEnabled && width >= previewPaneMinWidth }
-func previewBottomOn(width, height int) bool {
-	return previewEnabled && width < previewPaneMinWidth && height >= previewBottomMinHeight
+// places its preview pane by the same rules. on is the app-wide preference
+// (dataSource.previewOn).
+func previewSideOn(on bool, width int) bool { return on && width >= previewPaneMinWidth }
+func previewBottomOn(on bool, width, height int) bool {
+	return on && width < previewPaneMinWidth && height >= previewBottomMinHeight
 }
 
-func (v *tableView) previewSide() bool   { return previewSideOn(v.width) }
-func (v *tableView) previewBottom() bool { return previewBottomOn(v.width, v.height) }
+func (v *tableView) previewSide() bool { return previewSideOn(v.ds.previewOn(), v.width) }
+func (v *tableView) previewBottom() bool {
+	return previewBottomOn(v.ds.previewOn(), v.width, v.height)
+}
 
 // previewLayout composes a view body with the selected row's preview pane: a
 // side pane on wide screens, a bottom panel on narrow-but-tall ones, the body
 // alone otherwise (cramped screens, or preview toggled off with P).
-func previewLayout(width, height int, body func(w, h int) string, preview func(w int) []string) string {
+func previewLayout(on bool, width, height int, body func(w, h int) string, preview func(w int) []string) string {
 	switch {
-	case previewSideOn(width):
+	case previewSideOn(on, width):
 		paneW := width * 2 / 5
 		if paneW > 48 {
 			paneW = 48
@@ -147,7 +142,7 @@ func previewLayout(width, height int, body func(w, h int) string, preview func(w
 			}
 		}
 		return b.String()
-	case previewBottomOn(width, height):
+	case previewBottomOn(on, width, height):
 		bodyH := max(height-previewBottomH-1, 1)
 		out := body(width, bodyH)
 		if gap := bodyH - lipgloss.Height(out); gap > 0 {
@@ -403,7 +398,7 @@ func (v *tableView) Hints() []keyHint {
 			hints = append(hints, keyHint{"tab", "lens"})
 		}
 	}
-	if !previewEnabled {
+	if !v.ds.previewOn() {
 		hints = append(hints, keyHint{"P", "preview"})
 	}
 	switch {
@@ -1553,7 +1548,7 @@ func (v *tableView) View(width, height int) string {
 		return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Position(0.2),
 			theme.OverlayBox.Render(v.renderFacetPicker()))
 	}
-	return previewLayout(width, height, v.renderTable, v.previewLines)
+	return previewLayout(v.ds.previewOn(), width, height, v.renderTable, v.previewLines)
 }
 
 // previewLines renders the selected row's peek pane: identity, then the

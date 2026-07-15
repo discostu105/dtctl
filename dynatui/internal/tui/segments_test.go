@@ -52,7 +52,6 @@ func namespaceRows() []map[string]any {
 // testApp but with segment options set before Init runs.
 func testAppSeeded(t *testing.T, opts Options) *app {
 	t.Helper()
-	previewEnabled = true
 	a, err := newApp(opts)
 	if err != nil {
 		t.Fatal(err)

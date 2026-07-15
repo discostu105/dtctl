@@ -38,14 +38,14 @@ func TestTablePreviewPane(t *testing.T) {
 	withPreview := tv.pageSize()
 	// P flips the app-wide preference — the pane disappears everywhere.
 	press(a, key("P"))
-	if previewEnabled || tv.previewBottom() {
+	if a.ds.previewOn() || tv.previewBottom() {
 		t.Fatal("P should turn the preview off")
 	}
 	if tv.pageSize() <= withPreview {
 		t.Error("hiding the bottom preview must grow the page size")
 	}
 	press(a, key("P"))
-	if !previewEnabled || !tv.previewBottom() {
+	if !a.ds.previewOn() || !tv.previewBottom() {
 		t.Fatal("P should turn the preview back on")
 	}
 	// Short screens auto-hide the bottom panel: its ten-line bite would
@@ -338,7 +338,7 @@ func TestNavigatorSpacePagesZFolds(t *testing.T) {
 		edgeRec("K8S_POD-checkout-1", "K8S_POD", "runs_on", "K8S_NODE-1", "K8S_NODE"),
 		edgeRec("SERVICE-1", "SERVICE", "routes_to", "K8S_POD-checkout-1", "K8S_POD"),
 	})
-	disablePreview(t)
+	disablePreview(a)
 
 	press(a, key("j")) // onto the runs_on group row
 	rows := len(v.rows)

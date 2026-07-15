@@ -40,7 +40,19 @@ type dataSource struct {
 	// API-backed sources above deliberately don't see them (REST endpoints
 	// have no segment parameter).
 	segments []exec.FilterSegmentRef
+
+	// previewOff inverts the app-wide peek-pane preference (the P toggle).
+	// It rides on the shared dataSource — the one object every view already
+	// holds — so panes nested inside detail tabs and views pushed later
+	// honor the one preference without plumbing. Stored inverted so the
+	// zero value keeps the default of on: the pane costs nothing (it
+	// renders the row already fetched), and the size gates in table.go hide
+	// it where it cannot fit.
+	previewOff bool
 }
+
+// previewOn reports the app-wide peek-pane preference (toggled with P).
+func (d *dataSource) previewOn() bool { return !d.previewOff }
 
 // execOpts builds one query's execution options — extracted so tests can
 // assert the segment injection without HTTP (the runFn seam skips it).

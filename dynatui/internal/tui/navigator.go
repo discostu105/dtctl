@@ -74,7 +74,7 @@ type navView struct {
 
 	// preview debounce: cursor movement bumps the generation; the fetch fires
 	// only when the tick comes back with the current one. Whether the pane
-	// shows at all follows the app-wide previewEnabled preference (P).
+	// shows at all follows the app-wide preference (ds.previewOn, P toggles).
 	previewGen int
 
 	rows []navRow // flattened cursor rows for the current mode
@@ -271,7 +271,7 @@ func (v *navView) Hints() []keyHint {
 			{"i", "direction"}, {"M", "mesh"}, {"/", "filter"}}
 	}
 	hints := []keyHint{{"enter", "browse type"}, {"/", "filter"}}
-	if !previewEnabled {
+	if !v.ds.previewOn() {
 		hints = append(hints, keyHint{"P", "pane"})
 	}
 	return hints
@@ -914,7 +914,7 @@ func (v *navView) schedulePreview() tea.Cmd {
 }
 
 func (v *navView) rightPaneVisible() bool {
-	return previewEnabled && v.width >= 100
+	return v.ds.previewOn() && v.width >= 100
 }
 
 // --- rendering ------------------------------------------------------------------
