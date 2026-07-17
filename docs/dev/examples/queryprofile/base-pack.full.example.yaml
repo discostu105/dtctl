@@ -56,6 +56,7 @@ recipes:
   postgres-instances:
     description: "PostgreSQL instances known to Smartscape"
     requires: [postgres]
+    portability: "DB_INSTANCE_POSTGRES covers OneAgent-detected Postgres only — Azure-flavored tenants expose AZURE_MICROSOFT_DBFORPOSTGRESQL_* types instead (verified: 0 vs 56k entities on one tenant); needs platform variants"
     dql: |
       smartscapeNodes "DB_INSTANCE_POSTGRES"
       | fieldsRemove references
@@ -110,6 +111,7 @@ recipes:
   nodes-inventory:
     description: "K8s nodes with kubelet version, OS image, instance type, zone"
     requires: [k8s]
+    portability: "HARD-FAILS (INNER_FIELD_OF_FIELD_DOES_NOT_EXIST) on tenants without synced k8s labels — inner-map access on an absent field errors, unlike top-level fields which compare null-safe. Failed on 2 of 4 verified tenants; needs a label-free variant selected by carriage"
     dql: |
       smartscapeNodes "K8S_NODE"
       | parse k8s.object, "JSON:obj"
@@ -339,6 +341,7 @@ recipes:
   bizevents-producers:
     description: "Business event volume by type and provider (24h floor)"
     requires: [bizevents]
+    portability: "on very large tenants the unsampled 24h scan hits the 500 GB scan limit and returns PARTIAL results with only a warning — verification must read warnings and stamp verified-partial"
     dql: |
       fetch bizevents, from:now() - 24h
       | summarize c = count(), by:{event.type, event.provider}
@@ -513,6 +516,7 @@ recipes:
   synthetic-monitors:
     description: "All synthetic monitors (browser + HTTP union; classic entity tables, not Smartscape)"
     requires: [synthetic]
+    portability: "UNKNOWN_DATA_OBJECT on tenants without the classic entity tables, even where dt.synthetic.events exists — guard on dt.system.data_objects, not on the synthetic capability"
     dql: |
       fetch dt.entity.synthetic_test
       | fieldsAdd lifetime, tags

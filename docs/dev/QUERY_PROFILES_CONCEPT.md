@@ -215,9 +215,12 @@ against live tenants first:
   tenants (§10.1).
 - [examples/queryprofile/tenant-profile.box.generated.yaml](examples/queryprofile/tenant-profile.box.generated.yaml)
   / [tenant-profile.demo.generated.yaml](examples/queryprofile/tenant-profile.demo.generated.yaml)
-  — **actual generation outputs** for the two tenants, in the *referencing*
-  form (pack pointer + verification stamp instead of DQL copies): same pack,
-  radically different survival (38 usable + 6 disabled vs 44/44).
+  / [tenant-profile.fxz.generated.yaml](examples/queryprofile/tenant-profile.fxz.generated.yaml)
+  / [tenant-profile.gmg.generated.yaml](examples/queryprofile/tenant-profile.gmg.generated.yaml)
+  — **actual generation outputs** for four tenants of very different
+  character, in the *referencing* form (pack pointer + verification stamp
+  instead of DQL copies): the same pack survives as 38, 44, 41, and 42 usable
+  recipes with per-tenant disabled lists, floors, and scan-limit partials.
 
 **How large do profiles grow?** Measured, not estimated — the full 44-recipe
 pack is **530 lines** (~12 lines/recipe in compact pack form; a fully-templated
@@ -531,27 +534,32 @@ which is the argument for generating facts instead of assuming them.
   universal; the `takeLast ... by:{display_id}` dedup stays as a cheap
   defensive pattern, not as a load-bearing assumption.
 
-### 10.1 Pack simulation: 44 recipes × 2 tenants (2026-07-17)
+### 10.1 Pack simulation: 44 recipes × 4 tenants (2026-07-17)
 
 To test the whole pipeline in practice, a 44-recipe pack was assembled (15
 recipes distilled from the dynatui catalog, 29 from the dynatrace-for-ai
 skills — deliberately kept verbatim, including a skill's `status == "ERROR"`
-log filter and uppercase `AND`s) and executed end-to-end against both tenants:
-88 runs plus 7 classification probes. Results:
+log filter and uppercase `AND`s) and executed end-to-end against four tenants
+of very different character: a small OTel-centric dev tenant, a fully-loaded
+demo tenant, a network-observability tenant (Juniper/external network devices,
+synthetic locations), and a very large enterprise tenant (280k OS services,
+66M spans/hour). 176 recipe runs plus classification probes. Results:
 
-| | dev tenant | demo tenant |
-|---|---|---|
-| executed cleanly | 44/44 | 44/44 |
-| syntax/field errors | **0** | **0** |
-| returned data | 28 | **44** |
-| verified-empty (threshold/transient) | 10 | 0 |
-| disabled with evidence | 6 | 0 |
+| | dev | demo | netobs | large |
+|---|---|---|---|---|
+| executed cleanly | 44 | 44 | 42 | 43 |
+| hard query errors | 0 | 0 | **2** | **1** |
+| returned data | 28 | 44 | 38 | 41 |
+| verified-empty (threshold/transient) | 10 | 0 | 2 | 1 |
+| disabled with evidence | 6 | 0 | 3 | 2 |
+| scan-limit partials | 0 | 0 | 0 | **1** |
 
-The headline: **the mined DQL corpus is essentially all syntactically valid
-everywhere — divergence is entirely about data presence.** That confirms the
-core bet: the pack can be universal, and generation is about *pruning and
-annotating*, not fixing queries. The run also forced five generator-design
-lessons that are now pack semantics (`verify:` hints in the full pack file):
+The two-tenant headline ("zero errors — divergence is only data presence")
+did **not** survive tenants three and four, and that correction is the
+strongest evidence for the concept: 173/176 runs were clean, but three hard
+errors appeared that only per-tenant verification can catch. The run forced
+these generator-design lessons, now pack semantics (`verify:`/`portability:`
+hints in the full pack file):
 
 1. **Record-count verification lies for single-row aggregates.** A severity
    summary returned "1 record" on a tenant with zero detections — every count
@@ -573,11 +581,40 @@ lessons that are now pack semantics (`verify:` hints in the full pack file):
    sparse makes a recipe misleading, not merely weak; the profile disables it
    with the coverage number as the reason.
 5. **Cost belongs in the stamp.** The 24h group-by-content log recipe took
-   11.8s on the big tenant while the median recipe took 0.7s. The probe
-   already sees execution time (and the envelope carries `scannedBytes`);
-   recording it per recipe lets agents prefer the cheap recipe for trend
-   questions — the profile's answer to dynatui's ADR-0013 query budget.
+   11.8s on the demo tenant; the metrics catalog took 2.4s on the dev tenant
+   and **34s** on the large one. The probe already sees execution time (and
+   the envelope carries `scannedBytes`); recording it per recipe lets agents
+   prefer the cheap recipe — the profile's answer to dynatui's ADR-0013 query
+   budget, and load-bearing at enterprise scale.
+6. **Hard errors exist, and they're portability classes, not typos.** The
+   dynatui nodes query hard-fails (`INNER_FIELD_OF_FIELD_DOES_NOT_EXIST`) on
+   2 of 4 tenants: inner-map access on an absent field (`` `tags:k8s.labels`[…] ``)
+   *errors*, unlike top-level absent fields which compare null-safely. And
+   `fetch dt.entity.synthetic_test` throws `UNKNOWN_DATA_OBJECT` on a tenant
+   that *has* synthetic data in `dt.synthetic.events` — table existence must
+   be guarded via `dt.system.data_objects`, not inferred from the capability.
+   Both queries were live-validated when written; only cross-tenant probing
+   exposed them. Fix shape: carriage-selected variants (label-free nodes) and
+   data-object guards.
+7. **Scan limits create verified-partial.** On the large tenant the 24h
+   bizevents scan stopped at Grail's 500 GB limit and returned plausible
+   results *plus a warning* — silently incomplete to any consumer that
+   ignores stderr. The profile stamps these `partial:` with the remediation
+   (sampling/bucket filter), and the envelope-warnings prerequisite (§3)
+   graduates from nice-to-have to mandatory.
+8. **Entity types are platform-flavored.** The Postgres recipe
+   (`DB_INSTANCE_POSTGRES`) is empty on a tenant holding 56k
+   `AZURE_MICROSOFT_DBFORPOSTGRESQL_*` entities — same technology, different
+   Smartscape types per integration. Packs need per-platform variants keyed
+   off the entity census.
+9. **Instrumentation variance is per-field even within one capability.** One
+   tenant's GenAI spans (azure.ai.openai) carry usage tokens and provider but
+   a null `gen_ai.request.model` — so token recipes verify while by-model
+   recipes are structurally empty. A capability flag is never enough; the
+   carriage matrix is the real contract.
 
-Two smaller confirmations: `smartscapeNodes "AWS_*"` wildcards and the
-composed KSPM latest-scan join both worked unmodified on both tenants, and
-the demo tenant's only surprise was cost, not correctness.
+Smaller confirmations: `smartscapeNodes "AWS_*"` wildcards and the composed
+KSPM latest-scan join worked unmodified on all four tenants; the GenAI 24h
+floor validated again (0 spans at 2h vs 30 at 24h on the netobs tenant); and
+`attacks-recent` proved the transient class (detections exist on all four
+tenants over 24h, none from RAP in a 2h window on three of them).
