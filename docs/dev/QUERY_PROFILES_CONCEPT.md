@@ -198,29 +198,43 @@ Notes on the schema:
 
 ### 2.3 Example files, size, and complexity
 
-Two complete, worked examples live next to this doc — all recipe DQL in them
-was executed against live tenants first:
+Worked examples live next to this doc — all recipe DQL in them was executed
+against live tenants first:
 
 - [examples/queryprofile/tenant-profile.example.yaml](examples/queryprofile/tenant-profile.example.yaml)
-  — a generated tenant layer: facts (incl. carriage matrix and discovered
-  segments), scoping with coverage, 11 full recipes across k8s / services /
-  logs / problems / RUM / security / metrics, and 3 disabled entries with
-  reasons.
+  — the *materialized* tenant-layer form: facts (incl. carriage matrix and
+  discovered segments), scoping with coverage, 11 fully-templated recipes,
+  and disabled entries with reasons.
 - [examples/queryprofile/base-pack.example.yaml](examples/queryprofile/base-pack.example.yaml)
-  — the pack side: capability guards (`requires:`), carriage-conditional
+  — pack mechanisms: capability guards (`requires:`), carriage-conditional
   variants (the era decision as data), and verification specs (probe vs
   coverage-map).
+- [examples/queryprofile/base-pack.full.example.yaml](examples/queryprofile/base-pack.full.example.yaml)
+  — a **full 44-recipe pack** mined from the dynatui catalog (15) and the
+  dynatrace-for-ai skills (29), every DQL body executed verbatim on two live
+  tenants (§10.1).
+- [examples/queryprofile/tenant-profile.box.generated.yaml](examples/queryprofile/tenant-profile.box.generated.yaml)
+  / [tenant-profile.demo.generated.yaml](examples/queryprofile/tenant-profile.demo.generated.yaml)
+  — **actual generation outputs** for the two tenants, in the *referencing*
+  form (pack pointer + verification stamp instead of DQL copies): same pack,
+  radically different survival (38 usable + 6 disabled vs 44/44).
 
-**How large do profiles grow?** Measured from the example: a complete recipe
-averages ~25 lines of YAML (range 15–40; the DQL body is 8–20 lines). A
-serious tenant profile covering the dynatui catalog's breadth plus org recipes
-lands around 40–80 recipes:
+**How large do profiles grow?** Measured, not estimated — the full 44-recipe
+pack is **530 lines** (~12 lines/recipe in compact pack form; a fully-templated
+recipe with params runs ~25 lines), and the two *generated* tenant profiles in
+referencing form are **~160 lines each** regardless of pack size:
 
-| Part | Size |
+| Part | Size (measured) |
 |---|---|
-| facts + scoping + segments | 100–250 lines |
-| 40–80 recipes × ~25 lines | 1,000–2,500 lines |
-| whole file | ~1,500–3,000 lines, 40–80 KB, ~10–25k tokens |
+| 44-recipe pack (compact) | 530 lines |
+| fully-templated recipe (materialized) | ~25 lines each |
+| generated tenant profile, referencing form | ~160 lines (facts + stamps + overrides + disabled) |
+| projected 80-recipe pack, fully templated | ~2,000–2,500 lines, 50–70 KB |
+
+The referencing form is the important discovery: the tenant layer does not
+need to duplicate pack DQL — a pack pointer plus a verification stamp (and an
+`override:` only where the tenant diverges, e.g. a floored timeframe) keeps
+the per-tenant artifact small, diffable, and regenerable.
 
 That is fine on disk and hopeless as agent context — which is why the CLI
 surface is progressive: `profile show` returns facts only (~1–2k tokens),
@@ -516,3 +530,54 @@ which is the argument for generating facts instead of assuming them.
   the "transition log" behavior from dynatui's learnings is real but not
   universal; the `takeLast ... by:{display_id}` dedup stays as a cheap
   defensive pattern, not as a load-bearing assumption.
+
+### 10.1 Pack simulation: 44 recipes × 2 tenants (2026-07-17)
+
+To test the whole pipeline in practice, a 44-recipe pack was assembled (15
+recipes distilled from the dynatui catalog, 29 from the dynatrace-for-ai
+skills — deliberately kept verbatim, including a skill's `status == "ERROR"`
+log filter and uppercase `AND`s) and executed end-to-end against both tenants:
+88 runs plus 7 classification probes. Results:
+
+| | dev tenant | demo tenant |
+|---|---|---|
+| executed cleanly | 44/44 | 44/44 |
+| syntax/field errors | **0** | **0** |
+| returned data | 28 | **44** |
+| verified-empty (threshold/transient) | 10 | 0 |
+| disabled with evidence | 6 | 0 |
+
+The headline: **the mined DQL corpus is essentially all syntactically valid
+everywhere — divergence is entirely about data presence.** That confirms the
+core bet: the pack can be universal, and generation is about *pruning and
+annotating*, not fixing queries. The run also forced five generator-design
+lessons that are now pack semantics (`verify:` hints in the full pack file):
+
+1. **Record-count verification lies for single-row aggregates.** A severity
+   summary returned "1 record" on a tenant with zero detections — every count
+   was 0. Single-row summaries need value-level verification
+   (`verify: aggregate-values`). This was a real false-verified caught only
+   because the probe was re-checked.
+2. **Threshold-empty ≠ capability-absent.** Ten of the dev tenant's 16
+   empties were healthy findings ("no host >80% CPU", "no OOMKills") — the
+   capability existed (66k `dt.kubernetes.*` series). The generator must
+   probe the capability *without* the threshold filter, then stamp the
+   thresholded recipe (`verify: threshold`); the two states must read
+   differently to an agent.
+3. **Floors are load-bearing.** GenAI spans: 0 in a 2h window, 4,566 in 24h
+   on the same tenant. dynatui's `floorTimeframe` pattern (sessions, vulns,
+   bizevents) becomes a pack-level `floor:` attribute, and the tenant layer
+   records the applied floor as an `override:`.
+4. **Carriage thresholds disable recipes.** `dt.failure_detection.results`
+   exists on the dev tenant — on 5 of 143,707 spans (0.003%). A field that
+   sparse makes a recipe misleading, not merely weak; the profile disables it
+   with the coverage number as the reason.
+5. **Cost belongs in the stamp.** The 24h group-by-content log recipe took
+   11.8s on the big tenant while the median recipe took 0.7s. The probe
+   already sees execution time (and the envelope carries `scannedBytes`);
+   recording it per recipe lets agents prefer the cheap recipe for trend
+   questions — the profile's answer to dynatui's ADR-0013 query budget.
+
+Two smaller confirmations: `smartscapeNodes "AWS_*"` wildcards and the
+composed KSPM latest-scan join both worked unmodified on both tenants, and
+the demo tenant's only surprise was cost, not correctness.

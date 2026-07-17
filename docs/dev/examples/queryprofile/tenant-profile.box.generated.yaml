@@ -1,0 +1,165 @@
+# GENERATED tenant profile — real output of the pack-verification run
+# against the "dev-tenant-a" tenant on 2026-07-17 (names anonymized).
+# Referencing form: recipes carry a pack pointer + verification stamp instead
+# of duplicating DQL; `dtctl run` resolves the DQL from the pack unless the
+# tenant layer carries an override.
+
+apiVersion: dtctl.dev/v1alpha1
+kind: QueryProfile
+metadata:
+  name: dev-tenant-a
+  generatedAt: 2026-07-17
+  pack: dynatrace-recipes v2026.07
+  probes: 44 recipes executed, plus 7 classification probes
+
+facts:
+  character: OTel-process-centric dev tenant
+  entityTypes: { OTEL_PROCESS: 3040, K8S_POD: 288, HOST: 13, SERVICE: 12 }
+  capabilities: [k8s, otel-spans, logs, rum, bizevents, davis, security-vulns,
+                 kspm-cis, genai-sparse, aws-config, postgres, dps-billing]
+  absent: [synthetic, rap-detections, cloudwatch-ec2-metrics, oneagent-failure-detection]
+  fieldCarriage:
+    spans: { http.request.method: 0.55, http.method: 0.0, dt.smartscape.service: 1.0,
+             dt.failure_detection.results: 0.00003 }
+    logs: { k8s.pod.name: 0.58, dt.smartscape.service: 0.04, dt.smartscape.k8s_pod: 0.0 }
+
+queries:
+  active-problems-by-category:
+    source: pack:active-problems-by-category@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "transient: none ACTIVE during generation"
+  alert-volume-by-category:
+    source: pack:alert-volume-by-category@2026.07
+    verified: { at: 2026-07-17, records: 6, seconds: 0.7 }
+  aws-census:
+    source: pack:aws-census@2026.07
+    verified: { at: 2026-07-17, records: 40, seconds: 0.7 }
+  aws-resource-inventory:
+    source: pack:aws-resource-inventory@2026.07
+    verified: { at: 2026-07-17, records: 40, seconds: 0.7 }
+  billing-usage-breakdown:
+    source: pack:billing-usage-breakdown@2026.07
+    verified: { at: 2026-07-17, records: 18, seconds: 2.1 }
+  bizevents-producers:
+    source: pack:bizevents-producers@2026.07
+    verified: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  clusters-list:
+    source: pack:clusters-list@2026.07
+    verified: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  core-web-vitals:
+    source: pack:core-web-vitals@2026.07
+    verified: { at: 2026-07-17, records: 2, seconds: 0.6 }
+  cpu-throttling:
+    source: pack:cpu-throttling@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: no container throttled >25%"
+  ebs-volumes-by-state:
+    source: pack:ebs-volumes-by-state@2026.07
+    verified: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  errors-by-process-group:
+    source: pack:errors-by-process-group@2026.07
+    verified: { at: 2026-07-17, records: 10, seconds: 0.7 }
+  frontend-top-exceptions:
+    source: pack:frontend-top-exceptions@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "transient: RUM verified (rum-error-sessions); no exception events in the 2h window — consider 24h floor"
+  genai-error-rate-by-model:
+    source: pack:genai-error-rate-by-model@2026.07
+    verified: { at: 2026-07-17, records: 1, seconds: 0.9 }
+  genai-spans-recent:
+    source: pack:genai-spans-recent@2026.07
+    override: "floored from:now()-2h to now()-24h — 0 spans at 2h, 4566 at 24h"
+    verified: { at: 2026-07-17, records: 0, seconds: 0.7 }
+  genai-token-usage:
+    source: pack:genai-token-usage@2026.07
+    verified: { at: 2026-07-17, records: 1, seconds: 1.0 }
+  high-utilization-hosts:
+    source: pack:high-utilization-hosts@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: host metrics verified; no host >80% during generation"
+  host-inventory-by-os:
+    source: pack:host-inventory-by-os@2026.07
+    verified: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  hosts-inventory:
+    source: pack:hosts-inventory@2026.07
+    verified: { at: 2026-07-17, records: 13, seconds: 0.9 }
+  kspm-compliance-pass-rate:
+    source: pack:kspm-compliance-pass-rate@2026.07
+    verified: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  log-error-rate-over-time:
+    source: pack:log-error-rate-over-time@2026.07
+    verified: { at: 2026-07-17, records: 25, seconds: 0.7 }
+  metrics-catalog:
+    source: pack:metrics-catalog@2026.07
+    verified: { at: 2026-07-17, records: 540, seconds: 2.4 }
+  nodes-inventory:
+    source: pack:nodes-inventory@2026.07
+    verified: { at: 2026-07-17, records: 11, seconds: 0.7 }
+  noisy-detector-configs:
+    source: pack:noisy-detector-configs@2026.07
+    verified: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  pod-restart-patterns:
+    source: pack:pod-restart-patterns@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: no pod >5 restarts in 24h"
+  pods-with-oomkills:
+    source: pack:pods-with-oomkills@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: dt.kubernetes.* metrics verified (66k series); no OOMKills in 24h"
+  postgres-instances:
+    source: pack:postgres-instances@2026.07
+    verified: { at: 2026-07-17, records: 4, seconds: 0.7 }
+  problems-active-dedup:
+    source: pack:problems-active-dedup@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "transient: problems exist over 7d but none ACTIVE during generation"
+  root-cause-by-entity:
+    source: pack:root-cause-by-entity@2026.07
+    verified: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  rum-error-sessions:
+    source: pack:rum-error-sessions@2026.07
+    verified: { at: 2026-07-17, records: 50, seconds: 0.7 }
+  service-performance-summary:
+    source: pack:service-performance-summary@2026.07
+    verified: { at: 2026-07-17, records: 5, seconds: 0.7 }
+  service-red-error-rate:
+    source: pack:service-red-error-rate@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: RED metrics verified (see service-red-percentiles); no service with failures"
+  service-red-percentiles:
+    source: pack:service-red-percentiles@2026.07
+    verified: { at: 2026-07-17, records: 6, seconds: 0.7 }
+  slow-traces:
+    source: pack:slow-traces@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: root spans verified; no request >5s"
+  top-cpu-processes:
+    source: pack:top-cpu-processes@2026.07
+    verified: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: process metrics verified; no process >50% of a core"
+  top-error-messages:
+    source: pack:top-error-messages@2026.07
+    verified: { at: 2026-07-17, records: 20, seconds: 0.7 }
+  top-query-cost-sources:
+    source: pack:top-query-cost-sources@2026.07
+    verified: { at: 2026-07-17, records: 2, seconds: 2.0 }
+  vulns-open-rollup:
+    source: pack:vulns-open-rollup@2026.07
+    verified: { at: 2026-07-17, records: 4, seconds: 0.7 }
+  workloads-status:
+    source: pack:workloads-status@2026.07
+    verified: { at: 2026-07-17, records: 59, seconds: 0.7 }
+
+disabled:
+  attacks-recent:
+    reason: "no DETECTION_FINDING events in 24h — Runtime Application Protection not active"
+  detection-count-by-severity:
+    reason: "probe returned 1 row with Total=0 — no security detections (caught by aggregate-values verification)"
+  failure-reason-breakdown:
+    reason: "dt.failure_detection.results carried on 5 of 143,707 spans (~0.003%) — OTel-dominant tenant, OneAgent failure detection effectively absent"
+  idle-ec2-low-cpu:
+    reason: "metric cloud.aws.ec2.CPUUtilization.By.InstanceId not ingested (only RDS CPUUtilization present)"
+  synthetic-failed-executions:
+    reason: "no synthetic monitors"
+  synthetic-monitors:
+    reason: "no synthetic monitors (dt.entity.synthetic_test and http_check both empty)"

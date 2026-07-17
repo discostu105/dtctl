@@ -1,0 +1,530 @@
+# Example: BASE PACK — full recipe set (mined + live-verified 2026-07-17).
+#
+# Provenance: 15 recipes distilled from the dynatui view catalog (tui branch),
+# 29 from the dynatrace-for-ai skills (dt-obs-*, dt-sec-*, dt-platform-costs,
+# dt-alerting). Every DQL body below was EXECUTED VERBATIM against two live
+# tenants: 88 runs, 0 syntax errors. Divergence between tenants was entirely
+# about data presence — see the two generated tenant profiles next to this
+# file for how the same pack lands differently.
+#
+# Kept deliberately close to the probed form: the generator's packing step
+# (extracting `from:` literals into a {{.timeframe}} param, adding `values:`
+# queries, attaching followups) is shown on the templated exemplars in
+# tenant-profile.example.yaml and omitted here for auditability.
+#
+# `verify:` hints teach the generator HOW to verify:
+#   threshold        — probe the capability without the threshold filter, then
+#                      stamp the recipe; empty-with-capability = "no offenders".
+#   aggregate-values — single-row summaries verify by checking the values,
+#                      never the record count (1 row of zeros is not verified).
+#   transient        — empty may be truthful right now (active problems).
+#   carriage         — check field coverage; disable below a floor (e.g. a
+#                      field on 0.003% of records is not a usable recipe).
+#   capability       — probe an exact metric key / entity type first.
+# `floor:` widens sparse-data windows (dynatui floorTimeframe pattern).
+
+apiVersion: dtctl.dev/v1alpha1
+kind: QueryPack
+metadata:
+  name: dynatrace-recipes
+  version: "2026.07"
+  sources:
+    - dynatui view catalog (15 recipes)
+    - dynatrace-for-ai skills (29 recipes)
+
+recipes:
+
+  # ── discovery ───────────────────────────────────────────────────
+  metrics-catalog:
+    description: "Metric catalog with series counts and source entity types"
+    requires: [none]
+    dql: |
+      metrics from:now() - 2h
+      | summarize series = count(), types = collectDistinct(dt.smartscape_source.type), by:{metric.key}
+      | sort metric.key asc
+      | limit 1000
+
+  # ── infra ───────────────────────────────────────────────────────
+  hosts-inventory:
+    description: "Host inventory (Smartscape state; no from: — a window degrades field values)"
+    requires: [hosts]
+    dql: |
+      smartscapeNodes "HOST"
+      | fieldsRemove k8s.object, aws.object, azure.object, references
+      | sort name asc
+      | limit 500
+  postgres-instances:
+    description: "PostgreSQL instances known to Smartscape"
+    requires: [postgres]
+    dql: |
+      smartscapeNodes "DB_INSTANCE_POSTGRES"
+      | fieldsRemove references
+      | sort name asc
+      | limit 200
+  host-inventory-by-os:
+    description: "Host count by OS type and cloud provider"
+    requires: [hosts]
+    dql: |
+      smartscapeNodes "HOST"
+      | fieldsAdd os.type, cloud.provider, host.logical.cpu.cores, host.physical.memory
+      | summarize host_count = count(), by: {os.type, cloud.provider}
+      | sort host_count desc
+  high-utilization-hosts:
+    description: "Hosts averaging >80% CPU or memory"
+    requires: [host-metrics]
+    verify: "threshold — capability probe: dt.host.cpu.usage has data"
+    dql: |
+      timeseries {
+        cpu = avg(dt.host.cpu.usage),
+        memory = avg(dt.host.memory.usage),
+        disk = avg(dt.host.disk.used.percent)
+      }, by: {dt.smartscape.host}, from:now()-1h
+      | fieldsAdd host_name = getNodeName(dt.smartscape.host)
+      | fieldsAdd avg_cpu = arrayAvg(cpu), avg_mem = arrayAvg(memory)
+      | filter avg_cpu > 80 or avg_mem > 80
+      | sort avg_cpu desc
+  top-cpu-processes:
+    description: "Processes averaging >50% of one core"
+    requires: [process-metrics]
+    verify: "threshold — capability probe: dt.process.cpu.usage has data"
+    dql: |
+      timeseries cpu_usage = avg(dt.process.cpu.usage),
+          by: {dt.smartscape.process}, from:now()-1h
+      | fieldsAdd process_name = getNodeName(dt.smartscape.process)
+      | fieldsAdd avg_cpu = arrayAvg(cpu_usage)
+      | filter avg_cpu > 50
+      | sort avg_cpu desc
+      | limit 20
+
+  # ── k8s ─────────────────────────────────────────────────────────
+  workloads-status:
+    description: "Deployments/StatefulSets/DaemonSets with ready vs desired replicas (era-coalesced manifest keys)"
+    requires: [k8s]
+    dql: |
+      smartscapeNodes "K8S_DEPLOYMENT", "K8S_STATEFULSET", "K8S_DAEMONSET"
+      | parse k8s.object, "JSON:obj"
+      | fieldsAdd ready = coalesce(obj[status][readyReplicas], obj[status][numberReady]), desired = coalesce(obj[spec][replicas], obj[status][desiredNumberScheduled]), created = toTimestamp(obj[metadata][creationTimestamp])
+      | fields id, name, type, namespace = k8s.namespace.name, kind = k8s.workload.kind, ready, desired, created
+      | sort namespace asc, name asc
+      | limit 500
+  nodes-inventory:
+    description: "K8s nodes with kubelet version, OS image, instance type, zone"
+    requires: [k8s]
+    dql: |
+      smartscapeNodes "K8S_NODE"
+      | parse k8s.object, "JSON:obj"
+      | fields id, name, type, cluster = k8s.cluster.name, version = obj[status][nodeInfo][kubeletVersion], os = obj[status][nodeInfo][osImage], cpus = obj[status][capacity][cpu], instance = `tags:k8s.labels`[`node.kubernetes.io/instance-type`], zone = `tags:k8s.labels`[`topology.kubernetes.io/zone`], lifetime
+      | sort name asc
+      | limit 300
+  clusters-list:
+    description: "K8s clusters with distribution and version"
+    requires: [k8s]
+    dql: |
+      smartscapeNodes "K8S_CLUSTER"
+      | fields id, name, type, distribution = k8s.cluster.distribution, version = k8s.cluster.version, lifetime
+      | sort name asc
+      | limit 100
+  pods-with-oomkills:
+    description: "Pods with OOMKills in 24h"
+    requires: [k8s-metrics]
+    verify: "threshold — capability probe: dt.kubernetes.* metrics exist"
+    dql: |
+      timeseries oom_kills = sum(dt.kubernetes.container.oom_kills),
+        by: {k8s.pod.name, k8s.namespace.name, k8s.cluster.name}, from:now()-24h
+      | fieldsAdd total_oom_kills = arraySum(oom_kills)
+      | filter total_oom_kills > 0
+      | sort total_oom_kills desc
+  pod-restart-patterns:
+    description: "Pods with >5 container restarts in 24h (crash-loop candidates)"
+    requires: [k8s-metrics]
+    verify: "threshold — capability probe: dt.kubernetes.* metrics exist"
+    dql: |
+      timeseries restarts = sum(dt.kubernetes.container.restarts),
+        by: {k8s.pod.name, k8s.namespace.name, k8s.cluster.name}, from:now()-24h
+      | fieldsAdd total_restarts = arraySum(restarts)
+      | filter total_restarts > 5
+      | sort total_restarts desc
+  cpu-throttling:
+    description: "Containers CPU-throttled >25% of demand (needs CPU limits set)"
+    requires: [k8s-metrics]
+    verify: "threshold"
+    dql: |
+      timeseries {
+        throttled = avg(dt.kubernetes.container.cpu_throttled),
+        cpulimit = avg(dt.kubernetes.container.limits_cpu),
+        usage = avg(dt.kubernetes.container.cpu_usage)
+      }, by: {k8s.pod.name, k8s.namespace.name}, from:now()-1h
+      | fieldsAdd throttle_pct = (arrayAvg(throttled) / arrayAvg(cpulimit)) * 100
+      | filter throttle_pct > 25
+      | sort throttle_pct desc
+
+  # ── logs ────────────────────────────────────────────────────────
+  top-error-messages:
+    description: "Most frequent ERROR log messages (24h, sampled; groups by content — expensive on big tenants)"
+    requires: [logs]
+    dql: |
+      fetch logs, from:now() - 24h, samplingRatio:10
+      | filter status == "ERROR"
+      | summarize error_count = count(), by: {content}
+      | sort error_count desc
+      | limit 20
+  log-error-rate-over-time:
+    description: "Log error rate per 5-minute bucket"
+    requires: [logs]
+    dql: |
+      fetch logs, from:now() - 2h, samplingRatio:10
+      | summarize
+          total_logs = count(),
+          error_logs = countIf(status == "ERROR"),
+          by: {time_bucket = bin(timestamp, 5m)}
+      | fieldsAdd error_rate = (error_logs * 100.0) / total_logs
+      | sort time_bucket asc
+  errors-by-process-group:
+    description: "WARN/ERROR/FATAL log volume per process group (OneAgent PG resolution)"
+    requires: [logs-oneagent]
+    dql: |
+      fetch logs, from:now() - 2h, samplingRatio:10
+      | filter in(status, {"ERROR", "FATAL", "WARN"})
+      | summarize count(), by: {dt.process_group.id, dt.process_group.detected_name}
+      | sort `count()` desc
+      | limit 25
+
+  # ── traces ──────────────────────────────────────────────────────
+  service-performance-summary:
+    description: "Per-service RED overview from root spans (volume, failures, avg, p95)"
+    requires: [spans]
+    dql: |
+      fetch spans, from:now()-1h, samplingRatio:10
+      | filter request.is_root_span == true
+      | summarize
+          total_requests = count(),
+          failed_requests = countIf(request.is_failed == true),
+          avg_duration = avg(duration),
+          p95_duration = percentile(duration, 95),
+          by: {dt.service.name}
+      | fieldsAdd error_rate = (failed_requests * 100.0) / total_requests
+      | sort error_rate desc
+      | limit 25
+  slow-traces:
+    description: "Root requests slower than 5s with trace IDs"
+    requires: [spans]
+    verify: "threshold — capability probe: root spans exist"
+    dql: |
+      fetch spans, from:now() - 2h, samplingRatio:10
+      | filter request.is_root_span == true
+      | filter duration > 5s
+      | fields trace.id, span.name, dt.service.name, duration
+      | sort duration desc
+      | limit 50
+  failure-reason-breakdown:
+    description: "Failed spans by failure-detection reason (OneAgent feature)"
+    requires: [spans-oneagent]
+    verify: "carriage — check dt.failure_detection.results coverage first"
+    dql: |
+      fetch spans, from:now()-2h, samplingRatio:10
+      | filter request.is_failed == true and isNotNull(dt.failure_detection.results)
+      | expand dt.failure_detection.results
+      | summarize count(), by: { dt.failure_detection.results[reason] }
+
+  # ── services ────────────────────────────────────────────────────
+  service-red-error-rate:
+    description: "Per-service error rate from RED metrics"
+    requires: [service-metrics]
+    verify: "threshold (filter >0) — capability probe: dt.service.request.count has data"
+    dql: |
+      timeseries {
+          total_requests = sum(dt.service.request.count),
+          failures = sum(dt.service.request.failure_count)
+        }, by: {dt.service.name}, from:now()-1h
+      | fieldsAdd error_rate_pct = (failures[] * 100.0) / total_requests[]
+      | filter arrayAvg(error_rate_pct) > 0
+      | limit 25
+  service-red-percentiles:
+    description: "p50/p95 service response time in ms from RED metrics (microsecond unit; rollup: required for percentile)"
+    requires: [service-metrics]
+    dql: |
+      timeseries {
+        p50 = percentile(dt.service.request.response_time, 50, rollup: avg),
+        p95 = percentile(dt.service.request.response_time, 95, rollup: avg)
+      }, by: {dt.service.name}, from:now()-1h
+      | fieldsAdd p50_ms = arrayAvg(p50) / 1000, p95_ms = arrayAvg(p95) / 1000
+      | sort p95_ms desc
+      | limit 25
+
+  # ── problems ────────────────────────────────────────────────────
+  problems-active-dedup:
+    description: "Active Davis problems, deduped per display_id (transition-log safe)"
+    requires: [davis]
+    verify: "transient — empty can mean no active problems right now"
+    dql: |
+      fetch dt.davis.problems, from:now() - 7d
+      | filter not(dt.davis.is_duplicate)
+      | summarize status = takeLast(event.status), title = takeLast(event.name), category = takeLast(event.category), started = takeFirst(event.start), by:{display_id}
+      | filter status == "ACTIVE"
+      | sort started desc
+      | limit 100
+  active-problems-by-category:
+    description: "Active problem counts by category"
+    requires: [davis]
+    verify: "transient"
+    dql: |
+      fetch dt.davis.problems, from:now() - 24h
+      | filter not(dt.davis.is_duplicate) and event.status == "ACTIVE"
+      | summarize problem_count = count(), by: {event.category}
+      | sort problem_count desc
+  root-cause-by-entity:
+    description: "Entities most often identified as root cause (7d)"
+    requires: [davis]
+    dql: |
+      fetch dt.davis.problems, from:now() - 7d
+      | filter not(dt.davis.is_duplicate)
+      | filter isNotNull(root_cause_entity_id)
+      | summarize problem_count = count(), by:{root_cause_entity_name}
+      | sort problem_count desc
+      | limit 20
+
+  # ── alerting ────────────────────────────────────────────────────
+  alert-volume-by-category:
+    description: "Davis event volume by category and status"
+    requires: [davis-events]
+    dql: |
+      fetch dt.davis.events, from: -24h
+      | summarize count = count(), by: {event.category, event.status}
+      | sort count desc
+  noisy-detector-configs:
+    description: "Davis event volume per detector settings object (find noisy detectors)"
+    requires: [davis-events]
+    dql: |
+      fetch dt.davis.events, from: -24h, to: now()
+      | filter isNotNull(dt.settings.object_id)
+      | summarize count = count(), by: {dt.settings.object_id, event.name, event.category}
+      | sort count desc
+      | limit 25
+
+  # ── rum ─────────────────────────────────────────────────────────
+  rum-error-sessions:
+    description: "Recent sessions with errors (24h floor — sessions are sparse)"
+    requires: [rum]
+    dql: |
+      fetch user.sessions, from:now() - 24h
+      | filter error.count > 0
+      | sort start_time desc
+      | limit 50
+  core-web-vitals:
+    description: "p75 LCP/INP per frontend with ratings (New RUM Experience metrics)"
+    requires: [rum-web]
+    dql: |
+      timeseries
+          lcp_p75 = percentile(dt.frontend.web.page.largest_contentful_paint, 75, scalar: true, rollup: avg),
+          inp_p75 = percentile(dt.frontend.web.page.interaction_to_next_paint, 75, scalar: true, rollup: avg),
+          by: {frontend.name},
+          from: now() - 2h
+      | fieldsAdd lcp_rating = if(isNull(lcp_p75), "no_data", else: if(lcp_p75 < 2500, "good", else: if(lcp_p75 < 4000, "needs_improvement", else: "poor")))
+      | sort lcp_p75 desc
+  frontend-top-exceptions:
+    description: "Top frontend exceptions with affected sessions"
+    requires: [rum]
+    verify: "transient — consider 24h floor"
+    dql: |
+      fetch user.events, from: now() - 2h, samplingRatio:10
+      | filter error.type == "exception"
+      | summarize
+          exception_count = count(),
+          affected_sessions = countDistinct(dt.rum.session.id),
+          by: {frontend.name, exception.message, error.id}
+      | sort exception_count desc
+      | limit 20
+
+  # ── bizevents ───────────────────────────────────────────────────
+  bizevents-producers:
+    description: "Business event volume by type and provider (24h floor)"
+    requires: [bizevents]
+    dql: |
+      fetch bizevents, from:now() - 24h
+      | summarize c = count(), by:{event.type, event.provider}
+      | sort c desc
+      | limit 20
+
+  # ── genai ───────────────────────────────────────────────────────
+  genai-spans-recent:
+    description: "Recent GenAI spans, both instrumentation eras (semconv gen_ai.* OR traceloop llm.*)"
+    requires: [genai]
+    floor: "24h — GenAI traffic is sparse; 0 spans at 2h vs thousands at 24h on a verified tenant"
+    dql: |
+      fetch spans, from:now() - 24h
+      | filter isNotNull(gen_ai.operation.name) or isNotNull(llm.request.type)
+      | sort start_time desc
+      | limit 200
+  genai-token-usage:
+    description: "Token spend per provider+model"
+    requires: [genai]
+    dql: |
+      fetch spans, from: now()-24h
+      | filter isNotNull(gen_ai.usage.input_tokens) or isNotNull(gen_ai.usage.output_tokens)
+      | summarize input_tokens = sum(gen_ai.usage.input_tokens), output_tokens = sum(gen_ai.usage.output_tokens), by: {gen_ai.provider.name, gen_ai.request.model}
+      | sort input_tokens desc
+  genai-error-rate-by-model:
+    description: "Per-model request/error counts and error rate"
+    requires: [genai]
+    dql: |
+      fetch spans, from: now()-24h
+      | filter isNotNull(gen_ai.request.model)
+      | summarize total = count(), errors = countIf(span.status_code == "error"), by: {gen_ai.request.model}
+      | fieldsAdd error_rate_pct = if(total > 0, errors * 100.0 / total, else: 0.0)
+      | sort error_rate_pct desc
+
+  # ── security ────────────────────────────────────────────────────
+  vulns-open-rollup:
+    description: "Open, unmuted vulnerabilities: latest state per vulnerability.id with risk/exposure/exploit assessment"
+    requires: [security]
+    dql: |
+      fetch security.events, from:now() - 24h
+      | filter event.type == "VULNERABILITY_STATE_REPORT_EVENT" and event.level == "VULNERABILITY"
+      | sort timestamp asc
+      | summarize { title = takeLast(vulnerability.title), display_id = takeLast(vulnerability.display_id), level = takeLast(vulnerability.risk.level), score = takeLast(vulnerability.risk.score), status = takeLast(vulnerability.resolution.status), muted = takeLast(vulnerability.mute.status), tech = takeLast(vulnerability.technology), cve = takeLast(vulnerability.references.cve), exposure = takeLast(vulnerability.davis_assessment.exposure_status), exploit = takeLast(vulnerability.davis_assessment.exploit_status), fix = takeLast(vulnerability.is_fix_available), affected = takeLast(affected_entities.count) }, by:{vulnerability.id}
+      | filter status == "OPEN" and muted != "MUTED"
+      | sort score desc
+      | limit 200
+  attacks-recent:
+    description: "Recent Runtime Application Protection detections (no floor — timely data)"
+    requires: [security-rap]
+    dql: |
+      fetch security.events, from:now() - 2h
+      | filter event.type == "DETECTION_FINDING" and product.name == "Runtime Application Protection"
+      | sort timestamp desc
+      | limit 300
+  detection-count-by-severity:
+    description: "One-row severity summary of security detections"
+    requires: [security-detections]
+    verify: "aggregate-values — a 1-row summarize is 'ok' even when every count is 0; verification must check values"
+    dql: |
+      fetch security.events, from:now()-24h
+      | filter event.type == "DETECTION_FINDING"
+      | summarize {
+          Total = count(),
+          Critical = countIf(dt.security.risk.level == "CRITICAL"),
+          High     = countIf(dt.security.risk.level == "HIGH"),
+          Medium   = countIf(dt.security.risk.level == "MEDIUM"),
+          Low      = countIf(dt.security.risk.level == "LOW"),
+          AffectedObjects = countDistinctExact(object.id)
+        }
+  kspm-compliance-pass-rate:
+    description: "KSPM pass rate per compliance standard (latest-scan join; fixed 1h window)"
+    requires: [kspm]
+    dql: |
+      fetch security.events, from:now()-1h
+      | filter event.type == "COMPLIANCE_FINDING"
+           AND product.vendor=="Dynatrace"
+           AND compliance.result.status.level != "NOT_RELEVANT"
+      | join [
+          fetch security.events, from:now()-1h
+          | filter event.type == "COMPLIANCE_SCAN_COMPLETED"
+               AND product.vendor == "Dynatrace"
+          | sort timestamp asc
+          | summarize {
+              scan.id = takeLast(scan.id),
+              timestamp = takeLast(timestamp)
+            }, by: {object.id}
+        ], on: {scan.id}
+      | summarize {
+          compliance.standard.short_name = takeFirst(compliance.standard.short_name),
+          passed = countIf(compliance.result.status.level == "PASSED"),
+          failed = countIf(compliance.result.status.level == "FAILED"),
+          manual = countIf(compliance.result.status.level == "MANUAL")
+        }, by: {compliance.rule.id}
+      | fieldsAdd verdict = if(failed > 0, "FAILED", else: if(manual > 0, "MANUAL", else: if(passed > 0, "PASSED", else: "NOT_RELEVANT")))
+      | summarize {
+          Rules=count(),
+          Passed=countIf(verdict=="PASSED"),
+          Failed=countIf(verdict=="FAILED")
+        }, by: {compliance.standard.short_name}
+      | fieldsAdd passRate=round(Passed*100.0/Rules, decimals:0)
+      | sort passRate asc
+
+  # ── costs ───────────────────────────────────────────────────────
+  billing-usage-breakdown:
+    description: "DPS billing usage events by consumption category (7d)"
+    requires: [dps]
+    dql: |
+      fetch dt.system.events, from: -7d
+      | filter event.kind == "BILLING_USAGE_EVENT"
+      | summarize event_count = count(), by: {event.type}
+      | sort event_count desc
+  top-query-cost-sources:
+    description: "Top sources by billable query scan GiB (30d, attribution coalesce)"
+    requires: [dps]
+    dql: |
+      fetch dt.system.events, from: -30d
+      | filter event.kind == "BILLING_USAGE_EVENT"
+      | filter in(event.type,
+          "Log Management & Analytics - Query",
+          "Events - Query",
+          "Traces - Query",
+          "Files - Query")
+      | dedup {event.id, event.type}
+      | fieldsAdd attribution = coalesce(client.source, client.application_context, client.internal_service_context, client.workflow_context, client.function_context, client.client_context, "unknown")
+      | summarize total_billed_gib = sum(toDouble(billed_bytes) / 1073741824),
+          by: {attribution, event.type}
+      | sort total_billed_gib desc
+      | limit 20
+
+  # ── aws ─────────────────────────────────────────────────────────
+  aws-census:
+    description: "AWS entity counts by type"
+    requires: [aws]
+    dql: |
+      smartscapeNodes "*"
+      | filter startsWith(type, "AWS_")
+      | summarize count = count(), by:{type}
+      | sort count desc
+      | limit 100
+  aws-resource-inventory:
+    description: "AWS entity counts by type (wildcard form)"
+    requires: [aws]
+    dql: |
+      smartscapeNodes "AWS_*"
+      | summarize count = count(), by: {type}
+      | sort count desc
+  ebs-volumes-by-state:
+    description: "EBS volumes by type and state from parsed aws.object (finds unattached volumes)"
+    requires: [aws]
+    dql: |
+      smartscapeNodes "AWS_EC2_VOLUME"
+      | parse aws.object, "JSON:awsjson"
+      | fieldsAdd volumeType = awsjson[configuration][volumeType],
+                  size = awsjson[configuration][size],
+                  state = awsjson[configuration][state]
+      | summarize total_volumes = count(), total_size_gb = sum(size), by: {volumeType, state}
+      | sort total_size_gb desc
+  idle-ec2-low-cpu:
+    description: "EC2 instances under 5% CPU over 14d (needs CloudWatch EC2 metric ingestion)"
+    requires: [aws-cloudwatch]
+    verify: "capability — probe the exact metric key; tenants may ingest only some CloudWatch namespaces"
+    dql: |
+      timeseries avg_cpu = avg(cloud.aws.ec2.CPUUtilization.By.InstanceId),
+        by: { dt.smartscape_source.id },
+        from: now()-14d
+      | fieldsAdd avg_cpu_val = arrayAvg(avg_cpu)
+      | filter avg_cpu_val < 5.0
+      | sort avg_cpu_val asc
+      | fields dt.smartscape_source.id, avg_cpu_val
+
+  # ── synthetic ───────────────────────────────────────────────────
+  synthetic-monitors:
+    description: "All synthetic monitors (browser + HTTP union; classic entity tables, not Smartscape)"
+    requires: [synthetic]
+    dql: |
+      fetch dt.entity.synthetic_test
+      | fieldsAdd lifetime, tags
+      | fieldsAdd monitor.type = "browser"
+      | append [fetch dt.entity.http_check | fieldsAdd lifetime, tags | fieldsAdd monitor.type = "http"]
+      | sort entity.name asc
+      | limit 500
+  synthetic-failed-executions:
+    description: "Failed synthetic executions (2h)"
+    requires: [synthetic]
+    dql: |
+      fetch dt.synthetic.events, from:now() - 2h
+      | filter isNotNull(result.state) and result.state != "SUCCESS"
+      | sort timestamp desc
+      | limit 300
