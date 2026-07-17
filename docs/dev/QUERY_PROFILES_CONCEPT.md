@@ -3,6 +3,8 @@
 > Status: concept / discussion draft.
 > Goal: make AI agents (and humans) efficient on a **specific** Dynatrace tenant,
 > without hardcoding opinionated DQL into dtctl.
+> 2026-07-17: core claims verified against two live tenants (see §9);
+> schema refined with carriage/coverage findings.
 
 ## 1. Problem
 
@@ -10,10 +12,14 @@ dtctl is deliberately shallow on DQL: it executes queries, it doesn't know them.
 That is the right call for the core CLI, but it pushes the hard part onto the
 caller — and for AI agents the hard part is expensive:
 
-- **Grail fails silently.** A wrong field name, a missing `toSmartscapeId()`
-  cast, or the wrong semconv-era field returns `{"records":[]}` with exit 0.
-  An agent can't distinguish "nothing there" from "wrong query", so it burns
-  tokens on trial-and-error loops.
+- **Grail fails silently — or worse, partially.** A wrong field name or the
+  wrong semconv-era field returns `{"records":[]}` with exit 0, so an agent
+  can't distinguish "nothing there" from "wrong query". (Some cases now emit a
+  warning — e.g. comparing a smartscape ID to a string literal — but dtctl does
+  not yet surface these structurally; see §3.) The verified-worse case is
+  **partial carriage**: on live tenants, `dt.smartscape.service` is present on
+  4–20% of log records — a naive service filter on logs returns *non-empty but
+  silently incomplete* results, which no error channel will ever flag.
 - **Every tenant is different.** OTel-only vs OneAgent, k8s vs cloud vs RUM,
   different buckets, different tagging strategies for identifying ownership and
   environment. Generic examples (dynatrace-for-ai has hundreds) are a great
@@ -86,23 +92,48 @@ metadata:
 facts:
   capabilities: [k8s, otel-spans, logs, davis, security]   # detected
   absent: [rum, aws, synthetic, bizevents]                  # detected empty
-  semconvEras: [otel]                # or [oneagent, otel] — drives coalescing
   entityTypes: { K8S_POD: 1234, SERVICE: 210, HOST: 42 }   # census
   buckets: [default_logs_events, custom_audit]
-  tagging:                           # org-declared or agent-annotated
-    ownerField: tags.owner
-    envDiscriminator: "k8s.namespace.name prefix (prod-*, stg-*)"
+  # Era/field carriage is measured PER FIELD PAIR, not tenant-wide: live tenants
+  # dual-write some pairs (request.is_failed AND transaction.is_failed both
+  # 100%) while being era-split on others (http.method 13% / http.request.method
+  # 87%). A single "semconvEras: [otel]" fact is too coarse — recipes consult
+  # the pair they actually filter on.
+  fieldCarriage:
+    spans:
+      http.request.method: 0.87      # otel era
+      http.method: 0.13              # oneagent era — coalesce both
+      request.is_failed: 1.0         # dual-written: either works
+      transaction.is_failed: 1.0
+      dt.smartscape.service: 1.0     # spans reliably carry service IDs
+      dt.smartscape.host: 0.84       # partial! host-scoped span queries lose 16%
+    logs:
+      k8s.pod.name: 0.58
+      dt.smartscape.service: 0.20    # partial — see scoping.SERVICE.logs
+      dt.smartscape.k8s_pod: 0.0     # never carried (verified on 2 tenants)
+  tagging: none                      # verified: entity tags empty on this tenant;
+                                     # ownership via k8s.namespace.name conventions
   notes:
     - "Payment services log to bucket custom_audit, not default"
 
 scoping:                             # entity type -> per-signal filter idiom
   SERVICE:
-    spans: 'dt.smartscape.service == toSmartscapeId("{{.id}}")'
-    logs:  hop                       # logs need runs_on topology widening
-    problems: 'matchesPhrase(arrayToString(affected_entity_ids), "{{.id}}")'
+    spans:
+      filter: 'dt.smartscape.service == toSmartscapeId("{{.id}}")'
+      coverage: 1.0                  # verified: 100% of spans carry it
+    logs:
+      filter: hop                    # runs_on topology widening
+      coverage: 0.20                 # direct service-stamping exists but is
+                                     # partial — hop is authoritative, the
+                                     # stamped subset alone silently lies
+    problems:
+      filter: 'matchesPhrase(arrayToString(affected_entity_ids), "{{.id}}")'
   K8S_POD:
-    logs:  'k8s.pod.name == "{{.name}}"'   # logs carry names, not smartscape ids
-    spans: 'dt.smartscape.k8s_pod == toSmartscapeId("{{.id}}")'
+    logs:
+      filter: 'k8s.pod.name == "{{.name}}"'  # logs carry names, never pod IDs
+    spans:
+      filter: 'dt.smartscape.k8s_pod == toSmartscapeId("{{.id}}")'
+      coverage: 0.47
 
 queries:
   pods-restarting:
@@ -144,6 +175,16 @@ Notes on the schema:
   a verification stamp is a guess. The generator runs each candidate with a
   small limit and records the result; recipes that return empty on this tenant
   are moved to `disabled` with a reason instead of silently shipping.
+- **Display names via `getNodeName()`, not raw fields.** Verified on live data:
+  grouping by `service.name` yields null for whole service populations
+  (OneAgent-fed spans). `getNodeName(dt.smartscape.service)` resolves the
+  Smartscape display name regardless of era — recipe templates should prefer it
+  over coalescing raw name fields.
+- **Verification records coverage, not just a boolean.** The busiest service on
+  a verified tenant emits *zero* log lines — a correct scoping rule and an
+  empty result coexist legitimately. So `verified` on entity-scoped recipes
+  stores a coverage map (e.g. "logs exist for 31 of 144 services") rather than
+  one non-empty probe, and the envelope can tell the agent which case it hit.
 
 ## 3. CLI surface
 
@@ -172,6 +213,13 @@ dtctl run pod-logs --set name=checkout-7d9f   # follow-up from previous result
   dynatui drill graph into agent guidance.
 - Read-only by design: recipes are DQL only. No mutation verbs in profiles
   (mirrors dynatui ADR-0011 and keeps them outside the safety-checker surface).
+- **Prerequisite: surface Grail notifications in the envelope.** Grail emits
+  warnings for some mistakes (verified: comparing a smartscape ID against a
+  string literal warns "Convert strings using `toSmartscapeId()`..."), but
+  dtctl currently prints them as loose stderr text — they never reach the agent
+  envelope's `context.warnings`. Mapping query notifications into the envelope
+  is a small, profile-independent fix that gives agents a self-correction
+  channel and should land first.
 
 ### Trust model
 
@@ -195,12 +243,21 @@ All of these exist, live-validated, in dynatui today:
 | Data objects & buckets | `fetch dt.system.data_objects` / `dt.system.buckets` | `facts.buckets`, table existence |
 | Field docs | `fetch dt.semantic_dictionary.fields` | field validation, era detection |
 | Metric availability | `metrics \| summarize by:{metric.key}` + two-phase probe | which sparkline/metric recipes survive |
-| Era detection | probe `http.method` vs `http.request.method` counts, etc. | `facts.semconvEras`, coalesce behavior |
-| Tag/value discovery | `fieldsSummary` on `tags.*`, `k8s.namespace.name`, ... | tagging hints, param value hints |
+| Era/carriage matrix | one `summarize countIf(isNotNull(f))` scan per table over the pack's field-pair list | `facts.fieldCarriage`, coalesce behavior |
+| Tag/value discovery | `fieldsSummary` on entity `tags`, `k8s.namespace.name`, span attrs | tagging hints (must handle "none") |
 
 Then: filter base-pack recipes by capability guards → render for this tenant →
 execute each with `\| limit 1`-style probes → stamp `verified` or move to
 `disabled`.
+
+Probe-cost notes (from running the battery live): the whole discovery set is
+~15 queries per tenant; carriage probes batch many `countIf(isNotNull(...))`
+into a single scan per table; `samplingRatio:` (verified working on logs and
+spans) keeps large-tenant scans cheap and is fine for presence/ratio facts.
+Tag discovery must probe multiple channels — entity `tags` via
+`fieldsSummary` (verified empty on a real tenant), k8s labels, span
+attributes — and be able to conclude `tagging: none` rather than inventing
+a convention.
 
 ### 4.2 Where does it live?
 
@@ -305,3 +362,53 @@ are *known to work on this tenant* beat any static example corpus.
   environment URL rather than context name?
 - Naming: "profile" collides with cloud monitoring profiles in docs; maybe
   "tenant profile" / "query pack" split naming needs a pass.
+
+## 9. Live verification (2026-07-17, two tenants)
+
+The discovery battery and the load-bearing claims were executed via
+`dtctl query` against two real tenants ("box" — a dev tenant, "demo" — a large
+demo tenant). No customer identifiers below.
+
+**The two tenants are radically different, as predicted.** Box:
+OTel-process-centric (3,040 `OTEL_PROCESS` vs **12** `SERVICE` entities),
+AWS + Postgres entity inventory, pure-OTel http fields. Demo: K8s + AWS + GCP
++ network-device entities, 144 services, **mixed-era** http fields (13%
+OneAgent / 87% OTel), RUM-heavy (13M user events/day). Both tenants had RUM
+and bizevents — assumptions about what a tenant lacks were wrong both times,
+which is the argument for generating facts instead of assuming them.
+
+**Confirmed as proposed:**
+
+- All discovery queries (census, edges, buckets, data objects, `fieldsSummary`,
+  `metrics` catalog) work and are cheap; `samplingRatio:` works for probe scans.
+- The ID-cast trap: `dt.smartscape.service == "SERVICE-..."` → 0 records;
+  `== toSmartscapeId("SERVICE-...")` → 23k records, same window.
+- Logs never carry `dt.smartscape.k8s_pod` (0% on both tenants); k8s name
+  fields are the only pod handle in logs.
+- The service→logs gap: the busiest demo service by spans has **zero**
+  service-stamped log lines; its `runs_on` edges (pod, container, process,
+  host) resolve correctly for hop widening.
+
+**Refinements the verification forced (now folded into §§1–4):**
+
+- *Partial carriage is the norm, not absence*: `dt.smartscape.service` on 4%
+  (box) / 20% (demo) of logs; `dt.smartscape.host` on 39% / 84% of spans.
+  Scoping rules therefore carry `coverage` numbers, and partial fields are
+  treated as "silently lying if used alone".
+- *Era is per-field-pair, not per-tenant*: box is era-pure on http fields yet
+  dual-writes `request.is_failed`/`transaction.is_failed` (both 100%); demo is
+  mixed on http. `facts.semconvEras` was replaced by `facts.fieldCarriage`.
+- *Both tenants' spans carry both service-ID generations at 100%* — the
+  era-coalescing burden sits on attribute fields, not on span service IDs.
+- *`service.name` is null for whole span populations* (OneAgent-fed); recipes
+  use `getNodeName()` for display names.
+- *Verified-empty needs coverage semantics*: the busiest service logging
+  nothing is legitimate; boolean verification can't distinguish it from broken
+  scoping (§2.2 note).
+- *Grail warnings exist but are lost*: the cast mistake now produces a server
+  warning which dtctl prints as plain stderr text, outside the agent envelope —
+  promoting it into `context.warnings` is a prerequisite fix (§3).
+- *`dt.davis.problems` was ~1:1 rows-to-problems on both tenants over 7d* —
+  the "transition log" behavior from dynatui's learnings is real but not
+  universal; the `takeLast ... by:{display_id}` dedup stays as a cheap
+  defensive pattern, not as a load-bearing assumption.
