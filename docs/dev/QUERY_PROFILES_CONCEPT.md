@@ -217,10 +217,12 @@ against live tenants first:
   / [tenant-profile.demo.generated.yaml](examples/queryprofile/tenant-profile.demo.generated.yaml)
   / [tenant-profile.fxz.generated.yaml](examples/queryprofile/tenant-profile.fxz.generated.yaml)
   / [tenant-profile.gmg.generated.yaml](examples/queryprofile/tenant-profile.gmg.generated.yaml)
-  — **actual generation outputs** for four tenants of very different
+  / [tenant-profile.playground.generated.yaml](examples/queryprofile/tenant-profile.playground.generated.yaml)
+  — **actual generation outputs** for five tenants of very different
   character, in the *referencing* form (pack pointer + verification stamp
-  instead of DQL copies): the same pack survives as 38, 44, 41, and 42 usable
-  recipes with per-tenant disabled lists, floors, and scan-limit partials.
+  instead of DQL copies): the same pack survives as 38, 44, 41, 42, and 42
+  usable recipes with per-tenant disabled lists, floors, and scan-limit
+  partials.
 
 **How large do profiles grow?** Measured, not estimated — the full 44-recipe
 pack is **530 lines** (~12 lines/recipe in compact pack form; a fully-templated
@@ -534,29 +536,30 @@ which is the argument for generating facts instead of assuming them.
   universal; the `takeLast ... by:{display_id}` dedup stays as a cheap
   defensive pattern, not as a load-bearing assumption.
 
-### 10.1 Pack simulation: 44 recipes × 4 tenants (2026-07-17)
+### 10.1 Pack simulation: 44 recipes × 5 tenants (2026-07-17)
 
 To test the whole pipeline in practice, a 44-recipe pack was assembled (15
 recipes distilled from the dynatui catalog, 29 from the dynatrace-for-ai
 skills — deliberately kept verbatim, including a skill's `status == "ERROR"`
-log filter and uppercase `AND`s) and executed end-to-end against four tenants
+log filter and uppercase `AND`s) and executed end-to-end against five tenants
 of very different character: a small OTel-centric dev tenant, a fully-loaded
 demo tenant, a network-observability tenant (Juniper/external network devices,
-synthetic locations), and a very large enterprise tenant (280k OS services,
-66M spans/hour). 176 recipe runs plus classification probes. Results:
+synthetic locations), a very large enterprise tenant (280k OS services,
+66M spans/hour), and a mixed playground tenant where nearly every capability
+is simultaneously active. 220 recipe runs plus classification probes. Results:
 
-| | dev | demo | netobs | large |
-|---|---|---|---|---|
-| executed cleanly | 44 | 44 | 42 | 43 |
-| hard query errors | 0 | 0 | **2** | **1** |
-| returned data | 28 | 44 | 38 | 41 |
-| verified-empty (threshold/transient) | 10 | 0 | 2 | 1 |
-| disabled with evidence | 6 | 0 | 3 | 2 |
-| scan-limit partials | 0 | 0 | 0 | **1** |
+| | dev | demo | netobs | large | playground |
+|---|---|---|---|---|---|
+| executed cleanly | 44 | 44 | 42 | 43 | 44 |
+| hard query errors | 0 | 0 | **2** | **1** | 0 |
+| returned data | 28 | 44 | 38 | 41 | 42 |
+| verified-empty (threshold/transient) | 10 | 0 | 2 | 1 | 0 |
+| disabled with evidence | 6 | 0 | 3 | 2 | 2 |
+| scan-limit partials | 0 | 0 | 0 | **1** | 0 |
 
 The two-tenant headline ("zero errors — divergence is only data presence")
 did **not** survive tenants three and four, and that correction is the
-strongest evidence for the concept: 173/176 runs were clean, but three hard
+strongest evidence for the concept: 217/220 runs were clean, but three hard
 errors appeared that only per-tenant verification can catch. The run forced
 these generator-design lessons, now pack semantics (`verify:`/`portability:`
 hints in the full pack file):
@@ -612,6 +615,13 @@ hints in the full pack file):
    a null `gen_ai.request.model` — so token recipes verify while by-model
    recipes are structurally empty. A capability flag is never enough; the
    carriage matrix is the real contract.
+10. **Some data is licensing/tier-gated, not instrumentation-gated.** The
+   playground tenant runs literally everything (RAP, synthetic, GenAI, k8s
+   labels — the only tenant where the whole pack's *instrumentation* surface
+   is active) yet `dt.system.events` is completely empty: no DPS billing
+   telemetry, so both cost recipes disable. The inverse of every other gap —
+   and undetectable from any amount of observability data, only from probing
+   the table itself.
 
 Smaller confirmations: `smartscapeNodes "AWS_*"` wildcards and the composed
 KSPM latest-scan join worked unmodified on all four tenants; the GenAI 24h
