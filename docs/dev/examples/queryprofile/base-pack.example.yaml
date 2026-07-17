@@ -1,0 +1,87 @@
+# Example: BASE PACK entries (universal, cross-tenant, versioned).
+# The pack is what the generator consumes: recipe templates with capability
+# guards and carriage-conditional variants. `dtctl profile generate` evaluates
+# guards against discovered facts, picks a variant, renders, probe-executes,
+# and emits the tenant-layer recipe (see tenant-profile.example.yaml).
+#
+# `when:` conditions are deliberately minimal — comparisons against discovered
+# facts only (capabilities, fieldCarriage, entityTypes). Anything richer
+# belongs in dtctl template funcs (code), not in pack data.
+
+apiVersion: dtctl.dev/v1alpha1
+kind: QueryPack
+metadata:
+  name: dynatrace-recipes
+  version: "2026.07"
+
+recipes:
+  service-errors:
+    description: Failed-request count and rate per service
+    requires: [spans]                # capability guard: skip tenant without spans
+    params:
+      timeframe: { default: "now()-30m" }
+      sampling: { default: "10" }
+    variants:
+      # Era handling is data-driven: the generator picks the first variant
+      # whose condition holds for the tenant's measured fieldCarriage.
+      - when: "fieldCarriage.spans[request.is_failed] >= 0.99"
+        dql: |
+          fetch spans, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+          | filter request.is_root_span == true
+          | summarize failed = countIf(request.is_failed == true), total = count(),
+            by:{svc = dt.smartscape.service}
+          | fieldsAdd name = getNodeName(svc), rate = failed * 100.0 / total
+          | filter failed > 0
+          | sort rate desc
+          | limit 25
+      - when: default              # mixed/unknown carriage: coalesce both eras
+        dql: |
+          fetch spans, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+          | filter request.is_root_span == true
+          | summarize
+              failed = countIf(coalesce(request.is_failed, transaction.is_failed) == true),
+              total = count(),
+            by:{svc = dt.smartscape.service}
+          | fieldsAdd name = getNodeName(svc), rate = failed * 100.0 / total
+          | filter failed > 0
+          | sort rate desc
+          | limit 25
+    verify:
+      probe: "records >= 1"        # else -> disabled with reason
+    followups: [service-logs, problems-active]
+
+  entity-logs:
+    description: Logs for any entity; scoping resolved per entity type
+    requires: [logs]
+    params:
+      id: { description: "smartscape entity id" }
+      timeframe: { default: "now()-2h" }
+      limit: { default: "100" }
+    dql: |
+      fetch logs, from:{{.timeframe}}
+      | filter {{ scopeFilter .id "logs" }}
+      | sort timestamp desc
+      | fields timestamp, loglevel, content, k8s.pod.name, host.name
+      | limit {{.limit}}
+    # scopeFilter is a dtctl template func: it consults the tenant profile's
+    # scoping table (incl. the runs_on hop for SERVICE) at render time. The
+    # hop logic itself is Go code — pack and profile only carry the decision.
+    verify:
+      # entity-scoped recipes verify as a coverage map, not a boolean:
+      coverage: "per SERVICE: fraction with >=1 log line in 24h"
+    followups: [log-errors-by-workload]
+
+  rum-errors:
+    description: RUM error events by page/source
+    requires: [rum]                # tenant without user.events -> disabled
+    params:
+      timeframe: { default: "now()-1h" }
+      sampling: { default: "100" }
+    dql: |
+      fetch user.events, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+      | filter characteristics.classifier == "error"
+      | summarize c = count(), by:{app = app.short_name, name = event.name}
+      | sort c desc
+      | limit 20
+    verify:
+      probe: "records >= 1"

@@ -3,8 +3,9 @@
 > Status: concept / discussion draft.
 > Goal: make AI agents (and humans) efficient on a **specific** Dynatrace tenant,
 > without hardcoding opinionated DQL into dtctl.
-> 2026-07-17: core claims verified against two live tenants (see §9);
-> schema refined with carriage/coverage findings.
+> 2026-07-17: core claims verified against two live tenants (see §10);
+> schema refined with carriage/coverage findings. Complete example files:
+> [examples/queryprofile/](examples/queryprofile/).
 
 ## 1. Problem
 
@@ -63,6 +64,8 @@ and validated, with a refresh story.
 │   your recipes, tagging strategy declarations           │
 │   ("owner lives in tags.owner", "env = ns prefix")      │
 │   imported from a repo / exported like aliases          │
+│   — org-level SCOPING lives in Dynatrace Segments       │
+│     where possible; this layer references them (§5)     │
 ├─────────────────────────────────────────────────────────┤
 │ Base pack (curated, universal, versioned)               │
 │   recipe *templates* with capability guards             │
@@ -113,6 +116,9 @@ facts:
       dt.smartscape.k8s_pod: 0.0     # never carried (verified on 2 tenants)
   tagging: none                      # verified: entity tags empty on this tenant;
                                      # ownership via k8s.namespace.name conventions
+  segments:                          # discovered via `dtctl get segments` — §5
+    - { uid: gAAAAAAAAAA, name: Log bucket, variables: [bucket] }
+    - { uid: hBBBBBBBBBB, name: Host group, variables: [hostgroup] }
   notes:
     - "Payment services log to bucket custom_audit, not default"
 
@@ -185,6 +191,54 @@ Notes on the schema:
   empty result coexist legitimately. So `verified` on entity-scoped recipes
   stores a coverage map (e.g. "logs exist for 31 of 144 services") rather than
   one non-empty probe, and the envelope can tell the agent which case it hit.
+- **Params can carry a `values:` DQL** (idea borrowed from Segment variables,
+  §5): an optional query that yields the parameter's valid values on this
+  tenant. Agents get discoverable, tenant-valid arguments; humans get shell
+  completion.
+
+### 2.3 Example files, size, and complexity
+
+Two complete, worked examples live next to this doc — all recipe DQL in them
+was executed against live tenants first:
+
+- [examples/queryprofile/tenant-profile.example.yaml](examples/queryprofile/tenant-profile.example.yaml)
+  — a generated tenant layer: facts (incl. carriage matrix and discovered
+  segments), scoping with coverage, 11 full recipes across k8s / services /
+  logs / problems / RUM / security / metrics, and 3 disabled entries with
+  reasons.
+- [examples/queryprofile/base-pack.example.yaml](examples/queryprofile/base-pack.example.yaml)
+  — the pack side: capability guards (`requires:`), carriage-conditional
+  variants (the era decision as data), and verification specs (probe vs
+  coverage-map).
+
+**How large do profiles grow?** Measured from the example: a complete recipe
+averages ~25 lines of YAML (range 15–40; the DQL body is 8–20 lines). A
+serious tenant profile covering the dynatui catalog's breadth plus org recipes
+lands around 40–80 recipes:
+
+| Part | Size |
+|---|---|
+| facts + scoping + segments | 100–250 lines |
+| 40–80 recipes × ~25 lines | 1,000–2,500 lines |
+| whole file | ~1,500–3,000 lines, 40–80 KB, ~10–25k tokens |
+
+That is fine on disk and hopeless as agent context — which is why the CLI
+surface is progressive: `profile show` returns facts only (~1–2k tokens),
+`recipes` returns one line per recipe (~1–2k tokens for 60 recipes), and only
+`recipes show <name>` / `run` touch a full recipe. No consumer ever loads the
+whole file.
+
+**Complexity governors** (what keeps recipes from becoming a DSL):
+
+- A recipe's DQL body stays ≤ ~20 lines; template logic is limited to
+  presence-of-param conditionals (`{{if .namespace}}`). If a recipe needs
+  more, the logic moves into a template func (code) or splits into a
+  followup recipe.
+- No joins/multi-phase flows in recipes (dynatui's two-phase metric probe
+  stays code). Correlation is composed by the agent via `followups`, mirroring
+  dynatui ADR-0013's "no cross-signal joins in curated views".
+- Pack `when:` conditions compare discovered facts only (capabilities,
+  carriage thresholds) — deliberately not an expression language.
 
 ## 3. CLI surface
 
@@ -290,7 +344,57 @@ interviews the tenant with `fieldsSummary`/census recipes and the human with
 deterministic generator for facts/verification, agent pass for semantics.
 The profile schema doesn't change; only who writes the org layer.
 
-## 5. Why this saves agent tokens
+## 5. Relationship to Dynatrace Segments
+
+Grail Segments are the platform-native neighbor of exactly one slice of this
+concept, verified live: a segment is a named, versioned, shared, server-side
+object of per-`dataObject` filter expressions plus typed variables — and a
+variable's value domain is itself a DQL query. Example from a real tenant:
+
+```json
+{ "name": "Log bucket",
+  "includes": [ { "dataObject": "logs", "filter": "dt.system.bucket = \"$bucket\"" } ],
+  "variables": { "type": "query", "value": "fetch dt.system.buckets | ... | fields bucket = name" } }
+```
+
+dtctl already applies them at query time: `dtctl query "..." -S "uid?bucket=x"`
+(repeatable, AND-combined, inline variable binding).
+
+**Overlap.** Org-level scoping conventions ("team X = this host group / these
+buckets / this app slice") are what segments were built for. For that slice,
+segments beat profile YAML on every axis that matters: centrally managed, one
+owner, versioned, and honored by *all* Dynatrace surfaces (notebooks,
+dashboards, apps), not just dtctl. The org layer therefore treats segments as
+the **system of record for organizational scoping** and stores references, not
+copies.
+
+**Non-overlap.** Segments are filters, not queries: no projection,
+aggregation, or followups (recipes remain the query layer, and recipe × `-S`
+compose orthogonally at the API level). They carry no facts, no verification,
+and cannot express entity-level mechanics — the `runs_on` hop needs a topology
+pre-query, and casts/carriage are per-record-type knowledge. They are also
+tenant-locked, while the base pack is cross-tenant.
+
+**Integration hooks:**
+
+1. **Discover** — `profile generate` lists segments into `facts.segments`;
+   agents scope with `-S <uid>` instead of reconstructing team filters.
+2. **Mine** — segment definitions are human-curated tenant semantics in
+   machine-readable form ("Host group" ⇒ this org slices by host group). The
+   generator reads them before the agent-assisted annotation pass (§4.3) asks
+   any human anything.
+3. **Reference, don't duplicate** — org-layer scoping that exists as a segment
+   is stored as `segments: [uid]` on the recipe (see `audit-log-search` in the
+   example profile).
+4. **Write back** — conventions that profiling discovers can be deposited as
+   segments (`dtctl create segment` exists), making the platform the owner and
+   every Dynatrace app a beneficiary.
+
+Caveat: segment application has sharp edges on some API surfaces (e.g. Davis
+views rejecting bucket parameters), so "apply segment X" gets the same
+verification stamp as everything else.
+
+## 6. Why this saves agent tokens
 
 Today an agent session looks like: read generic DQL reference → compose query →
 empty result → guess why → retry (×N). With a profile:
@@ -308,7 +412,7 @@ profile doesn't cover, and recipes echo their DQL (like dynatui's `ctrl+q`)
 so agents can learn from and modify them — recipes as few-shot examples that
 are *known to work on this tenant* beat any static example corpus.
 
-## 6. Other ideas considered (complementary, not competing)
+## 7. Other ideas considered (complementary, not competing)
 
 - **Distill-from-usage.** dtctl already tags queries with `dt-client-context`.
   Opt-in local logging of successful agent queries + `dtctl profile distill`
@@ -337,7 +441,7 @@ are *known to work on this tenant* beat any static example corpus.
   concerns don't serialize (closures) and don't help agents; only the query,
   params, scoping, and drill graph do. Export the distillate, not the catalog.
 
-## 7. Phasing
+## 8. Phasing
 
 1. **v0 — schema + loader + `recipes`/`run`** (no generator). Hand-written
    profiles already deliver value: teams codify their queries per context;
@@ -349,7 +453,7 @@ are *known to work on this tenant* beat any static example corpus.
    distill-from-usage.** dynatui optionally consumes profiles (org recipes
    appear as views), closing the loop.
 
-## 8. Open questions
+## 9. Open questions
 
 - Pack distribution: bundled snapshot in the dtctl release vs fetched
   (`dtctl profile update-pack`)? Bundled-with-override is the likely answer.
@@ -363,7 +467,7 @@ are *known to work on this tenant* beat any static example corpus.
 - Naming: "profile" collides with cloud monitoring profiles in docs; maybe
   "tenant profile" / "query pack" split naming needs a pass.
 
-## 9. Live verification (2026-07-17, two tenants)
+## 10. Live verification (2026-07-17, two tenants)
 
 The discovery battery and the load-bearing claims were executed via
 `dtctl query` against two real tenants ("box" — a dev tenant, "demo" — a large
