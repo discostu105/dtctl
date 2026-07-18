@@ -27,6 +27,7 @@ This document tracks the current implementation status of dtctl. For future plan
 - [x] Agent output envelope (`--agent` / `-A`) with auto-detection, structured errors, and per-command context enrichment
 - [x] Enhanced error messages with contextual troubleshooting suggestions
 - [x] Machine-readable command catalog (`dtctl commands`) for AI agent bootstrap
+- [x] **Recipes** (`dtctl recipes`, [RECIPES_CONCEPT.md](RECIPES_CONCEPT.md)): per-context recipe book of environment facts + verified DQL recipes — `recipes` briefing, `recipes discover`/`refresh` (probe generator with guards, classified disables, budget), `describe recipe`, `query --recipe` with typed params and living-cache stamps, `verify query --recipe`
 - [x] [NO_COLOR](https://no-color.org/) standard: color disabled when piped, `NO_COLOR` env var, `FORCE_COLOR=1` override
 - [x] Consistent help text: all parent verb commands have `Long` descriptions and Cobra `Example` fields
 

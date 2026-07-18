@@ -158,6 +158,47 @@ type DQLExecuteOptions struct {
 	// query execution and are only consulted on the spill path.
 	TenantID    string
 	ContextName string
+
+	// Observe, when set, receives the terminal result of the execution (record
+	// count, wall seconds, partial-result marker) before printing; lines it
+	// returns are appended to the envelope warnings. Used by `query --recipe`
+	// to refresh the recipe's stamp — the stamp is a living cache refreshed on
+	// every execution (RECIPES_CONCEPT.md §4.0) — and to report drift.
+	Observe func(ObservedResult) []string
+
+	// ExtraWarnings and ExtraSuggestions are caller-supplied lines appended to
+	// the agent envelope context on the query output path (e.g. recipe followup
+	// suggestions, disabled-recipe evidence). Ignored outside agent mode.
+	ExtraWarnings    []string
+	ExtraSuggestions []string
+}
+
+// ObservedResult is the execution summary passed to DQLExecuteOptions.Observe.
+type ObservedResult struct {
+	Records int
+	Seconds float64
+	Partial string // non-empty when the result was truncated (scan/result limit/timeout); holds the notification message
+}
+
+// PartialNotification returns the first truncation notification message of a
+// query result (scan limit, result limit, or timeout), or "".
+func PartialNotification(result *DQLQueryResponse) string {
+	if result == nil {
+		return ""
+	}
+	return partialFromNotifications(result.GetNotifications())
+}
+
+// partialFromNotifications returns the first truncation notification message
+// (scan limit, result limit, or timeout), or "".
+func partialFromNotifications(notifications []QueryNotification) string {
+	for _, n := range notifications {
+		switch classifyNotification(n.NotificationType, n.Message) {
+		case notifScanLimit, notifResultLimit, notifTimeout:
+			return n.Message
+		}
+	}
+	return ""
 }
 
 // DQLVerifyOptions configures DQL query verification
@@ -250,12 +291,21 @@ func (e *DQLExecutor) ExecuteWithOptions(query string, opts DQLExecuteOptions) e
 
 // ExecuteWithContext executes a DQL query with a cancellable context and prints the results.
 func (e *DQLExecutor) ExecuteWithContext(ctx context.Context, query string, opts DQLExecuteOptions) error {
+	start := time.Now()
 	result, err := e.ExecuteQueryWithContext(ctx, query, opts)
 	if err != nil {
 		return err
 	}
 	if result == nil {
 		return nil // context was cancelled; message already printed to stderr
+	}
+	if opts.Observe != nil {
+		extra := opts.Observe(ObservedResult{
+			Records: len(result.GetRecords()),
+			Seconds: time.Since(start).Seconds(),
+			Partial: partialFromNotifications(result.GetNotifications()),
+		})
+		opts.ExtraWarnings = append(opts.ExtraWarnings, extra...)
 	}
 	return e.printResults(query, result, opts)
 }

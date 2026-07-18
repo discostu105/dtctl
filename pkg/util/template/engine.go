@@ -31,11 +31,9 @@ func ParseSetFlags(setFlags []string) (map[string]interface{}, error) {
 	return vars, nil
 }
 
-// RenderTemplate renders a template string with the provided variables
-// Uses Go's text/template syntax with support for default values
-func RenderTemplate(templateStr string, vars map[string]interface{}) (string, error) {
-	// Create custom function map with 'default' function
-	funcMap := template.FuncMap{
+// funcMap returns the template functions shared by rendering and validation.
+func funcMap() template.FuncMap {
+	return template.FuncMap{
 		"default": func(defaultVal interface{}, value ...interface{}) interface{} {
 			// If no value provided or value is empty/zero, return default
 			if len(value) == 0 {
@@ -47,10 +45,44 @@ func RenderTemplate(templateStr string, vars map[string]interface{}) (string, er
 			}
 			return v
 		},
+		"dqlString": DQLString,
 	}
+}
 
+// DQLString renders a value as a properly escaped, quoted DQL string literal.
+// Recipe templates interpolate string-typed params exclusively through this
+// func (`== {{.ns | dqlString}}`, never `== "{{.ns}}"`) so a value can never
+// break out of the literal (RECIPES_CONCEPT.md §2.2).
+func DQLString(v interface{}) string {
+	s := fmt.Sprintf("%v", v)
+	var b strings.Builder
+	b.Grow(len(s) + 2)
+	b.WriteByte('"')
+	for _, r := range s {
+		switch r {
+		case '\\':
+			b.WriteString(`\\`)
+		case '"':
+			b.WriteString(`\"`)
+		case '\n':
+			b.WriteString(`\n`)
+		case '\t':
+			b.WriteString(`\t`)
+		case '\r':
+			b.WriteString(`\r`)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// RenderTemplate renders a template string with the provided variables
+// Uses Go's text/template syntax with support for default values
+func RenderTemplate(templateStr string, vars map[string]interface{}) (string, error) {
 	// Parse the template with missingkey=zero (so variables evaluate to zero value)
-	tmpl, err := template.New("query").Funcs(funcMap).Option("missingkey=zero").Parse(templateStr)
+	tmpl, err := template.New("query").Funcs(funcMap()).Option("missingkey=zero").Parse(templateStr)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse template: %w", err)
 	}
@@ -72,23 +104,8 @@ func ContainsTemplate(str string) bool {
 // ValidateTemplate checks if a template is valid and returns required variables
 // This is a best-effort function that may not catch all cases
 func ValidateTemplate(templateStr string) ([]string, error) {
-	// Create custom function map with 'default' function
-	funcMap := template.FuncMap{
-		"default": func(defaultVal interface{}, value ...interface{}) interface{} {
-			// If no value provided or value is empty/zero, return default
-			if len(value) == 0 {
-				return defaultVal
-			}
-			v := value[0]
-			if v == nil || v == "" {
-				return defaultVal
-			}
-			return v
-		},
-	}
-
 	// Try to parse the template to validate syntax
-	_, err := template.New("validate").Funcs(funcMap).Parse(templateStr)
+	_, err := template.New("validate").Funcs(funcMap()).Parse(templateStr)
 	if err != nil {
 		return nil, fmt.Errorf("invalid template syntax: %w", err)
 	}

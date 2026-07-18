@@ -114,7 +114,7 @@ Examples:
 			return fmt.Errorf("unsupported output format %q for verify query (supported: json, yaml, toon)", outputFmt)
 		}
 
-		_, c, err := SetupClient()
+		cfg, c, err := SetupClient()
 		if err != nil {
 			return err
 		}
@@ -123,10 +123,24 @@ Examples:
 
 		queryFile, _ := cmd.Flags().GetString("file")
 		setFlags, _ := cmd.Flags().GetStringArray("set")
+		recipeName, _ := cmd.Flags().GetString("recipe")
 
 		var query string
+		var fromRecipe bool
 
-		if queryFile != "" {
+		if recipeName != "" {
+			if queryFile != "" || len(args) > 0 {
+				return fmt.Errorf("--recipe cannot be combined with an inline query or --file")
+			}
+			// Render + validate without executing: the recipe path reuses the
+			// existing verify flow on the rendered DQL (no probe, no stamp).
+			_, rendered, rerr := resolveRecipeForRun(cfg, recipeName, setFlags)
+			if rerr != nil {
+				return rerr
+			}
+			query = rendered
+			fromRecipe = true
+		} else if queryFile != "" {
 			// Read query from file (use "-" for stdin)
 			if queryFile == "-" {
 				content, err := io.ReadAll(os.Stdin)
@@ -155,8 +169,9 @@ Examples:
 			return fmt.Errorf("query string or --file is required")
 		}
 
-		// Apply template rendering if --set flags are provided
-		if len(setFlags) > 0 {
+		// Apply template rendering if --set flags are provided (--recipe
+		// consumed them already, with typed validation)
+		if !fromRecipe && len(setFlags) > 0 {
 			vars, err := template.ParseSetFlags(setFlags)
 			if err != nil {
 				return fmt.Errorf("invalid --set flag: %w", err)
@@ -417,6 +432,7 @@ func init() {
 	// Flags for verify query command
 	verifyQueryCmd.Flags().StringP("file", "f", "", "read query from file (use '-' for stdin)")
 	verifyQueryCmd.Flags().StringArray("set", []string{}, "set template variable (key=value)")
+	verifyQueryCmd.Flags().String("recipe", "", "render a named recipe and validate it without executing (see 'dtctl recipes')")
 	verifyQueryCmd.Flags().Bool("canonical", false, "print canonical query representation")
 	verifyQueryCmd.Flags().String("timezone", "", "timezone for query verification (IANA, CET, +01:00, etc.)")
 	verifyQueryCmd.Flags().String("locale", "", "locale for query verification (en, en_US, de_AT, etc.)")

@@ -178,10 +178,22 @@ Examples:
 
 		queryFile, _ := cmd.Flags().GetString("file")
 		setFlags, _ := cmd.Flags().GetStringArray("set")
+		recipeName, _ := cmd.Flags().GetString("recipe")
 
 		var query string
+		var recipeExec *recipeExecution
 
-		if queryFile != "" {
+		if recipeName != "" {
+			if queryFile != "" || len(args) > 0 {
+				return fmt.Errorf("--recipe cannot be combined with an inline query or --file")
+			}
+			re, rendered, rerr := resolveRecipeForRun(cfg, recipeName, setFlags)
+			if rerr != nil {
+				return rerr
+			}
+			recipeExec = re
+			query = rendered
+		} else if queryFile != "" {
 			// Read query from file (use "-" for stdin)
 			if queryFile == "-" {
 				content, err := io.ReadAll(os.Stdin)
@@ -210,8 +222,9 @@ Examples:
 			return fmt.Errorf("query string or --file is required")
 		}
 
-		// Apply template rendering if --set flags are provided
-		if len(setFlags) > 0 {
+		// Apply template rendering if --set flags are provided (--recipe
+		// consumed them already, with typed validation)
+		if recipeExec == nil && len(setFlags) > 0 {
 			vars, err := template.ParseSetFlags(setFlags)
 			if err != nil {
 				return fmt.Errorf("invalid --set flag: %w", err)
@@ -396,6 +409,20 @@ Examples:
 			// command only; opt in here (subject to --no-progress) so internal
 			// query callers stay silent by default.
 			ShowProgress: !noProgress,
+		}
+
+		if recipeExec != nil {
+			if opts.ClientContext == "" {
+				opts.ClientContext = "recipe:" + recipeExec.name
+			}
+			opts.ExtraWarnings = append(opts.ExtraWarnings, recipeExec.warnings...)
+			opts.ExtraSuggestions = append(opts.ExtraSuggestions, recipeExec.suggestions...)
+			opts.Observe = recipeExec.observe
+			if !agentMode {
+				for _, w := range recipeExec.warnings {
+					output.PrintWarning("%s", w)
+				}
+			}
 		}
 
 		// Handle live mode
@@ -719,6 +746,7 @@ func init() {
 	// Flags for main query command
 	queryCmd.Flags().StringP("file", "f", "", "read query from file")
 	queryCmd.Flags().StringArray("set", []string{}, "set template variable (key=value)")
+	queryCmd.Flags().String("recipe", "", "execute a named recipe from the current context's recipe book (see 'dtctl recipes')")
 
 	// Live mode flags
 	queryCmd.Flags().Bool("live", false, "enable live mode with periodic updates")

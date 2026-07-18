@@ -333,4 +333,5 @@ func init() {
 	describeCmd.AddCommand(describeAnomalyDetectorCmd)
 	describeCmd.AddCommand(describeHubExtensionCmd)
 	describeCmd.AddCommand(describeAnalyzerCmd)
+	describeCmd.AddCommand(describeRecipeCmd)
 }
