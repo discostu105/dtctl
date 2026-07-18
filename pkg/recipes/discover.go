@@ -159,6 +159,18 @@ func Discover(ctx context.Context, runner Runner, packs []*Pack, opts DiscoverOp
 
 	book.Scoping = builtinScoping(census, book.Facts.FieldCarriage)
 
+	// Canonical-stream notes: recurring agent mistakes where a plausible query
+	// silently measures the wrong thing. Emitted as facts so the briefing can
+	// steer before the mistake, not after.
+	if objects["dt.davis.events"] {
+		book.Facts.Notes = append(book.Facts.Notes,
+			"Davis problem/event analytics: fetch dt.davis.events — the generic `events` stream mixes other event kinds and its counts diverge from Davis")
+	}
+	if len(census) > 0 {
+		book.Facts.Notes = append(book.Facts.Notes,
+			"current-state entity census: fetch smartscapeNodes \"<TYPE>\" — `fetch dt.entity.*` is a lookback view that can overcount with stale entities")
+	}
+
 	if opts.FactsOnly {
 		return book, report, nil
 	}

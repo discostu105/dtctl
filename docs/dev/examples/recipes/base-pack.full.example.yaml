@@ -428,8 +428,9 @@ recipes:
       scope:
         description: >
           filter expression for the target entity, produced by
-          `dtctl resolve scope <id> --for logs` (runs_on hop widening for
-          services happens there — recipes stay single-phase and echoable)
+          `dtctl resolve scope <display-name-or-id ...> --for logs` — pass the
+          DISPLAY NAME to cover every instance in one call (runs_on hop
+          widening for services happens there — recipes stay single-phase)
         type: dql-filter
       timeframe: { type: duration, default: "now()-2h" }
       limit: { type: int, default: "100" }
@@ -448,7 +449,7 @@ recipes:
     added: "2026-07-18 completion pass — completes the dynatui drill triple (logs/traces/problems); needs live verification."
     params:
       scope:
-        description: "filter expression from `dtctl resolve scope <id> --for spans`"
+        description: "filter expression from `dtctl resolve scope <display-name-or-id ...> --for spans` (display name covers all instances in one call)"
         type: dql-filter
       timeframe: { type: duration, default: "now()-2h" }
       limit: { type: int, default: "100" }

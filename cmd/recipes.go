@@ -66,6 +66,7 @@ Examples:
 			suggestions := []string{
 				"# full recipe (DQL, params, stamp): dtctl describe recipe <name>",
 				"# execute: dtctl query --recipe <name> [--set param=value]",
+				"# entity filter for a signal: dtctl resolve scope <display-name-or-id ...> --for logs (accepts display names and several entities in ONE call)",
 			}
 			if lib.Book == nil {
 				suggestions = append(suggestions, "# no recipe book yet — generate one: dtctl recipes discover")
@@ -324,12 +325,10 @@ func printBriefingHuman(b *recipes.Briefing) {
 	output.DescribeSection(fmt.Sprintf("Recipes (%d)", len(b.Recipes)))
 	for _, r := range b.Recipes {
 		status := "unstamped"
-		if r.Stamped {
-			if r.Records != nil {
-				status = fmt.Sprintf("%d rec @ %s", *r.Records, shortDate(r.At))
-			} else {
-				status = "stamped"
-			}
+		if r.Records != nil {
+			status = fmt.Sprintf("%d rec @ %s", *r.Records, shortDate(r.At))
+		} else if r.Stamped {
+			status = "stamped"
 		}
 		if len(r.RequiredParams) > 0 {
 			status += " (needs --set " + strings.Join(r.RequiredParams, ",") + ")"

@@ -8,13 +8,16 @@ import (
 )
 
 // IndexEntry is one line of the recipe index: enough to pick a recipe by
-// description and price its trust, without loading the full body.
+// description and price its trust, without loading the full body. A present
+// Records implies the recipe is stamped; Stamped is set only for the rare
+// stamped-without-record-count case so the common rows stay two fields
+// lighter (the index is the bulk of every agent bootstrap call).
 type IndexEntry struct {
 	Name           string   `json:"name" yaml:"name"`
 	Description    string   `json:"description,omitempty" yaml:"description,omitempty"`
 	Records        *int     `json:"records,omitempty" yaml:"records,omitempty"`
 	At             string   `json:"at,omitempty" yaml:"at,omitempty"`
-	Stamped        bool     `json:"stamped" yaml:"stamped"`
+	Stamped        bool     `json:"stamped,omitempty" yaml:"stamped,omitempty"`
 	Empty          string   `json:"empty,omitempty" yaml:"empty,omitempty"`
 	RequiredParams []string `json:"requiredParams,omitempty" yaml:"requiredParams,omitempty"`
 	Override       string   `json:"override,omitempty" yaml:"override,omitempty"`
@@ -94,8 +97,8 @@ func BuildBriefing(lib *Library, now func() time.Time) *Briefing {
 		entry.RequiredParams = RequiredParams(res.Recipe)
 		if lr := res.Recipe.LastRun; lr != nil {
 			entry.Records = lr.Records
-			entry.At = lr.At
-			entry.Stamped = true
+			entry.At = stampDate(lr.At)
+			entry.Stamped = lr.Records == nil
 			entry.Empty = lr.Empty
 		}
 		b.Recipes = append(b.Recipes, entry)
@@ -160,6 +163,15 @@ func sortDisabled(entries []DisabledIndexEntry) {
 			entries[j], entries[j-1] = entries[j-1], entries[j]
 		}
 	}
+}
+
+// stampDate compresses a stamp timestamp to its date for the index — the
+// book's generatedAt/factsAge already carry freshness at full precision.
+func stampDate(at string) string {
+	if t, err := time.Parse(time.RFC3339, at); err == nil {
+		return t.Format("2006-01-02")
+	}
+	return at
 }
 
 // humanAge renders a duration as a compact age ("3h", "2d").

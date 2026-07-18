@@ -616,6 +616,26 @@ func notificationAdvice(notifications []QueryNotification) (warnings, suggestion
 	return warnings, suggestions
 }
 
+// heavyScanWarnBytes is the scanned-data level above which the agent envelope
+// warns. An agent that cannot see the bill will happily re-run an 85 GB scan
+// it already paid for; the warning makes the cost visible and steers toward
+// reusing the result it just received.
+const heavyScanWarnBytes = 10 * 1000 * 1000 * 1000
+
+// heavyScanAdvice emits an envelope warning + suggestion when a query scanned
+// a large amount of data, so the cost is visible in-band.
+func heavyScanAdvice(result *DQLQueryResponse) (warnings, suggestions []string) {
+	meta := extractQueryMetadata(result)
+	if meta == nil || meta.ScannedBytes < heavyScanWarnBytes {
+		return nil, nil
+	}
+	warnings = append(warnings, fmt.Sprintf(
+		"this query scanned %.1f GB — re-running it costs the same again", float64(meta.ScannedBytes)/1e9))
+	suggestions = append(suggestions,
+		"# heavy scan: reuse this result (dtctl inspect on a spilled file) instead of re-querying; narrow the timeframe or bucket to reduce cost")
+	return warnings, suggestions
+}
+
 // PrintNotifications prints query notifications/warnings to stderr
 func (e *DQLExecutor) PrintNotifications(notifications []QueryNotification) {
 	for _, n := range notifications {

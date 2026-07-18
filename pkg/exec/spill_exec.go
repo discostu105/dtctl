@@ -195,6 +195,9 @@ func (e *DQLExecutor) buildSpillResponse(query string, result *DQLQueryResponse,
 	notifWarnings, notifSuggestions := notificationAdvice(result.GetNotifications())
 	warnings = append(warnings, notifWarnings...)
 	suggestions = append(notifSuggestions, suggestions...)
+	scanWarnings, scanSuggestions := heavyScanAdvice(result)
+	warnings = append(warnings, scanWarnings...)
+	suggestions = append(suggestions, scanSuggestions...)
 	warnings = append(warnings, opts.ExtraWarnings...)
 	suggestions = append(suggestions, opts.ExtraSuggestions...)
 
@@ -250,6 +253,9 @@ func (e *DQLExecutor) inlineRecordsResponse(query string, result *DQLQueryRespon
 	// few rows. Surface the same notification advice so the agent isn't misled
 	// into treating a truncated scan as the complete answer.
 	notifWarnings, notifSuggestions := notificationAdvice(result.GetNotifications())
+	scanWarnings, scanSuggestions := heavyScanAdvice(result)
+	notifWarnings = append(notifWarnings, scanWarnings...)
+	notifSuggestions = append(notifSuggestions, scanSuggestions...)
 	notifWarnings = append(notifWarnings, opts.ExtraWarnings...)
 	notifSuggestions = append(notifSuggestions, opts.ExtraSuggestions...)
 
