@@ -81,10 +81,15 @@ Examples:
 		}
 		printer := NewPrinter()
 		if ap := enrichAgent(printer, "resolve", "scope"); ap != nil {
-			ap.SetSuggestions([]string{
+			suggestions := []string{
 				fmt.Sprintf("# use it: dtctl query --recipe entity-%s --set scope='%s'", signal, res.Filter),
 				fmt.Sprintf("# or inline: dtctl query 'fetch %s, from:now()-2h | filter %s | limit 100'", signal, res.Filter),
-			})
+			}
+			if len(res.Targets) > 0 {
+				suggestions = append(suggestions,
+					"# result.targets already lists the backing objects (e.g. pods) by name — read them directly instead of re-deriving the topology with more queries")
+			}
+			ap.SetSuggestions(suggestions)
 			ap.SetWarnings(res.Notes)
 		}
 		return printer.Print(res)

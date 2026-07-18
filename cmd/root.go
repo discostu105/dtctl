@@ -26,6 +26,7 @@ import (
 	"github.com/dynatrace-oss/dtctl/pkg/safety"
 	"github.com/dynatrace-oss/dtctl/pkg/suggest"
 	"github.com/dynatrace-oss/dtctl/pkg/tracing"
+	sdkquery "github.com/dynatrace-oss/dtctl/sdk/api/query"
 )
 
 var (
@@ -307,6 +308,19 @@ func setupErrorHandlers(cmd *cobra.Command) {
 	}
 }
 
+// dqlErrorAdvice maps recurring DQL mistake classes (observed in agent evals)
+// to recovery suggestions carried in the error envelope.
+func dqlErrorAdvice(e *sdkquery.QueryError) []string {
+	text := e.Error()
+	var s []string
+	if strings.Contains(text, "smartscapeNode") || strings.Contains(text, "smartscapeEdge") {
+		s = append(s, `smartscapeNodes/smartscapeEdges are query COMMANDS, not fetch objects — start the query with them: dtctl query 'smartscapeNodes "HOST" | limit 10'`)
+	} else if e.ErrorType == "UNKNOWN_DATA_OBJECT" && strings.Contains(text, "dt.entity.") {
+		s = append(s, `for a current-state entity census use: dtctl query 'smartscapeNodes "<TYPE>" | summarize count()' — dt.entity.* tables are event-lookback views and exist only for some types`)
+	}
+	return s
+}
+
 // errorToDetail converts any error into a structured ErrorDetail for agent/plain mode output.
 // It uses errors.As to extract rich context from typed errors when available.
 func errorToDetail(err error) *output.ErrorDetail {
@@ -388,6 +402,23 @@ func errorToDetail(err error) *output.ErrorDetail {
 				"check hook stderr output for details",
 				"use --no-hooks to skip pre-apply hooks",
 			},
+		}
+	}
+
+	// query.QueryError — a typed DQL API error. The envelope code becomes the
+	// API's error type (e.g. unknown_data_object) and recurring mistake
+	// classes get a targeted recovery suggestion.
+	var queryErr *sdkquery.QueryError
+	if errors.As(err, &queryErr) {
+		code := strings.ToLower(queryErr.ErrorType)
+		if code == "" {
+			code = output.ClassifyHTTPError(queryErr.StatusCode)
+		}
+		return &output.ErrorDetail{
+			Code:        code,
+			Message:     queryErr.Error(),
+			StatusCode:  queryErr.StatusCode,
+			Suggestions: dqlErrorAdvice(queryErr),
 		}
 	}
 

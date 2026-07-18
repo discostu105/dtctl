@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -634,6 +636,60 @@ func heavyScanAdvice(result *DQLQueryResponse) (warnings, suggestions []string) 
 	suggestions = append(suggestions,
 		"# heavy scan: reuse this result (dtctl inspect on a spilled file) instead of re-querying; narrow the timeframe or bucket to reduce cost")
 	return warnings, suggestions
+}
+
+// timestampFilterRe spots a filter stage constraining the timestamp field —
+// the idiom agents reach for when they mean "query an older window".
+var timestampFilterRe = regexp.MustCompile(`(?i)\|\s*filter\b[^|]*\btimestamp\b`)
+
+// windowAdvice explains the silent-default-window trap: a `filter timestamp`
+// predicate does NOT widen the scanned window, so filtering for data older
+// than the default window returns nothing — silently. Fires only on an empty
+// result (no rows, or the single all-zero row a `summarize count()` yields)
+// with a timestamp filter and no explicit window anywhere.
+func windowAdvice(query string, records []map[string]interface{}, opts DQLExecuteOptions) []string {
+	if opts.DefaultTimeframeStart != "" || opts.DefaultTimeframeEnd != "" {
+		return nil
+	}
+	if len(records) > 1 || (len(records) == 1 && !allAggregatesZero(records[0])) {
+		return nil
+	}
+	if !timestampFilterRe.MatchString(query) {
+		return nil
+	}
+	if strings.Contains(query, "from:") || strings.Contains(query, "to:") || strings.Contains(query, "timeframe:") {
+		return nil
+	}
+	return []string{"# empty result with a `filter timestamp ...` stage: timestamp filters do NOT widen the scanned window (default: the last 2h) — set the window in the fetch instead, e.g. `fetch logs, from:now()-24h, to:now()-12h`, or pass --default-timeframe-start/--default-timeframe-end"}
+}
+
+// allAggregatesZero reports whether a single result row carries only zero
+// numeric values (DQL long aggregates arrive as JSON strings) — the shape a
+// `summarize count()` produces when nothing matched.
+func allAggregatesZero(rec map[string]interface{}) bool {
+	zeros := 0
+	for _, v := range rec {
+		switch x := v.(type) {
+		case float64:
+			if x != 0 {
+				return false
+			}
+			zeros++
+		case json.Number:
+			if f, err := x.Float64(); err == nil && f != 0 {
+				return false
+			}
+			zeros++
+		case string:
+			if f, err := strconv.ParseFloat(x, 64); err == nil {
+				if f != 0 {
+					return false
+				}
+				zeros++
+			}
+		}
+	}
+	return zeros > 0
 }
 
 // PrintNotifications prints query notifications/warnings to stderr

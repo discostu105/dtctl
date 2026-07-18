@@ -198,6 +198,7 @@ func (e *DQLExecutor) buildSpillResponse(query string, result *DQLQueryResponse,
 	scanWarnings, scanSuggestions := heavyScanAdvice(result)
 	warnings = append(warnings, scanWarnings...)
 	suggestions = append(suggestions, scanSuggestions...)
+	suggestions = append(suggestions, windowAdvice(query, records, opts)...)
 	warnings = append(warnings, opts.ExtraWarnings...)
 	suggestions = append(suggestions, opts.ExtraSuggestions...)
 
@@ -256,6 +257,7 @@ func (e *DQLExecutor) inlineRecordsResponse(query string, result *DQLQueryRespon
 	scanWarnings, scanSuggestions := heavyScanAdvice(result)
 	notifWarnings = append(notifWarnings, scanWarnings...)
 	notifSuggestions = append(notifSuggestions, scanSuggestions...)
+	notifSuggestions = append(notifSuggestions, windowAdvice(query, records, opts)...)
 	notifWarnings = append(notifWarnings, opts.ExtraWarnings...)
 	notifSuggestions = append(notifSuggestions, opts.ExtraSuggestions...)
 

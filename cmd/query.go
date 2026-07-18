@@ -183,13 +183,18 @@ Examples:
 		if dqlFlag != "" && len(args) == 0 {
 			args = []string{dqlFlag}
 		}
-		// Agents write `dtctl query dql <text>` (a hallucinated subcommand) and
-		// shell-split queries into several positional args. Until now args[0]
-		// was sent alone — the literal string "dql", or a truncated query —
-		// producing an opaque UNKNOWN_COMMAND or silently wrong results. Strip
-		// the marker token and rejoin the fragments instead.
-		if len(args) > 1 && args[0] == "dql" {
-			args = args[1:]
+		// Agents write `dtctl query dql <text>` / `query execute <text>`
+		// (hallucinated subcommands) and shell-split queries into several
+		// positional args. Until now args[0] was sent alone — the literal
+		// string "dql", or a truncated query — producing an opaque
+		// UNKNOWN_COMMAND or silently wrong results. Strip the marker token
+		// and rejoin the fragments instead (no DQL statement starts with
+		// these words).
+		if len(args) > 1 {
+			switch args[0] {
+			case "dql", "execute", "exec", "run":
+				args = args[1:]
+			}
 		}
 		if len(args) > 1 {
 			args = []string{strings.Join(args, " ")}

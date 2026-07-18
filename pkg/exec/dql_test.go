@@ -2799,3 +2799,31 @@ func TestDQLExecutor_ClientContextHeader_OnInternalCancel(t *testing.T) {
 		t.Errorf("context = %q, want %q", m["context"], "incident-response")
 	}
 }
+
+func TestWindowAdvice(t *testing.T) {
+	trap := `fetch logs | filter timestamp >= now() - 24h and timestamp < now() - 12h | summarize count()`
+	cases := []struct {
+		name    string
+		query   string
+		records []map[string]interface{}
+		opts    DQLExecuteOptions
+		want    bool
+	}{
+		{"trap query, no rows", trap, nil, DQLExecuteOptions{}, true},
+		{"trap query, single zero-count row", trap, []map[string]interface{}{{"count()": "0"}}, DQLExecuteOptions{}, true},
+		{"trap query, nonzero count row", trap, []map[string]interface{}{{"count()": "4136117"}}, DQLExecuteOptions{}, false},
+		{"trap query, many rows", trap, []map[string]interface{}{{"a": "1"}, {"a": "2"}}, DQLExecuteOptions{}, false},
+		{"explicit from: in query", `fetch logs, from:now()-24h | filter timestamp < now()-12h | summarize c = count()`, nil, DQLExecuteOptions{}, false},
+		{"timeframe flag set", trap, nil, DQLExecuteOptions{DefaultTimeframeStart: "2026-01-01T00:00:00Z"}, false},
+		{"no timestamp filter", `fetch logs | summarize count()`, nil, DQLExecuteOptions{}, false},
+		{"filter on another field only", `fetch logs | filter loglevel == "ERROR"`, nil, DQLExecuteOptions{}, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := windowAdvice(tc.query, tc.records, tc.opts)
+			if (len(got) > 0) != tc.want {
+				t.Errorf("windowAdvice(%q, %v) = %v, want fired=%v", tc.query, tc.records, got, tc.want)
+			}
+		})
+	}
+}
