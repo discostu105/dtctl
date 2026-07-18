@@ -370,3 +370,81 @@ environment-semantics questions** (current-state vs lookback, canonical
 stream choice, scoping traps, absence facts) and **every efficiency metric
 except uncached input tokens and dollars** — the briefing size (opt. 1) is
 the main tax, and it is fixable.
+
+# Fourth eval — optimizations applied, matrix re-run
+
+The third eval's optimizations were implemented (commit `c19e3b0`: curated
+briefing facts, `query --dql` alias, multi-entity `resolve scope` with
+failure-degrade-to-note, stale-entity fallback hint, pack semantics caveats)
+and the full 18-task matrix re-ran as `matrix-4`. base/skills use the
+unchanged baseline build, so they double as controls: their metrics moved
+only a few percent, while the recipe arms moved by a third.
+
+## Before → after (matrix-3 → matrix-4)
+
+| | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| correctness | 15→17/18 | 15→15/18 | 17→**18/18** | 17→**18/18** |
+| cost USD | 3.87→4.01 | 5.09→4.84 | 4.60→**3.03 (−34%)** | 5.01→4.14 (−17%) |
+| tokens in (uncached) | 275k→288k | 454k→440k | 489k→**330k (−33%)** | 603k→479k (−21%) |
+| tokens out | 43.6k→46.4k | 34.7k→36.6k | 29.0k→**19.1k (−34%)** | 24.2k→18.9k (−22%) |
+| wall seconds | 790→768 | 647→628 | 506→**347 (−31%)** | 417→354 (−15%) |
+| errored calls | 14→17 | 18→23 | 12→**3** | 3→**1** |
+| empty results | 20→15 | 11→5 | 2→**0** | 0→**0** |
+| scanned GB | 58.5→121.0 | 60.0→49.6 | 58.0→**35.3 (−39%)** | 36.3→33.4 |
+
+**recipes now wins every aggregate metric while scoring 18/18** — including
+the two it lost in matrix-3 (dollars and uncached input, both fixed mostly
+by the briefing diet: 28.8→14.8 KiB per bootstrap). base's scan bill
+doubled to 121 GB (its t6 alone re-scanned 7 days of security events for
+85 GB — the cost of not knowing which query is heavy).
+
+Optimization effects observed directly:
+
+- **`--dql` alias: 22 uses in one batch, zero failures** — the agents guess
+  this flag constantly; matrix-3 turned each guess into an error, matrix-4
+  turned each into a working call.
+- **Pack caveats worked**: with the request-level caveat on the two RED
+  recipes, both recipe arms answered t2 via all-span queries at GT rank 1.
+- **Stale-entity error hint worked**: recipes/t5 no longer retried the
+  unresolvable instance; it went straight to the remaining instances and
+  even added a complement query (`service.name == X and not in(pods)`).
+- **Briefing diet**: recipes-arm total dtctl stdout fell 670→331 KiB, and
+  the arm's uncached input now sits near base's (330k vs 288k).
+
+skills' round: t5 produced a *third distinct undercount route*
+(process-group-name filter → 7,120), t12 fell into the generic-`events`
+stream divergence, and t16 ended in an honest UNKNOWN after 13 failed
+classic-entity guesses. Single-trial variance on the skills arm is ±2
+verdicts between identical batches; recipe arms have been stable at
+17–18/18 across three batches.
+
+## New optimizations (from matrix-4 forensics)
+
+1. **Advertise name-first scope resolution.** recipes/t5 still spent 4
+   calls resolving four instance IDs although `resolve scope <display-name>`
+   covers all instances in one call (and multi-ID now exists). Say so in
+   the `entity-logs` description, the resolve-scope agent suggestions, and
+   the briefing scoping section. Expected: t5-class tasks drop ~4 calls.
+2. **Briefing index diet (next lever).** The briefing is still ~78% of the
+   recipes arm's dtctl stdout (14 KiB × 18 runs); the 44-recipe index is
+   now its dominant chunk. Add a name+description-only bootstrap mode
+   (`recipes --brief`) or drop per-recipe `At` stamps from the index.
+3. **Canonical-stream facts.** The two recurring wrong-stream failures
+   (generic `events` vs `dt.davis.events` — 1.8× divergent; `dt.entity.host`
+   lookback vs Smartscape current — 17 vs 12) are discoverable facts.
+   Emit `facts.notes` entries at discovery ("davis events: fetch
+   dt.davis.events; current host census: smartscapeNodes HOST") — this
+   also protects the combo arm against skills-taught habits.
+4. **Error-driven redirect for classic-entity guesses.** skills/t16 burned
+   13 calls on `fetch dt.entity.database*` errors and gave up; base/t16
+   needed 21. On UNKNOWN_DATA_OBJECT for `dt.entity.<x>`, the agent
+   envelope should suggest `smartscapeNodes "<TYPE>"`.
+5. **Heavy-scan guard.** base/t6's 85 GB came from re-running one 7-day
+   scan. In agent mode, when a query's scannedBytes exceeds a threshold,
+   attach a "this scanned N GB — reuse the result instead of re-running"
+   warning; optionally cache identical DQL+window results for the session.
+6. **Variance protocol.** skills swings ±2 verdicts between identical
+   batches; recipe-arm results are stable. Headline claims should come
+   from ≥2 batches (the harness's `-b` makes this cheap); a `-n <trials>`
+   repeat mode would formalize it.
