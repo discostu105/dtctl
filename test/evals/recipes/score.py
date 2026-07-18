@@ -58,7 +58,13 @@ def score_answer(task, ans, gt):
                 if name_match(str(ans["service"]), row["service"]):
                     # rank 1 always ok; a lower rank passes only in a close race
                     if i == 0 or row["p95_ms"] >= 0.66 * top[0]["p95_ms"]:
-                        if close(num(ans["p95_ms"]), row["p95_ms"], 0.5):
+                        # The p95 of a rolling 1h window drifts between the GT
+                        # measurement and the agent's run (observed 3.4x on the
+                        # volatile top service). The value check exists to catch
+                        # unit errors (ns-vs-ms is 1000x), so accept a wide
+                        # drift band once the service name matched.
+                        ratio = num(ans["p95_ms"]) / max(row["p95_ms"], 1e-9)
+                        if close(num(ans["p95_ms"]), row["p95_ms"], 0.5) or 0.25 <= ratio <= 4:
                             return "PASS", f"matched GT rank {i + 1}"
                         return "WRONG", f'p95 {ans["p95_ms"]} vs GT {row["p95_ms"]:.1f}'
             return "WRONG", f'service {ans["service"]!r} not in GT top {len(top)}'
@@ -156,7 +162,12 @@ def score_answer(task, ans, gt):
         if task == "t15":
             if not close(num(ans["host_count"]), g["host_count"], 0.25):
                 return "WRONG", f'hosts {ans["host_count"]} vs GT {g["host_count"]}'
-            if not name_match(str(ans["dominant_os"]), g["dominant_os"]):
+            # GT carries the OS enum (OS_TYPE_LINUX); agents answer flavors
+            # like "Linux (Amazon Linux 2023)" — compare by OS family token.
+            families = ("linux", "windows", "mac", "aix", "solaris", "hpux")
+            a_os, g_os = str(ans["dominant_os"]).lower(), g["dominant_os"].lower()
+            fam_match = any(f in a_os and f in g_os for f in families)
+            if not (fam_match or name_match(str(ans["dominant_os"]), g["dominant_os"])):
                 return "WRONG", f'os {ans["dominant_os"]!r} vs GT {g["dominant_os"]!r}'
             return "PASS", ""
         if task == "t16":
@@ -203,9 +214,14 @@ def score_answer(task, ans, gt):
                         return "WRONG", f'count {ans["count"]} vs GT {row["count"]}'
             return "WRONG", f'namespace {ans["namespace"]!r} not in GT top {len(top)}'
         if task == "t23":
-            if not close(num(ans["count"]), g["count"], 0.2):
-                return "WRONG", f'count {ans["count"]} vs GT {g["count"]}'
-            return "PASS", ""
+            c = num(ans["count"])
+            if close(c, g["count"], 0.2):
+                return "PASS", ""
+            # the trap: `filter timestamp` older than the silent 2h default
+            # window always yields 0 — reporting it is a silent wrong
+            if c == 0 and g["count"] > 1000:
+                return "SILENT_WRONG", f"reported the empty default-window result (true {g['count']})"
+            return "WRONG", f'count {c:.0f} vs GT {g["count"]}'
         if task == "t24":
             if not close(num(ans["cpu_percent"]), g["cpu"], 0.25):
                 return "WRONG", f'cpu {ans["cpu_percent"]} vs GT {g["cpu"]:.2f}'

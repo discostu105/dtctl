@@ -123,9 +123,14 @@ func curatedFacts(f *Facts) *Facts {
 	if len(f.DataObjects) > 0 {
 		objs := make([]string, 0, len(f.DataObjects))
 		for _, o := range f.DataObjects {
-			if !strings.HasPrefix(o, "dt.entity.") {
-				objs = append(objs, o)
+			// smartscape.nodes/edges appear in the catalog but are not
+			// fetchable — they are the smartscapeNodes/smartscapeEdges
+			// commands; listing them here baited agents into `fetch
+			// smartscape.nodes` (DATA_OBJECT_NOT_SUPPORTED).
+			if strings.HasPrefix(o, "dt.entity.") || o == "smartscape.nodes" || o == "smartscape.edges" {
+				continue
 			}
+			objs = append(objs, o)
 		}
 		c.DataObjects = objs
 	}

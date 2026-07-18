@@ -313,8 +313,9 @@ func setupErrorHandlers(cmd *cobra.Command) {
 func dqlErrorAdvice(e *sdkquery.QueryError) []string {
 	text := e.Error()
 	var s []string
-	if strings.Contains(text, "smartscapeNode") || strings.Contains(text, "smartscapeEdge") {
-		s = append(s, `smartscapeNodes/smartscapeEdges are query COMMANDS, not fetch objects — start the query with them: dtctl query 'smartscapeNodes "HOST" | limit 10'`)
+	if strings.Contains(text, "smartscapeNode") || strings.Contains(text, "smartscapeEdge") ||
+		strings.Contains(text, "smartscape.nodes") || strings.Contains(text, "smartscape.edges") {
+		s = append(s, `smartscape is queried via the COMMANDS smartscapeNodes/smartscapeEdges, not fetch — start the query with them: dtctl query 'smartscapeNodes "HOST" | limit 10'`)
 	} else if e.ErrorType == "UNKNOWN_DATA_OBJECT" && strings.Contains(text, "dt.entity.") {
 		s = append(s, `for a current-state entity census use: dtctl query 'smartscapeNodes "<TYPE>" | summarize count()' — dt.entity.* tables are event-lookback views and exist only for some types`)
 	}
