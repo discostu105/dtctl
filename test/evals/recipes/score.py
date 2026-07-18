@@ -171,7 +171,25 @@ def call_metrics(ws):
     calls = len(ts)
     errors = sum(1 for t in ts if rc.get(t, "0") != "0")
     empties = sum(1 for t in ts if out_is_empty(os.path.join(outdir, t + ".out")))
-    return calls, errors, empties
+    return calls, errors, empties, sum(call_latency_ms(outdir, t) for t in ts)
+
+
+def call_latency_ms(outdir, ts):
+    """Per-call dtctl latency: the wrapper's .dur record, or (for batches run
+    before .dur existed) the gap between the start-ns timestamp and the last
+    write to the call's captured output."""
+    try:
+        with open(os.path.join(outdir, ts + ".dur")) as f:
+            return max(0, int(f.read().strip()))
+    except (OSError, ValueError):
+        pass
+    end = 0
+    for ext in (".out", ".err"):
+        try:
+            end = max(end, os.stat(os.path.join(outdir, ts + ext)).st_mtime_ns)
+        except OSError:
+            pass
+    return max(0, (end - int(ts)) // 1_000_000) if end else 0
 
 
 def extract_query_dqls(ws):
@@ -238,6 +256,17 @@ def main():
     with open(os.path.join(args.rundir, "ground-truth.json")) as f:
         gt = json.load(f)
 
+    # carry previously measured scan data across re-scores
+    prev_scan = {}
+    try:
+        with open(os.path.join(args.rundir, "summary.json")) as f:
+            for r in json.load(f).get("runs", []):
+                if "scan_gb" in r:
+                    prev_scan[(r["variant"], r["task"])] = {
+                        k: r[k] for k in ("scan_gb", "scan_measured", "scan_skipped") if k in r}
+    except (OSError, json.JSONDecodeError):
+        pass
+
     runs = []
     for v in VARIANTS:
         for t in TASKS:
@@ -245,13 +274,22 @@ def main():
             if not os.path.isdir(ws):
                 continue
             row = {"variant": v, "task": t}
-            calls, errors, empties = call_metrics(ws)
-            row.update(calls=calls, errors=errors, empties=empties)
+            calls, errors, empties, dtctl_ms = call_metrics(ws)
+            row.update(calls=calls, errors=errors, empties=empties,
+                       dtctl_s=round(dtctl_ms / 1000, 1))
             try:
                 with open(os.path.join(ws, "result.json")) as f:
                     res = json.load(f)
+                usage = res.get("usage") or {}
                 row.update(turns=res.get("num_turns"), cost_usd=round(res.get("total_cost_usd", 0), 4),
-                           duration_s=round(res.get("duration_ms", 0) / 1000))
+                           duration_s=round(res.get("duration_ms", 0) / 1000),
+                           api_s=round(res.get("duration_api_ms", 0) / 1000),
+                           tokens_in=usage.get("input_tokens", 0)
+                           + usage.get("cache_creation_input_tokens", 0)
+                           + usage.get("cache_read_input_tokens", 0),
+                           tokens_in_uncached=usage.get("input_tokens", 0)
+                           + usage.get("cache_creation_input_tokens", 0),
+                           tokens_out=usage.get("output_tokens", 0))
                 if res.get("subtype") == "error_max_turns":
                     row.update(verdict="NO_ANSWER", note="hit max turns", answer="")
                 else:
@@ -273,6 +311,8 @@ def main():
             if args.measure_scan and args.context:
                 b, n, sk = measure_scan(ws, args.binary, args.context)
                 row.update(scan_gb=round(b / 1e9, 3), scan_measured=n, scan_skipped=sk)
+            elif (v, t) in prev_scan:
+                row.update(prev_scan[(v, t)])
             runs.append(row)
             print(f'{v:>15}/{t}: {row["verdict"]:<13} calls={calls} {row.get("note", "")}')
 
@@ -296,8 +336,11 @@ def main():
               "| Metric | " + " | ".join(variants) + " |",
               "|---|" + "---|" * len(variants)]
     metrics = [("dtctl calls", "calls"), ("errored calls", "errors"), ("empty results", "empties"),
-               ("agent turns", "turns"), ("cost USD", "cost_usd"), ("wall seconds", "duration_s")]
-    if args.measure_scan:
+               ("agent turns", "turns"), ("cost USD", "cost_usd"),
+               ("tokens in (incl. cache)", "tokens_in"), ("tokens in (uncached)", "tokens_in_uncached"),
+               ("tokens out", "tokens_out"),
+               ("wall seconds", "duration_s"), ("API seconds", "api_s"), ("dtctl seconds", "dtctl_s")]
+    if any("scan_gb" in r for r in runs):
         metrics.append(("scanned GB", "scan_gb"))
     for label, key in metrics:
         cells = []
@@ -312,6 +355,9 @@ def main():
                      + (f' ({r["note"]})' if r.get("note") else "")
                      + f' — calls {r["calls"]}, errors {r["errors"]}, empties {r["empties"]}'
                      + (f', turns {r["turns"]}' if r.get("turns") is not None else "")
+                     + (f', tok {r["tokens_in"]}/{r["tokens_out"]}' if r.get("tokens_in") is not None else "")
+                     + (f', wall {r["duration_s"]}s (api {r.get("api_s", "?")}s, dtctl {r["dtctl_s"]}s)'
+                        if r.get("duration_s") is not None else "")
                      + (f', ${r["cost_usd"]}' if r.get("cost_usd") is not None else "")
                      + (f', scan {r["scan_gb"]} GB' if "scan_gb" in r else "")
                      + (f'\n  `{r["answer"]}`' if r.get("answer") else ""))

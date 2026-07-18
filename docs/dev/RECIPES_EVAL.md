@@ -150,10 +150,19 @@ Matrix-1 (original wording), per variant over 6 tasks:
 | dtctl calls | 50 | 34 | 33 | **29** |
 | empty-result calls | 4 | 2 | 1 | **0** |
 | agent turns | 49 | 50 | **35** | **29** |
+| tokens in, uncached (k) | **95** | 135 | 167 | 171 |
+| tokens in, cache-read (M) | 1.53 | 1.68 | 1.35 | **1.22** |
+| tokens out (k) | 14.6 | 11.4 | 13.9 | **8.3** |
+| wall time (s) | 250 | 192 | 200 | **141** |
+| — of which dtctl (s) | 13.7 | 10.4 | 8.1 | 9.3 |
 | cost (USD) | 1.25 | 1.49 | 1.62 | 2.07 |
 
 Matrix-2 (t1/t3/t6, disambiguated wording): **12/12 correct across all four
-variants** — calls: base 34, skills **12**, recipes 17, recipes-skills 20.
+variants** — calls: base 34, skills **12**, recipes 17, recipes-skills 20;
+wall seconds: base 137, skills 90, recipes **84**, recipes-skills 87;
+uncached input tokens (k): base **43**, skills 74, recipes 87,
+recipes-skills 113; output tokens (k): base 7.4, skills 4.9, recipes
+**4.7**, recipes-skills 5.1.
 
 ## Findings
 
@@ -201,7 +210,19 @@ variants** — calls: base 34, skills **12**, recipes 17, recipes-skills 20.
    escape hatch, this task should separate the arms; that tenant is the
    right next battleground.
 
-6. **Skills and recipes are largely redundant on a friendly tenant.**
+6. **Latency is won by knowledge, tokens are split.** End-to-end latency
+   drops with every knowledge layer (matrix-1 batch wall time: base 250s →
+   recipes-skills 141s; matrix-2 per-task ~46s bare vs ~28s with recipes) —
+   and essentially none of it is dtctl execution (< 14s per batch; model
+   thinking dominates). Tokens go both ways: *uncached input* grows
+   monotonically with knowledge (95k → 171k per matrix-1 batch — briefings
+   and skill references are real context), while *output* tokens shrink
+   (14.6k → 8.3k — less flailing, fewer retries). Since output tokens cost
+   ~5× input, the output savings offsets part but not all of the input
+   overhead: dollar cost still ranks base < skills < recipes <
+   recipes-skills.
+
+7. **Skills and recipes are largely redundant on a friendly tenant.**
    `recipes-skills` was the most precise (0 empties, fewest turns) but not
    more correct than `skills` alone, and the most expensive. The
    combination's value should grow with tenant weirdness (mixed-era
@@ -211,9 +232,12 @@ variants** — calls: base 34, skills **12**, recipes 17, recipes-skills 20.
 
 `test/evals/recipes/`: `build.sh` (pins both binaries by commit),
 `env.sh` (git-ignored tenant parameters), `run.sh -v <variants> -t <tasks>`
-(any subset, any batch), `score.py <batch> [--measure-scan]`. Ground truth
-is re-measured per batch, so results are comparable across time on the same
-tenant; run artifacts stay outside the repo (they contain tenant data).
+(any subset, any batch), `score.py <batch> [--measure-scan]`. Per run it
+records correctness verdict, dtctl calls/errors/empties, agent turns, token
+usage (uncached input, cache reads, output), wall/API/dtctl latency, dollar
+cost, and (opt-in) scanned bytes. Ground truth is re-measured per batch, so
+results are comparable across time on the same tenant; run artifacts stay
+outside the repo (they contain tenant data).
 One trial per cell is still directional — batches are cheap (~$1–2 per
 variant) so repeat runs are the intended way to firm up any of the numbers
 above.
