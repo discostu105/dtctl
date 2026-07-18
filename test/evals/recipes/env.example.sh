@@ -15,9 +15,11 @@ export EVAL_SKILLS_DIR=$HOME/.agents/skills
 # Model for the eval agents (any id/alias the claude CLI accepts).
 export EVAL_MODEL=claude-sonnet-5
 
-# Baseline ref for the "without recipes" binary. Defaults to the
-# merge-base of HEAD and upstream/main.
-#export EVAL_BASELINE_REF=upstream/main
+# Baseline ref for the "without recipes" binary. PIN THIS: the default
+# (merge-base of HEAD and upstream/main) moves when upstream moves, which
+# silently changes the control arms between batches.
+#export EVAL_BASELINE_REF=<commit>
+
 
 # Where run artifacts go. Kept OUTSIDE the repo on purpose: run output
 # contains tenant data and must never be committed.

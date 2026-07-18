@@ -15,14 +15,17 @@ Writes <rundir>/report.md and <rundir>/summary.json. Verdicts:
     ERROR         run crashed / no result.json
 """
 import argparse
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
 
-VARIANTS = ["base", "skills", "recipes", "recipes-skills"]
-TASKS = ["t" + str(i) for i in range(1, 25)]
+VARIANTS = ["base", "head-base", "skills", "recipes", "recipes-skills"]
+# t1-t24: the DEV suite (optimization mining allowed). h1-h8: HELD OUT —
+# never derive dtctl optimizations from holdout failures (see README).
+TASKS = ["t" + str(i) for i in range(1, 25)] + ["h" + str(i) for i in range(1, 9)]
 
 
 def close(a, b, tol):
@@ -226,6 +229,69 @@ def score_answer(task, ans, gt):
             if not close(num(ans["cpu_percent"]), g["cpu"], 0.25):
                 return "WRONG", f'cpu {ans["cpu_percent"]} vs GT {g["cpu"]:.2f}'
             return "PASS", ""
+        if task == "h1":
+            top = g["top"]
+            for i, row in enumerate(top):
+                if name_match(str(ans["container"]), row["container"]):
+                    if i == 0 or row["count"] >= 0.66 * top[0]["count"]:
+                        if close(num(ans["count"]), row["count"], 0.4):
+                            return "PASS", f"matched GT rank {i + 1}"
+                        return "WRONG", f'count {ans["count"]} vs GT {row["count"]}'
+            return "WRONG", f'container {ans["container"]!r} not in GT top {len(top)}'
+        if task == "h2":
+            if not close(num(ans["traces"]), g["traces"], 0.3):
+                return "WRONG", f'traces {ans["traces"]} vs GT {g["traces"]}'
+            spt = g["spans"] / max(g["traces"], 1)
+            if not close(num(ans["spans_per_trace"]), spt, 0.25):
+                return "WRONG", f'spans/trace {ans["spans_per_trace"]} vs GT {spt:.2f}'
+            return "PASS", ""
+        if task == "h3":
+            row = g["top"][0]
+            if not name_match(str(ans["country"]), row["country"]):
+                return "WRONG", f'country {ans["country"]!r} != {row["country"]!r}'
+            if not close(num(ans["events"]), row["count"], 0.4):
+                return "WRONG", f'events {ans["events"]} vs GT {row["count"]}'
+            return "PASS", ""
+        if task == "h4":
+            top = g["top"]  # ascending free%: rank 1 = least free disk
+            for i, row in enumerate(top):
+                if name_match(str(ans["host"]), row["host"]):
+                    # the low end is usually a close race; any top-3 within
+                    # 10% of rank 1's free% is a defensible "least free" host
+                    if i == 0 or row["free"] <= 1.1 * top[0]["free"]:
+                        if close(num(ans["free_percent"]), row["free"], 0.25):
+                            return "PASS", f"matched GT rank {i + 1}"
+                        return "WRONG", f'free {ans["free_percent"]} vs GT {row["free"]:.1f}'
+            return "WRONG", f'host {ans["host"]!r} not in GT top {len(top)}'
+        if task == "h5":
+            row = g["top"][0]
+            if not name_match(str(ans["problem"]), row["problem"]):
+                return "WRONG", f'problem {ans["problem"]!r} != {row["problem"]!r}'
+            if not close(num(ans["duration_minutes"]), row["minutes"], 0.2):
+                return "WRONG", f'minutes {ans["duration_minutes"]} vs GT {row["minutes"]:.0f}'
+            return "PASS", ""
+        if task == "h6":
+            c = num(ans["p50_ms"])
+            if close(c, g["p50_ms"], 0.4):
+                return "PASS", ""
+            # the trap: raw ns/µs (or s) confidently reported as ms
+            ratio = c / max(g["p50_ms"], 1e-9)
+            if any(0.6 * f <= ratio <= 1.6 * f for f in (1e6, 1e3, 1e-3)):
+                return "SILENT_WRONG", f"{c} is a unit error (GT {g['p50_ms']:.2f} ms)"
+            return "WRONG", f'p50 {c} vs GT {g["p50_ms"]:.2f} ms'
+        if task == "h7":
+            row = g["top"][0]
+            if not name_match(str(ans["bucket"]), row["bucket"]):
+                return "WRONG", f'bucket {ans["bucket"]!r} != {row["bucket"]!r}'
+            if int(num(ans["retention_days"])) != row["retention_days"]:
+                return "WRONG", f'retention {ans["retention_days"]} vs GT {row["retention_days"]}'
+            return "PASS", ""
+        if task == "h8":
+            if bool(ans["synthetic_present"]) != (g["synthetic_nodes"] > 0):
+                return "WRONG", "synthetic_present mismatch"
+            if abs(num(ans["lambda_functions"]) - g["lambda_functions"]) > 1:
+                return "WRONG", f'lambda {ans["lambda_functions"]} vs GT {g["lambda_functions"]}'
+            return "PASS", ""
     except (KeyError, TypeError, ValueError) as e:
         return "NO_ANSWER", f"answer missing/invalid field: {e}"
     return "ERROR", f"unknown task {task}"
@@ -390,6 +456,23 @@ def main():
 
     with open(os.path.join(args.rundir, "ground-truth.json")) as f:
         gt = json.load(f)
+    # Drift envelope: GT is measured before AND after the batch (run.sh);
+    # an answer matching either measurement passes — tenant drift during the
+    # batch must not force post-hoc tolerance widening.
+    gt_post = None
+    try:
+        with open(os.path.join(args.rundir, "ground-truth-post.json")) as f:
+            gt_post = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    def score_envelope(task, ans):
+        verdict, note = score_answer(task, ans, gt)
+        if verdict != "PASS" and gt_post and gt_post.get(task) is not None:
+            v2, n2 = score_answer(task, ans, gt_post)
+            if v2 == "PASS":
+                return "PASS", (n2 + "; " if n2 else "") + "matched post-batch GT"
+        return verdict, note
 
     # carry previously measured scan data across re-scores
     prev_scan = {}
@@ -416,6 +499,8 @@ def main():
                 with open(os.path.join(ws, "result.json")) as f:
                     res = json.load(f)
                 usage = res.get("usage") or {}
+                if res.get("modelUsage"):
+                    row["models"] = sorted(res["modelUsage"].keys())
                 row.update(turns=res.get("num_turns"), cost_usd=round(res.get("total_cost_usd", 0), 4),
                            duration_s=round(res.get("duration_ms", 0) / 1000),
                            api_s=round(res.get("duration_api_ms", 0) / 1000),
@@ -438,8 +523,10 @@ def main():
                         row.update(verdict="UNKNOWN", note="honest unknown")
                     elif ans is None:
                         row.update(verdict="NO_ANSWER", note="no parseable ANSWER line")
+                    elif gt.get(t) is None and t != "t4":
+                        row.update(verdict="ERROR", note=f"no ground truth for {t} in this batch")
                     else:
-                        verdict, note = score_answer(t, ans, gt)
+                        verdict, note = score_envelope(t, ans)
                         row.update(verdict=verdict, note=note)
             except (OSError, json.JSONDecodeError) as e:
                 row.update(verdict="ERROR", note=str(e), answer="")
@@ -451,8 +538,23 @@ def main():
             runs.append(row)
             print(f'{v:>15}/{t}: {row["verdict"]:<13} calls={calls} {row.get("note", "")}')
 
+    # Provenance: scorer identity, GT timestamps, batch manifest, models seen.
+    with open(__file__, "rb") as f:
+        scorer_sha = hashlib.sha256(f.read()).hexdigest()[:16]
+    manifest = {}
+    try:
+        with open(os.path.join(args.rundir, "manifest.json")) as f:
+            manifest = json.load(f)
+    except (OSError, json.JSONDecodeError):
+        pass
+    meta = {"scorer_sha256": scorer_sha, "gt_at": gt.get("at"),
+            "gt_post_at": (gt_post or {}).get("at"),
+            "models_used": sorted({m for r in runs for m in r.get("models", [])}),
+            "manifest": manifest}
+
     with open(os.path.join(args.rundir, "summary.json"), "w") as f:
-        json.dump({"ground_truth": gt, "runs": runs}, f, indent=2)
+        json.dump({"meta": meta, "ground_truth": gt, "ground_truth_post": gt_post,
+                   "runs": runs}, f, indent=2)
 
     # report.md
     variants = [v for v in VARIANTS if any(r["variant"] == v for r in runs)]

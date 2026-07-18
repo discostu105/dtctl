@@ -11,7 +11,7 @@ import json
 import os
 import sys
 
-VARIANTS = ["base", "skills", "recipes", "recipes-skills"]
+VARIANTS = ["base", "head-base", "skills", "recipes", "recipes-skills"]
 METRICS = [("calls", "calls"), ("errors", "errored"), ("empties", "empties"),
            ("turns", "turns"), ("cost_usd", "cost USD"),
            ("tokens_in_uncached", "uncached-in tok"), ("tokens_out", "out tok"),
@@ -27,7 +27,7 @@ def main():
     a, b = load(sys.argv[1]), load(sys.argv[2])
     na, nb = (os.path.basename(p.rstrip("/")) for p in sys.argv[1:3])
     common_tasks = sorted({t for _, t in a} & {t for _, t in b},
-                          key=lambda t: int(t[1:]) if t[1:].isdigit() else 99)
+                          key=lambda t: (t[0], int(t[1:]) if t[1:].isdigit() else 99))
     print(f"comparing {na} → {nb} over {len(common_tasks)} shared tasks\n")
 
     for v in VARIANTS:

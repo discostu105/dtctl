@@ -19,7 +19,7 @@ import os
 import sys
 from collections import Counter, defaultdict
 
-VARIANTS = ["base", "skills", "recipes", "recipes-skills"]
+VARIANTS = ["base", "head-base", "skills", "recipes", "recipes-skills"]
 
 
 def read_argv(path):
@@ -30,7 +30,7 @@ def recipe_usage(rundir):
     """Per-variant Counters of dtctl call categories, plus per-cell flags."""
     per_variant = defaultdict(Counter)
     cells = defaultdict(dict)  # variant -> task -> Counter
-    for out in sorted(glob.glob(f"{rundir}/*/t*/out")):
+    for out in sorted(glob.glob(f"{rundir}/*/[th]*/out")):
         variant, task = out.split("/")[-3], out.split("/")[-2]
         if variant not in VARIANTS:
             continue

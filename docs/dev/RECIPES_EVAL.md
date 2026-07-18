@@ -846,3 +846,188 @@ book has already removed the failure modes the bigger model would avoid.
 5. **Opus base honest-UNKNOWN cells** (extension configs, pod topology):
    both are discoverability gaps in the classic-API surface, not DQL
    traps — worth a targeted ergonomics pass.
+
+---
+
+# Seventh eval — held-out tasks, head-base ablation, statistics
+
+**Date**: 2026-07-18 · **Batch**: `matrix-10` (160 cells: 5 arms × 32
+tasks, Sonnet). This round upgraded the harness itself before running
+anything — five methodology fixes the sixth eval's own results demanded —
+and then asked the sharpest remaining question: does the recipe advantage
+survive tasks the optimization loop never saw?
+
+## Harness changes (all in `test/evals/recipes/`)
+
+1. **A held-out task suite.** After three optimization cycles mined from
+   t1–t24, those tasks are a *development* set — dtctl has been tuned
+   against their observed failures, so their pass rates measure
+   regression, not generalization. Eight new tasks (h1–h8) were authored
+   from live tenant probes and sealed: new families (spans-per-trace
+   ratio arithmetic, unit conversion with an ns→ms trap, system-table
+   join for bucket retention) plus fresh instances of known families.
+   Discipline, now in the README: never mine optimizations from a holdout
+   failure; a mined holdout task must be retired into the dev suite.
+2. **A `head-base` ablation arm** — the HEAD binary with the recipe book
+   hidden behind a shadow `XDG_CONFIG_HOME`, no skills. The HEAD binary
+   carries generic ergonomics (rich errors, aliases, redirects, window
+   advice) that help agents regardless of any book; recipes-vs-base
+   conflated those with the book. `head-base − base` is the ergonomics
+   dividend every dtctl user gets; `recipes − head-base` is the book's
+   true marginal value.
+3. **Statistics instead of single-batch counts** (`stats.py`, plus
+   `run.sh -n <trials>`). Pooled pass rates with Wilson intervals, a
+   task-clustered bootstrap interval (trials of one task travel
+   together — the honest interval given repeated tasks), exact McNemar
+   on paired arm differences, and per-task instability across batches.
+4. **Provenance pinning** (`manifest.json` per batch): both binary
+   commits, skills checkout rev, `claude` CLI version, model alias,
+   recipe-book sha256; `score.py` adds its own hash and the resolved
+   model ids into `summary.json`. `EVAL_BASELINE_REF` is now pinned in
+   env.sh (the merge-base default would have silently moved the control
+   when upstream advanced).
+5. **Ground-truth independence + drift envelope.** The t5/t20 trap scope
+   is now derived from raw `smartscapeNodes`/`smartscapeEdges` queries —
+   `resolve scope` (a feature under eval) no longer defines its own
+   ground truth; it is cross-checked instead and agreed to within 0.005%
+   (t5: 240,514 vs 240,525), retroactively validating earlier batches.
+   GT is measured **before and after** each batch and scoring accepts
+   either — h6's p50 drifted 41% during the batch and the envelope
+   converted what would have been two false WRONGs into PASSes, exactly
+   the post-hoc-widening scenario it was built to remove.
+
+An operational incident worth recording: the Claude CLI OAuth token
+expired mid-batch, and because each isolated `CLAUDE_CONFIG_DIR` holds a
+*copy* of the credentials, the first config dir to refresh rotated the
+refresh token and stranded the other — all 64 skills-arm cells died at
+turn 1 with auth errors and were re-run after a fresh login. `run.sh` now
+documents the hazard and warns loudly (`AUTH FAILURE:`) the moment a cell
+hits it.
+
+## Correctness (matrix-10, 160 cells)
+
+| Arm | dev (24) | holdout (8) | failures |
+|---|---|---|---|
+| base | 20/24 | 7/8 | t3, t9, t15, t16 (honest UNKNOWN), h8 |
+| head-base | 22/24 | 7/8 | t3, t15, h8 |
+| skills | 23/24 | 7/8 | t15, h8 |
+| recipes | **24/24** | **8/8** | — |
+| recipes-skills | **24/24** | **8/8** | — |
+
+**The recipe arms swept the held-out suite.** That is the round's
+central result: 16/16 holdout cells with zero errors in the recipes arm,
+on tasks no optimization cycle ever saw — the advantage is not an
+artifact of tuning against the dev set. Every control arm failed h8
+(three monitored Lambda functions reported as 0 — the classic-lookback
+family again, `dt.entity.aws_lambda_function` returning empty where
+smartscape has the nodes) and t15 (the same family's host-census form,
+now wrong in *five* consecutive batches of controls). The h6 ns→ms unit
+trap caught nobody at Sonnet tier.
+
+## Statistics (pooled sonnet batches: matrix-5/6/7/10)
+
+| arm | pooled pass | Wilson 95% | task-clustered 95% |
+|---|---|---|---|
+| base | 92/104 (88.5%) | [80.9%, 93.3%] | [78.6%, 96.3%] |
+| skills | 97/104 (93.3%) | [86.8%, 96.7%] | [85.5%, 99.1%] |
+| recipes | **104/104 (100%)** | [96.4%, 100%] | [100%, 100%] |
+| recipes-skills | **104/104 (100%)** | [96.4%, 100%] | [100%, 100%] |
+
+Paired McNemar (discordant cells all favor the right arm): recipes vs
+base **p < 0.001** (12 discordant), recipes vs skills **p = 0.016** (7),
+skills vs base p = 0.125 (not established), head-base vs base p = 0.5
+(one batch, two discordant — its case rests on efficiency, below).
+Control-arm instability across identical batches (base flips on
+t3/t9/t12/t16/t23; skills on t5/t15/t23) confirms the standing variance
+protocol: single-batch control deltas are noise.
+
+## The ablation: ergonomics vs the book (matrix-10, 32 tasks)
+
+| Metric | base | head-base | skills | recipes | recipes-skills |
+|---|---|---|---|---|---|
+| correct | 27/32 | 29/32 | 30/32 | **32/32** | **32/32** |
+| dtctl calls | 373 | 320 | 206 | 138 | **130** |
+| errored calls | 62 | 52 | 19 | **6** | 14 |
+| empty results | 38 | 25 | 17 | **0** | 1 |
+| agent turns | 334 | 296 | 282 | **165** | 167 |
+| cost USD | 8.09 | 7.19 | 8.59 | **6.01** | 7.23 |
+| tokens out | 98.9k | 87.2k | 56.6k | 40.3k | **32.7k** |
+| wall seconds | 2103 | 1552 | 1353 | 741 | **654** |
+
+The decomposition the head-base arm was built for:
+
+- **Ergonomics dividend (head-base − base)**: −14% calls, −26% wall,
+  −12% output tokens, −$0.90, and two verdicts — t16 flipped from a
+  33-call honest UNKNOWN to a 19-call PASS (the `smartscapeNodes`
+  redirect working exactly as mined in the fourth eval), and t19's flail
+  collapsed from 23 calls to 5. This share ships to **every** dtctl
+  user, recipes adopters or not.
+- **The book's marginal value (recipes − head-base)**: the remaining
+  three verdicts (t3, t15, h8 — all *environment-knowledge* failures the
+  binary alone cannot fix), calls 320→138, wall 1552→741, zero empty
+  results. Knowledge, not ergonomics, is what removes the wrong answers.
+- **usage.py** confirms the mechanism: the recipe arms read the briefing
+  in 32/32 cells and made only 8/5 catalog calls, while base browsed
+  `dtctl commands` 92× (~3/cell). The skills arm loaded a skill in 20/32
+  cells this round (up from ~half in matrix-6/7 — the Read+Skill
+  permission fix at work), and with the book present skills loads
+  dropped to 9 — the book remains the preferred source when both exist.
+
+## Optimizations mined (dev-suite evidence only)
+
+1. **UNKNOWN_DATA_OBJECT near-miss suggestions** (t3, both base arms:
+   8–10 failed guesses — `usersession`, `usersessions`, `user_actions`,
+   `rum_events`, `dt.rum.sessions` — then "RUM events: 0" as the answer,
+   46 calls in base). The typed error envelope should fuzzy-match the
+   unknown name against known streams and suggest the nearest real ones
+   (`user.events`, `user.sessions`); a static core-stream list suffices
+   and costs nothing.
+2. **Classic-relationship field redirect** (t21, head-base: repeated
+   `fieldsAdd toRelationships` → FIELD_DOES_NOT_EXIST, 28 calls). The
+   Environment-API v2 idiom (`toRelationships`/`fromRelationships`)
+   deserves a targeted redirect to `smartscapeEdges "runs_on"` with a
+   worked example, like the existing dt.entity.* census advice.
+3. **Lookback-view note on successful `dt.entity.*` fetches** (t15 —
+   wrong in five straight control batches; census 17 via lookback vs 12
+   live). The existing redirect only fires on *errors*; t15-class
+   answers are wrong via *successful* queries. In agent mode, any
+   successful `fetch dt.entity.<type>` result should carry an envelope
+   note: this is a lookback view — for current-state census use
+   `smartscapeNodes "<TYPE>"`. Expected to also cover the h8 family
+   (holdout corroboration, fix derived from dev evidence).
+4. **Default-window advice on empty discovery queries** (t9, base:
+   `fetch metric.series | filter contains(metric.key, "oom")` returned
+   empty — no OOM datapoints inside the silent 2h window — so the agent
+   guessed a classic `builtin:` key and reported 0 OOM pods). The
+   window-trap advice currently requires a `filter timestamp` stage;
+   it should also fire on any *empty* result from a query with no
+   explicit `from:`/`to:`, and metric-series discovery specifically
+   should note that series only appear if they had datapoints in the
+   window.
+
+Also observed, standing issues: the 12-call prompt budget is still
+unenforced (base/t3 spent 46), and `exec copilot nl2dql` detours again
+produced unusable DQL in control arms.
+
+## Holdout status after this round
+
+h1–h7 remain sealed (h6's trap went unsprung at Sonnet — Haiku is the
+tier to watch). h8's failure *shape* is now known from scoring output
+(lambda 0 vs 3, same family as dev t15/t16); the mined fix derives from
+t15, but h8 should be treated as partially exposed: if optimization 3
+ships, h8 doubles as its generalization probe in the next batch, and
+should be rotated into the dev suite after that.
+
+## Where the next round should look
+
+1. **Ship optimizations 1–4 and re-run** — expected to move head-base
+   toward recipes on t3/t15/h8-family tasks and further isolate what
+   only the book can do (absences, verified params, canonical streams).
+2. **`-n 3` trials as the default protocol** for any headline batch, now
+   that `run.sh` automates it; quote task-clustered intervals from
+   `stats.py`, not single-batch counts.
+3. **The bare-prompt arm** (sixth eval's ask) is now cheap to add — the
+   preamble is the only remaining per-arm asymmetry.
+4. **Second tenant** (OneAgent-only / mixed-era) remains the biggest
+   outstanding validity item; `EVAL_CONTEXT` already parameterizes it.
+5. **Author replacement holdout tasks** before h8 rotates into dev.

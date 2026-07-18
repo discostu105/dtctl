@@ -20,7 +20,7 @@ import re
 import sys
 from collections import Counter, defaultdict
 
-VARIANTS = ["base", "skills", "recipes", "recipes-skills"]
+VARIANTS = ["base", "head-base", "skills", "recipes", "recipes-skills"]
 
 
 def read_argv(path):
@@ -147,7 +147,7 @@ def main():
     tasks = sorted({t for _, t in summary} | {
         t for v in VARIANTS if os.path.isdir(os.path.join(rundir, v))
         for t in os.listdir(os.path.join(rundir, v))},
-        key=lambda t: int(t[1:]) if t[1:].isdigit() else 99)
+        key=lambda t: (t[0], int(t[1:]) if t[1:].isdigit() else 99))
 
     lines = [f"# Batch analysis: `{os.path.basename(rundir.rstrip('/'))}`", ""]
     for v in VARIANTS:
