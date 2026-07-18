@@ -8,7 +8,11 @@
 > a repeatable 2×2 matrix using the committed harness in
 > [test/evals/recipes/](../../test/evals/recipes/); the
 > [third eval](#third-eval--18-task-matrix-at-scale) tripled the task set to
-> 18 and added per-batch forensics (`analyze.py`).
+> 18 and added per-batch forensics (`analyze.py`); the
+> [fourth eval](#fourth-eval--optimizations-applied-matrix-re-run) re-ran the
+> matrix after applying the third eval's optimizations; the
+> [fifth eval](#fifth-eval--24-tasks-second-optimization-cycle) grew the set
+> to 24 tasks and closed a second optimization cycle (matrix-5 + matrix-6).
 
 ## Design
 
@@ -448,3 +452,223 @@ verdicts between identical batches; recipe arms have been stable at
    batches; recipe-arm results are stable. Headline claims should come
    from ≥2 batches (the harness's `-b` makes this cheap); a `-n <trials>`
    repeat mode would formalize it.
+
+---
+
+# Fifth eval — 24 tasks, second optimization cycle
+
+**Date**: 2026-07-18 · **Batches**: `matrix-5` (96 cells: 4 variants × 24
+tasks) and `matrix-6` (96 cells, confirmation re-run after applying the
+matrix-5 findings). Same harness, model, tenant, and frozen baseline
+binary as the third/fourth evals; control arms (base, skills) are
+unchanged across all batches.
+
+## What changed before matrix-5
+
+All six matrix-4 optimizations were applied to the recipes build
+(commits `a2143f6` + book/pack refresh):
+
+- **Rich DQL errors** (SDK): the API's `details.errorMessage` and
+  `arguments` now surface. matrix-4's errors read
+  `query failed (UNKNOWN_COMMAND): UNKNOWN_COMMAND`; the same failure now
+  reads ``query failed (UNKNOWN_COMMAND): There's no command `dql`.``
+- **Positional-arg robustness**: `query dql <text>` (a hallucinated form
+  that sent the literal string `dql` to Grail — 10 occurrences in
+  matrix-4) is absorbed, and shell-split query fragments are rejoined
+  instead of silently dropped.
+- **Heavy-scan warning**: agent envelopes warn when a query scanned
+  ≥10 GB, with a reuse suggestion.
+- **Canonical-stream notes** in discovery → `facts.notes`: Davis
+  analytics on `dt.davis.events` (generic `events` diverges ~2×);
+  current-state census via `smartscapeNodes` (`dt.entity.*` is a
+  lookback view).
+- **Name-first, multi-entity `resolve scope`** advertised in the
+  briefing suggestions and the pack's scope-param descriptions.
+- **Briefing index diet**: date-only stamps, `stamped` only when
+  `records` is absent (≈1 KiB off every bootstrap; notes added ~0.3 KiB
+  back).
+
+And the task set grew 18 → 24 (all ground truths live-probed first):
+t19 **trap** — distinct Davis events (row-counting the generic stream
+gives 2× too many: 3,469–3,686 vs 1,698 true); t20 distinct traces
+through the multi-instance trap service; t21 pods currently backing it
+(topology hop over four service instances, one stale); t22 top
+ERROR-log namespace; t23 explicit historical window (24h→12h ago); t24
+fleet-average host CPU.
+
+## Correctness (matrix-5, 96 runs)
+
+| Arm | Result | Failures |
+|---|---|---|
+| base | 22/24 | t15 WRONG (17 vs 12 — `dt.entity.host` lookback census again), t23 NO_ANSWER |
+| skills | 21/24 | t5 SILENT_WRONG (16,847 ≈ naive 16,738; true 243,525 — the entity-stamped undercount, 4th distinct occurrence), t15 WRONG (same census trap), t23 NO_ANSWER |
+| recipes | **24/24** | — |
+| recipes-skills | **24/24** | — |
+
+Both recipe arms swept the extended set, including all six new tasks,
+with **zero errored dtctl calls in the recipes arm across all 24 tasks**
+and zero empty results in both.
+
+### t23 — a new failure mode: the backgrounded query that never returns
+
+Both control arms failed t23 identically, and the mechanism is a
+double-trap worth recording:
+
+1. They chose the timestamp-filter idiom —
+   `fetch logs | filter timestamp >= now()-24h and timestamp < now()-12h | summarize count()`
+   — which silently collides with the default 2h query window (the
+   filter cannot widen the scanned window; the correct idiom is
+   `fetch logs, from:now()-24h, to:now()-12h`).
+2. Anticipating a slow scan, both agents launched the query **in the
+   background**, ended their turn "waiting for the notification" — and a
+   headless `claude -p` run terminates right there. The wrapper was
+   killed mid-flight (no rc, no duration recorded); no ANSWER line was
+   ever produced.
+
+The recipe arms used the `from:`/`to:` idiom (the recipe corpus
+demonstrates it), ran in the foreground, and finished the task in 2–3
+calls with sub-second dtctl latency. The window semantics are
+knowledge the pack carries; the backgrounding pathology is an
+agent-harness interaction that dtctl can only mitigate by making the
+correct idiom discoverable in-band — see optimization 2 below.
+
+### Optimization effects verified in matrix-5 captures
+
+- **Canonical-census note worked**: base and skills census'd hosts via
+  `dt.entity.host` (17 — wrong); both recipe arms used the
+  `hosts-inventory`/`host-inventory-by-os` recipes backed by
+  `smartscapeNodes` (12 — right). Same trap, fourth batch in a row for
+  the controls; recipe arms have never fallen into it since the note.
+- **Name-first resolve scope worked**: both recipe arms resolved the
+  trap service by display name in ONE call (`resolve scope <name> --for
+  logs`) instead of matrix-4's four per-ID calls.
+- **Rich errors worked**: recipe-arm error messages carried the
+  diagnostic (`smartscapeNodes isn't a valid data object.`,
+  `A string like "K8S_SERVICE" isn't allowed here…`) and every error was
+  followed by a successful recovery call. The frozen baseline still
+  shows the opaque form (9× `UNKNOWN_COMMAND` echoes in skills, 8 of
+  them the `query dql` form the HEAD shim now absorbs).
+- **Heavy-scan warning fired 5×** (t6/t14/t23 heavy cells, recipe arms
+  only — the control binary predates it); no warned query was re-run.
+- **--dql alias**: 21 uses across the recipe arms, zero failures.
+
+## Efficiency (all 24 tasks, matrix-5)
+
+| Metric | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| correct | 22/24 | 21/24 | **24/24** | **24/24** |
+| dtctl calls | 209 | 192 | **88** | 89 |
+| errored calls | 12 | 29 | **0** | 3 |
+| empty results | 14 | 21 | **0** | **0** |
+| cost USD | 5.01 | 6.81 | **4.02** | 5.21 |
+| wall seconds | 1234 | 1406 | **470** | 517 |
+| tokens out | 53,760 | 48,735 | **25,228** | 27,043 |
+| scanned GB | 47.9¹ | 56.8 | 49.2¹ | 58.1 |
+
+¹ Scan totals are verdict-conditioned: base's t23 scanned ~0 GB because
+its wrong-window query only touched the 2h default window (and was
+killed), while the recipe arms paid the honest 10.8 GB for the real
+12-hour historical scan. On t6 (security posture) recipes scanned
+10.4 GB vs skills' 30.3; t14 has a ~19.6 GB floor for every arm.
+
+Cross-batch control check (18 shared tasks, matrix-4 → matrix-5):
+recipes errors 3→0 with every other metric within ±3%; base/skills
+wobbled (skills wall +71%, empties +140% — its known variance), and the
+`query dql`/`query execute` forms plus one silent-wrong showed up in the
+controls again. The recipe arms are the only stable quadrant.
+
+## Optimizations applied after matrix-5 (commit f138aa8)
+
+1. **Typed DQL error envelope.** `QueryError` now maps to the envelope
+   with `code` = the API's error type (`unknown_data_object`, …) and
+   targeted suggestions for observed mistake classes:
+   `fetch smartscapeNodes …` → "smartscapeNodes/smartscapeEdges are
+   query COMMANDS…", `dt.entity.*` census guesses → the
+   `smartscapeNodes "<TYPE>"` route.
+2. **Window-trap advice.** An empty result (including the single
+   all-zero row `summarize count()` yields) from a query with a
+   `filter timestamp` stage and no explicit window now carries a
+   suggestion explaining the silent 2h default window with the
+   `from:/to:` rewrite — exactly the t23 idiom, verified live.
+3. **`query execute <dql>` shim** (observed in matrix-5 controls)
+   alongside `dql`/`exec`/`run`.
+4. **resolve scope targets visibility.** matrix-5's recipes/t21 read the
+   pod names out of `resolve scope` but then re-derived the count with
+   three identical `workloads-status` runs; the envelope now says
+   `result.targets` already names the backing objects.
+
+## Matrix-6 — confirmation re-run
+
+Same 96 cells, rebuilt at `f138aa8`. Both recipe arms again **24/24**
+(that is 24/24 in both 24-task batches, and no recipe-arm wrong answer
+in four consecutive batches); base 21/24 (t15 census trap, t16 gave up
+at 0 after 23 calls, t23 NO_ANSWER via the same background-and-exit
+pathology), skills 22/24 (t15; t23 now a *confident* SILENT_WRONG — it
+reported the 0 that the wrong-window query returns, exactly the answer
+the new window-trap advice corrects on HEAD; the frozen control binary
+predates the advice by design).
+
+Two scorer artifacts surfaced by the re-run were fixed and both batches
+re-scored identically: the rolling-1h p95 of the volatile top service
+drifted 3.4× between GT measurement and agent run (t2 now accepts
+value drift once the service name matches rank 1 — the value check is
+for unit errors), and t15's GT carries the OS enum while agents answer
+flavor strings ("Linux (Amazon Linux 2023)") — now compared by family
+token.
+
+Applied-optimization effects visible in matrix-6:
+
+- Every recipe-arm error now carries the diagnostic ("The field
+  cloud.provider doesn't exist.", "smartscape.nodes isn't a supported
+  data object.") and every one was followed by an immediate successful
+  recovery — no repeat-the-same-mistake loops, no honest-UNKNOWN
+  surrenders in the recipe arms.
+- The errors clustered in t13 (absence proof — deliberate probing of
+  exotic routes) and t21 (topology route exploration); efficiency wobble
+  vs matrix-5 stayed within batch variance (recipes calls 88→100, cost
+  +7%, wall +20% — against skills' +49% wall swing on an unchanged
+  binary).
+- Two fresh baits were found and fixed post-run (`2b99f43`): the
+  briefing's dataObjects advertised `smartscape.nodes`/`smartscape.edges`
+  although fetch rejects them (pruned; the error advice also catches the
+  dotted form now — both live-verified).
+
+| Metric (24 tasks) | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| correct | 21/24 | 22/24 | **24/24** | **24/24** |
+| dtctl calls | 215 | 175 | 100 | **93** |
+| errored calls | 30 | 20 | 7 | **5** |
+| empty results | 11 | 13 | **0** | **0** |
+| cost USD | 5.54 | 7.13 | **4.31** | 5.48 |
+| wall seconds | 1267 | 2095 | **566** | 524 |
+| tokens out | 63,585 | 53,811 | 30,716 | **28,042** |
+| scanned GB | 467.3¹ | 71.3 | 65.0 | **55.7** |
+
+¹ base/t9 alone re-scanned **378 GB**: two 7-day full-text
+`contains(lower(content), "oomkill")` passes over the entire log store —
+the correct answer, bought by brute force. The recipe arms answered the
+same task from the OOM-kill metric recipe for well under 1 GB. This is
+the single most dramatic knowledge-vs-scan datapoint of the series, and
+the heavy-scan warning (which the frozen baseline predates) exists for
+exactly this shape of session.
+
+## Where the next round should look
+
+1. **Fetchability-partitioned dataObjects.** The catalog lists objects
+   `fetch` rejects (`dt.system.metric_series`, `metrics`, and formerly
+   `smartscape.*`) — a discovery-time fetchability probe (or reusing the
+   carriage-probe errors) would keep unfetchable entries out of the
+   briefing generally, not case-by-case.
+2. **Absence evidence in the briefing.** t13-style tasks make agents
+   re-derive what `facts.absent` already knows, because a bare name is
+   not citable evidence. Attaching the discovery evidence ("azure: 0
+   AZURE_* smartscape nodes; extension list 404") would let an agent
+   answer absence questions from the briefing alone.
+3. **Counting detours after resolve scope.** The targets suggestion
+   shipped mid-cycle; matrix-6 agents still took varied topology routes
+   on t21 (including a `traverse` attempt). Watch whether the
+   suggestion changes behavior in the next batch.
+4. **Variance protocol stands.** skills swung t5 SILENT_WRONG→PASS and
+   +49% wall between identical batches; single-batch deltas below ~20%
+   on the control arms are noise. Recipe-arm correctness has been
+   stable across four batches.
