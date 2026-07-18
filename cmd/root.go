@@ -323,6 +323,11 @@ var verbSynonyms = map[string]struct{ verb, hint string }{
 	"search": {"query", "search data with DQL: dtctl query 'fetch logs | filter contains(content, \"...\")'"},
 	"remove": {"delete", "use `dtctl delete <resource> <id>`"},
 	"rm":     {"delete", "use `dtctl delete <resource> <id>`"},
+	// DQL commands agents promote to dtctl commands (evals: `dtctl smartscapeNodes ...`).
+	"smartscapeNodes": {"query", `smartscapeNodes is a DQL command — run it through query: dtctl query 'smartscapeNodes "HOST" | limit 10'`},
+	"smartscapeEdges": {"query", `smartscapeEdges is a DQL command — run it through query: dtctl query 'smartscapeEdges "runs_on" | limit 10'`},
+	"fetch":           {"query", "fetch is DQL — run it through query: dtctl query 'fetch logs | limit 10'"},
+	"timeseries":      {"query", "timeseries is DQL — run it through query: dtctl query 'timeseries avg(dt.host.cpu.usage), from:now()-1h'"},
 }
 
 // enhanceCommandError adds suggestions to unknown command errors
@@ -675,6 +680,13 @@ func requireSubcommand(cmd *cobra.Command, args []string) error {
 		}
 		return fmt.Errorf("requires a resource type\n\nAvailable resources:\n  %s\n\nUsage:\n  %s <resource> [id] [flags]",
 			strings.Join(resources, "\n  "), cmd.CommandPath())
+	}
+
+	// Schema introspection is DQL-side, not a resource — agents try
+	// `describe field` / `describe dataobject` when hunting for a schema.
+	switch args[0] {
+	case "field", "fields", "dataobject", "data-object", "dataobjects", "schema":
+		return fmt.Errorf("unknown resource type %q — the data schema is queried, not described: dtctl query 'fetch dt.system.data_objects | fields name' lists tables; a table's fields show up in its records", args[0])
 	}
 
 	// Check if the first arg looks like an unknown subcommand
