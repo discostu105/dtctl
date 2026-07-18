@@ -9,7 +9,7 @@
 Writes <rundir>/report.md and <rundir>/summary.json. Verdicts:
     PASS          answer matches ground truth within tolerance
     WRONG         answer given, does not match
-    SILENT_WRONG  t5 only: answer matches the known-incomplete naive count
+    SILENT_WRONG  t5/t10: answer matches a known-wrong naive count
     UNKNOWN       agent honestly answered ANSWER: UNKNOWN
     NO_ANSWER     no parseable ANSWER line
     ERROR         run crashed / no result.json
@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 VARIANTS = ["base", "skills", "recipes", "recipes-skills"]
-TASKS = ["t1", "t2", "t3", "t4", "t5", "t6"]
+TASKS = ["t" + str(i) for i in range(1, 19)]
 
 
 def close(a, b, tol):
@@ -90,6 +90,90 @@ def score_answer(task, ans, gt):
             c = num(ans["compliance_findings_7d"])
             if not (0.5 * g["compliance_findings_7d"] <= c <= 2 * g["compliance_findings_7d"]):
                 return "WRONG", f'compliance {c:.0f} vs GT {g["compliance_findings_7d"]}'
+            return "PASS", ""
+        if task == "t7":
+            if not close(num(ans["problems_7d"]), g["problems_7d"], 0.3):
+                return "WRONG", f'problems {ans["problems_7d"]} vs GT {g["problems_7d"]}'
+            if abs(num(ans["active_now"]) - g["active_now"]) > 1:
+                return "WRONG", f'active {ans["active_now"]} vs GT {g["active_now"]}'
+            return "PASS", ""
+        if task == "t8":
+            top = g["top"]
+            for i, row in enumerate(top):
+                if name_match(str(ans["host"]), row["host"]):
+                    # top hosts are usually a close race; any top-3 name is fine
+                    if i == 0 or row["cpu"] >= 0.7 * top[0]["cpu"]:
+                        if close(num(ans["avg_cpu_percent"]), row["cpu"], 0.6):
+                            return "PASS", f"matched GT rank {i + 1}"
+                        return "WRONG", f'cpu {ans["avg_cpu_percent"]} vs GT {row["cpu"]:.2f}'
+            return "WRONG", f'host {ans["host"]!r} not in GT top {len(top)}'
+        if task == "t9":
+            for key, gv in (("pods", g["pods"]), ("total_oomkills", g["total"])):
+                c = num(ans[key])
+                lo, hi = (0, 1) if gv == 0 else (0.5 * gv, 2 * gv)
+                if not (lo <= c <= hi):
+                    return "WRONG", f"{key} {c:.0f} vs GT {gv}"
+            return "PASS", ""
+        if task == "t10":
+            c, true, naive = num(ans["open_vulnerabilities"]), g["open"], g["naive"]
+            if close(c, true, 0.3) or abs(c - true) <= 1:
+                return "PASS", ""
+            # the trap: counting state-report EVENTS instead of vulnerabilities
+            if naive > 3 * max(true, 1) and close(c, naive, 0.5):
+                return "SILENT_WRONG", f"{c:.0f} ≈ naive event rows {naive} (true {true})"
+            return "WRONG", f"{c:.0f} vs GT {true} (naive {naive})"
+        if task == "t11":
+            top = g["top"]
+            for i, row in enumerate(top):
+                if name_match(str(ans["provider"]), row["provider"]):
+                    if i == 0 or row["count"] >= 0.66 * top[0]["count"]:
+                        if close(num(ans["count"]), row["count"], 0.4):
+                            return "PASS", f"matched GT rank {i + 1}"
+                        return "WRONG", f'count {ans["count"]} vs GT {row["count"]}'
+            return "WRONG", f'provider {ans["provider"]!r} not in GT top {len(top)}'
+        if task == "t12":
+            row = g["top"][0]
+            if not name_match(str(ans["category"]), row["category"]):
+                return "WRONG", f'category {ans["category"]!r} != {row["category"]!r}'
+            if not close(num(ans["count"]), row["count"], 0.4):
+                return "WRONG", f'count {ans["count"]} vs GT {row["count"]}'
+            return "PASS", ""
+        if task == "t13":
+            if bool(ans["azure_present"]) != (g["azure_nodes"] > 0):
+                return "WRONG", "azure_present mismatch"
+            if bool(ans["gcp_present"]) != (g["gcp_nodes"] > 0):
+                return "WRONG", "gcp_present mismatch"
+            return "PASS", ""
+        if task == "t14":
+            top = g["top"]
+            for i, row in enumerate(top):
+                if name_match(str(ans["bucket"]), row["bucket"]):
+                    if i == 0 or row["count"] >= 0.75 * top[0]["count"]:
+                        if close(num(ans["count"]), row["count"], 0.4):
+                            return "PASS", f"matched GT rank {i + 1}"
+                        return "WRONG", f'count {ans["count"]} vs GT {row["count"]}'
+            return "WRONG", f'bucket {ans["bucket"]!r} not in GT top {len(top)}'
+        if task == "t15":
+            if not close(num(ans["host_count"]), g["host_count"], 0.25):
+                return "WRONG", f'hosts {ans["host_count"]} vs GT {g["host_count"]}'
+            if not name_match(str(ans["dominant_os"]), g["dominant_os"]):
+                return "WRONG", f'os {ans["dominant_os"]!r} vs GT {g["dominant_os"]!r}'
+            return "PASS", ""
+        if task == "t16":
+            if abs(num(ans["postgres_instances"]) - g["count"]) > 1:
+                return "WRONG", f'{ans["postgres_instances"]} vs GT {g["count"]}'
+            return "PASS", ""
+        if task == "t17":
+            if not name_match(str(ans["service"]), g["service"]):
+                return "WRONG", f'service {ans["service"]!r} != {g["service"]!r}'
+            if not close(num(ans["duration_ms"]), g["duration_ms"], 0.25):
+                return "WRONG", f'duration {ans["duration_ms"]} vs GT {g["duration_ms"]:.0f}'
+            return "PASS", ""
+        if task == "t18":
+            if not close(num(ans["ec2_instances"]), g["ec2"], 0.25):
+                return "WRONG", f'ec2 {ans["ec2_instances"]} vs GT {g["ec2"]}'
+            if not close(num(ans["k8s_namespaces"]), g["namespaces"], 0.25):
+                return "WRONG", f'namespaces {ans["k8s_namespaces"]} vs GT {g["namespaces"]}'
             return "PASS", ""
     except (KeyError, TypeError, ValueError) as e:
         return "NO_ANSWER", f"answer missing/invalid field: {e}"

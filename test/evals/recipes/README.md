@@ -8,7 +8,7 @@ generic dynatrace-for-ai skills?
 
 ## The matrix
 
-Two independent dimensions, four variants, six tasks, one fresh headless
+Two independent dimensions, four variants, eighteen tasks, one fresh headless
 `claude` agent per cell:
 
 | Variant | dtctl binary | dynatrace-for-ai skills (`dt-*`) | recipe book |
@@ -19,11 +19,18 @@ Two independent dimensions, four variants, six tasks, one fresh headless
 | `recipes-skills` | built from this branch | ✓ | ✓ |
 
 Tasks (in `tasks/`): (t1) top ERROR-log source, (t2) highest-p95 service,
-(t3) RUM presence + volume, (t4) GenAI token consumption, (t5) **the trap** —
+(t3) RUM presence + volume, (t4) GenAI token consumption, (t5) **trap** —
 a complete log count for a multi-instance service whose logs are
 entity-stamped on only a minority of records (the naive filter undercounts
 by an order of magnitude), (t6) security posture where attack detections are
-absent (proving absence).
+absent (proving absence), (t7) distinct Davis problems + currently active,
+(t8) top-CPU host via metric timeseries, (t9) OOM-killed pods, (t10) **trap**
+— open vulnerabilities where the current state is the LATEST state report
+per vulnerability (counting raw report events overcounts ~100×), (t11) top
+bizevents producer, (t12) top Davis event category, (t13) Azure/GCP absence
+proof, (t14) top log retention bucket, (t15) host census + dominant OS,
+(t16) PostgreSQL instance count, (t17) slowest root span (sampling hides the
+max), (t18) EC2 + k8s-namespace topology census.
 
 ## How it works
 

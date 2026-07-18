@@ -39,6 +39,46 @@ T5N=$(q "fetch logs, from:now()-2h | filter in(dt.smartscape.service, {$IDS}) | 
 echo "ground truth: t6 security findings"
 T6=$(q 'fetch security.events, from:now()-7d | filter in(event.type, {"DETECTION_FINDING","COMPLIANCE_FINDING"}) | summarize c = count(), by:{event.type}')
 
+echo "ground truth: t7 davis problems (distinct + active)"
+T7=$(q 'fetch dt.davis.problems, from:now()-7d | summarize c = countDistinctExact(display_id)')
+T7A=$(q 'fetch dt.davis.problems, from:now()-7d | filter not(dt.davis.is_duplicate) | summarize status = takeLast(event.status), by:{display_id} | filter status == "ACTIVE" | summarize c = count()')
+
+echo "ground truth: t8 top-CPU host"
+T8=$(q 'timeseries cpu = avg(dt.host.cpu.usage), by:{dt.smartscape.host}, from:now()-1h | fieldsAdd name = getNodeName(dt.smartscape.host), a = arrayAvg(cpu) | sort a desc | limit 3 | fields name, a')
+
+echo "ground truth: t9 OOM-killed pods 7d"
+T9=$(q 'timeseries oom = sum(dt.kubernetes.container.oom_kills), by:{k8s.pod.name}, from:now()-7d | fieldsAdd t = arraySum(oom) | filter t > 0 | summarize pods = count(), total = sum(t)')
+
+echo "ground truth: t10 open vulnerabilities (latest state) + naive event rows"
+T10=$(q 'fetch security.events, from:now()-24h | filter event.type == "VULNERABILITY_STATE_REPORT_EVENT" and event.level == "VULNERABILITY" | sort timestamp asc | summarize status = takeLast(vulnerability.resolution.status), by:{vulnerability.display_id} | filter status == "OPEN" | summarize c = count()')
+T10N=$(q 'fetch security.events, from:now()-24h | filter event.type == "VULNERABILITY_STATE_REPORT_EVENT" and event.level == "VULNERABILITY" | summarize c = count()')
+
+echo "ground truth: t11 bizevents top providers"
+T11=$(q 'fetch bizevents, from:now()-24h | summarize c = count(), by:{event.provider} | sort c desc | limit 3')
+
+echo "ground truth: t12 davis event categories"
+T12=$(q 'fetch dt.davis.events, from:now()-24h | filter isNotNull(event.category) | summarize c = count(), by:{event.category} | sort c desc | limit 2')
+
+echo "ground truth: t13 azure/gcp node counts"
+T13A=$(q 'smartscapeNodes "*" | filter startsWith(type, "AZURE_") | summarize c = count()')
+T13G=$(q 'smartscapeNodes "*" | filter startsWith(type, "GCP_") | summarize c = count()')
+
+echo "ground truth: t14 top log buckets"
+T14=$(q 'fetch logs, from:now()-24h | summarize c = count(), by:{dt.system.bucket} | sort c desc | limit 2')
+
+echo "ground truth: t15 hosts by OS"
+T15=$(q 'smartscapeNodes "HOST" | fieldsAdd os.type | summarize c = count(), by:{os.type} | sort c desc')
+
+echo "ground truth: t16 postgres instances"
+T16=$(q 'smartscapeNodes "DB_INSTANCE_POSTGRES" | summarize c = count()')
+
+echo "ground truth: t17 slowest root span"
+T17=$(q 'fetch spans, from:now()-24h | filter request.is_root_span == true | sort duration desc | limit 1 | fieldsAdd svc = getNodeName(dt.smartscape.service) | fields svc, duration')
+
+echo "ground truth: t18 EC2 + k8s namespaces"
+T18E=$(q 'smartscapeNodes "*" | filter type == "AWS_EC2_INSTANCE" | summarize c = count()')
+T18N=$(q 'smartscapeNodes "*" | filter type == "K8S_NAMESPACE" | summarize c = count()')
+
 python3 - "$RUNDIR" <<PYEOF
 import json, sys, datetime
 
@@ -53,6 +93,25 @@ t4 = rows('''$T4''')
 t5 = rows('''$T5''')
 t5n = rows('''$T5N''')
 t6 = rows('''$T6''')
+t7 = rows('''$T7''')
+t7a = rows('''$T7A''')
+t8 = rows('''$T8''')
+t9 = rows('''$T9''')
+t10 = rows('''$T10''')
+t10n = rows('''$T10N''')
+t11 = rows('''$T11''')
+t12 = rows('''$T12''')
+t13a = rows('''$T13A''')
+t13g = rows('''$T13G''')
+t14 = rows('''$T14''')
+t15 = rows('''$T15''')
+t16 = rows('''$T16''')
+t17 = rows('''$T17''')
+t18e = rows('''$T18E''')
+t18n = rows('''$T18N''')
+
+def c0(rs):
+    return int(rs[0]["c"]) if rs else 0
 
 det = sum(int(r["c"]) for r in t6 if r["event.type"] == "DETECTION_FINDING")
 comp = sum(int(r["c"]) for r in t6 if r["event.type"] == "COMPLIANCE_FINDING")
@@ -67,6 +126,21 @@ gt = {
     "t5": {"count": int(t5[0]["c"]), "naive_count": int(t5n[0]["c"]) if t5n else 0},
     "t6": {"attack_detections_present": det > 0, "detection_count": det,
            "compliance_findings_7d": comp},
+    "t7": {"problems_7d": c0(t7), "active_now": c0(t7a)},
+    "t8": {"top": [{"host": r["name"], "cpu": float(r["a"])} for r in t8]},
+    "t9": {"pods": int(t9[0]["pods"]) if t9 else 0,
+           "total": int(t9[0]["total"]) if t9 else 0},
+    "t10": {"open": c0(t10), "naive": c0(t10n)},
+    "t11": {"top": [{"provider": r["event.provider"], "count": int(r["c"])} for r in t11]},
+    "t12": {"top": [{"category": r["event.category"], "count": int(r["c"])} for r in t12]},
+    "t13": {"azure_nodes": c0(t13a), "gcp_nodes": c0(t13g)},
+    "t14": {"top": [{"bucket": r["dt.system.bucket"], "count": int(r["c"])} for r in t14]},
+    "t15": {"host_count": sum(int(r["c"]) for r in t15),
+            "dominant_os": t15[0]["os.type"] if t15 else ""},
+    "t16": {"count": c0(t16)},
+    "t17": {"duration_ms": int(t17[0]["duration"]) / 1e6 if t17 else 0,
+            "service": t17[0]["svc"] if t17 else ""},
+    "t18": {"ec2": c0(t18e), "namespaces": c0(t18n)},
 }
 path = sys.argv[1] + "/ground-truth.json"
 with open(path, "w") as f:
