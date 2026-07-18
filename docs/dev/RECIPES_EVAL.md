@@ -12,7 +12,10 @@
 > [fourth eval](#fourth-eval--optimizations-applied-matrix-re-run) re-ran the
 > matrix after applying the third eval's optimizations; the
 > [fifth eval](#fifth-eval--24-tasks-second-optimization-cycle) grew the set
-> to 24 tasks and closed a second optimization cycle (matrix-5 + matrix-6).
+> to 24 tasks and closed a second optimization cycle (matrix-5 + matrix-6); the
+> [sixth eval](#sixth-eval--model-sweep-haikusonnetopus-third-optimization-cycle)
+> swept the matrix across three models (Haiku/Sonnet/Opus) and instrumented
+> how each arm actually uses its knowledge sources.
 
 ## Design
 
@@ -672,3 +675,174 @@ exactly this shape of session.
    +49% wall between identical batches; single-batch deltas below ~20%
    on the control arms are noise. Recipe-arm correctness has been
    stable across four batches.
+
+# Sixth eval — model sweep (Haiku/Sonnet/Opus), third optimization cycle
+
+Three questions this round: does the recipe effect hold across model
+tiers (claude-haiku-4-5 / claude-sonnet-5 / claude-opus-4-8, 4 arms × 24
+tasks each — 288 cells total); how often is each knowledge source
+*actually used* (new `usage.py` instrumentation); and are recipes
+discoverable outside the eval prompt at all.
+
+## What changed before matrix-7
+
+Fifth-eval follow-ups plus deeper log mining of matrix-5/6, applied to
+HEAD (the frozen control stays at the same pre-recipes baseline as every
+earlier batch):
+
+- **Absence evidence in the briefing.** `facts.absent` entries now carry
+  what discovery checked: `azure (no AZURE_* entities in the live
+  census)` instead of the bare `azure`. Matrix-6 recipe arms burned 4
+  errored calls on one task re-deriving exactly this.
+- **Fetchability-partitioned dataObjects — free.** The planned
+  discovery-time probe turned out unnecessary: `dt.system.data_objects`
+  itself has a `usable_with` column. Discovery now partitions on it;
+  unfetchable objects (`metrics`, `smartscape.*`) move to
+  `facts.unfetchable` with an explanatory note instead of baiting
+  `fetch` calls that cannot work.
+- **In-band recipe advertising.** Until now, nothing in dtctl itself told
+  an agent a recipe book exists — only the eval preamble did. `dtctl
+  commands` (the bootstrap call; the base arm runs it ~60×/batch) now
+  carries a `recipe_book` field at every detail level when the active
+  context has a book or installed pack.
+- **Verb/flag guidance.** `list`/`ls`/`show`/`search`/`remove` map to the
+  real verbs with a usage hint (the edit-distance fallback suggested
+  `alias` for `list`); `--format` suggests `--output`; `query --limit`
+  and `query --query` explain the DQL-side forms; `INVALID_TIMEFRAME`
+  explains `now()-6h` vs `now-6h`; bare `get extension-configs` explains
+  the two-step flow.
+- **Harness fairness + instrumentation.** Matrix-≤6 ran headless cells
+  with only `Bash` allowed: agents that tried to `Read` a skill's
+  reference files were *permission-denied* (4 denials in matrix-6),
+  silently weakening the skills arms. `run.sh` now allows
+  `Bash,Skill,Read`, and `usage.py` reports per-arm recipe-machinery use
+  and actual Skill-tool loads from the cells' own transcripts.
+
+## Do agents even use the knowledge? (usage.py, matrix-6…9)
+
+Recipe machinery, per batch of 24 cells per arm: the briefing is read in
+**24/24 cells in every recipe-arm run at every model**. The dominant
+pattern is briefing → `describe recipe` (14–21×/batch, reading the
+verified DQL) → adapted query; direct `--recipe` execution 6–11×;
+`resolve scope` 2–4×. The controls instead spend 35–64 calls/batch
+browsing `dtctl commands`.
+
+Skills are a different story. Cells where the Skill tool was invoked at
+least once, out of 24:
+
+| batch (model) | skills arm | recipes-skills arm |
+|---|---|---|
+| matrix-6 (sonnet) | 11 | 5 (+4 Read denials) |
+| matrix-7 (sonnet) | 12 | 2 |
+| matrix-8 (haiku) | 12 | 2 |
+| matrix-9 (opus) | 16 | 5 |
+
+Roughly **half the skills-arm cells never load a skill body** — they run
+on the one-line skill descriptions in the system prompt. And when the
+recipe book is present, skills are nearly ignored (2–5 cells): agents
+treat the book as the better source and skip the skill. This reframes
+earlier skills-arm variance: part of it is *whether the skill got loaded
+at all*, which usage.py now makes visible per batch.
+
+## Correctness across models (288 cells)
+
+| model | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| haiku | 21/24 | 22/24 | **24/24** | **24/24** |
+| sonnet (matrix-7) | 22/24 | 24/24 | **24/24** | **24/24** |
+| opus | 20/24¹ | 23/24 | **24/24** | **24/24** |
+
+¹ two honest UNKNOWNs (extension-config and pod-topology tasks), plus the
+two traps below.
+
+- **The recipe arms are perfect at every tier** — five consecutive clean
+  batches (matrix-5…9) across three models, 240 recipe-arm cells without
+  a wrong answer.
+- **The traps are model-independent.** The entity-lookback trap (t15:
+  `dt.entity.host` counts 17, live census 12) caught base at *all three*
+  models and skills at haiku and opus. The historical-window trap (t23)
+  silent-wronged *both* haiku controls (confidently reporting the empty
+  default-window 0 against a true count of ~3.9M) and left opus base
+  with no answer; only sonnet's controls survived it this round.
+- **Knowledge beats model tier.** Haiku with the recipe book (24/24,
+  $4.07, 484 s wall, 3 errored calls, 0 empties) beats Opus without it
+  (20/24, $5.62, 1301 s, 39 errored calls) on every axis at half the
+  effective cost per correct answer. If the choice is "bigger model" or
+  "recipe book", the book wins.
+
+## Efficiency by model (per arm, summed over 24 tasks)
+
+| | calls | errored | empty | cost USD | wall s | scanned GB |
+|---|---|---|---|---|---|---|
+| **haiku** base | 247 | 32 | 22 | 5.98 | 1501 | 91.1 |
+| skills | 156 | 26 | 12 | 6.28 | 1535 | 73.9 |
+| recipes | **92** | **3** | **0** | **4.07** | **484** | 56.0 |
+| recipes-skills | 91 | 9 | 0 | 5.23 | 510 | **48.3** |
+| **sonnet** base | 237 | 30 | 15 | 5.14 | 1154 | 97.2 |
+| skills | 175 | 28 | 17 | 6.26 | 818 | 78.1 |
+| recipes | 101 | 10 | **0** | **4.35** | 570 | 69.4 |
+| recipes-skills | **95** | **7** | 3 | 5.19 | **504** | **47.7** |
+| **opus** base | 221 | 39 | 18 | 5.62 | 1301 | 52.0² |
+| skills | 170 | 22 | 21 | 6.90 | 823 | 70.8 |
+| recipes | 123 | 20 | **0** | **4.60** | 648 | 58.1 |
+| recipes-skills | **93** | **3** | **0** | 5.41 | **481** | 54.3 |
+
+² no base/t9-style blowout this round at any model — the 378 GB scan in
+matrix-6 was real variance, not a constant of the base arm; the scan gap
+between arms is floor-dominated when nobody brute-forces.
+
+The shape is the same at every tier: recipe arms use ~40 % of the calls,
+~40 % of the wall time, have zero empty results in five of six runs, and
+are the cheapest despite running the newest binary. Model tier mostly
+buys the *controls* fewer catastrophes (sonnet was the only tier whose
+controls survived t23); it buys the recipe arms almost nothing — the
+book has already removed the failure modes the bigger model would avoid.
+
+## Optimization effects observed live (matrix-7/8/9)
+
+- **Heavy-scan warning honored at all three tiers.** t14/t23 queries
+  ≥10 GB triggered the envelope warning; no warned query was re-run.
+  Haiku's recipes/t23 is the cleanest capture: briefing →
+  `describe recipe` → one correct `from:now()-24h, to:now()-12h` query
+  (10.5 GB, warned) → answer. Three calls for the task both haiku
+  controls got silently wrong.
+- **The window-trap advice was not needed in the recipe arms** — steered
+  by the canonical notes and recipe bodies, they wrote explicit
+  `from:/to:` windows first try in every t23 cell. It remains a
+  control-arm safety net (the frozen control predates it).
+- **recipe_book advertising confirmed in-band**: catalog calls in recipe
+  arms carry the pointer. Its real-world effect (an agent with *no*
+  prompt hint discovering the book) is untested by this harness, whose
+  preamble already points at `dtctl recipes` — a bare-prompt arm is the
+  obvious next probe.
+- **Absence evidence did not reduce t13 probing — by design of the
+  prompt.** The eval preamble orders "never report a value you have not
+  measured", so agents re-verify absence with live queries even when the
+  briefing states it with evidence. Error counts on t13 are unchanged
+  (3–5/batch across recipe arms). The evidence line is for real-world
+  use, where citing the briefing is legitimate; measuring its effect
+  needs a prompt variant that permits citation.
+- **New error patterns found and fixed post-batch** (commit `6c086da`,
+  unevaluated): agents invoking DQL commands as top-level dtctl commands
+  (`dtctl smartscapeNodes …` — now redirects to `query` with a worked
+  example) and `describe field`/`dataobject`/`schema` (now explains the
+  catalog query). The recipe `--recipe` wrong-param error already lists
+  the declared params.
+
+## Where the next round should look
+
+1. **A bare-prompt arm.** Every arm's preamble hints at its knowledge
+   source. With `recipe_book` now advertised in the catalog, a variant
+   whose prompt says only "use dtctl" would measure real-world
+   discoverability of the book (and of skills).
+2. **Skill-load enforcement or stratification.** Half the skills-arm
+   cells never load a skill; verdicts currently average over
+   loaded/unloaded cells. Either force a load in the prompt or report
+   verdicts stratified by usage.py's load flag.
+3. **Evaluate the 6c086da redirects** (smartscape-as-command, describe
+   field/schema) in the next batch.
+4. **Absence-citation prompt variant** to measure the evidence line's
+   effect without the "measure everything" compulsion.
+5. **Opus base honest-UNKNOWN cells** (extension configs, pod topology):
+   both are discoverability gaps in the classic-API surface, not DQL
+   traps — worth a targeted ergonomics pass.
