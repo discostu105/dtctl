@@ -115,6 +115,30 @@ def parse_answer(text):
         return None, raw
 
 
+def transcript_answer(rundir, session_id):
+    """Fallback: scan the session transcript for ANSWER lines in ALL assistant
+    messages — the agent's final message can be post-answer chatter (e.g. a
+    stray background-task notification reply)."""
+    import glob
+    best = None
+    for path in glob.glob(os.path.join(rundir, "cfg-*", "projects", "*", session_id + ".jsonl")):
+        with open(path) as f:
+            for line in f:
+                try:
+                    ev = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = ev.get("message") or {}
+                if ev.get("type") != "assistant":
+                    continue
+                for block in msg.get("content") or []:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        ans, raw = parse_answer(block.get("text", ""))
+                        if ans is not None:
+                            best = (ans, raw)
+    return best
+
+
 def out_is_empty(path):
     """Best-effort: did this dtctl call return an empty result set?"""
     try:
@@ -132,19 +156,21 @@ def out_is_empty(path):
 
 
 def call_metrics(ws):
-    calls = errors = empties = 0
+    # One .argv file per dtctl invocation is the authoritative call count
+    # (calls.log lines can span multiple physical lines for multiline DQL).
+    rc = {}
     log = os.path.join(ws, "calls.log")
     if os.path.exists(log):
         with open(log) as f:
             for line in f:
                 parts = line.rstrip("\n").split("\t", 2)
-                if len(parts) < 2:
-                    continue
-                calls += 1
-                if parts[1] != "0":
-                    errors += 1
-                if out_is_empty(os.path.join(ws, "out", parts[0] + ".out")):
-                    empties += 1
+                if len(parts) >= 2 and parts[0].isdigit():
+                    rc[parts[0]] = parts[1]
+    outdir = os.path.join(ws, "out")
+    ts = [f[:-5] for f in os.listdir(outdir) if f.endswith(".argv")] if os.path.isdir(outdir) else []
+    calls = len(ts)
+    errors = sum(1 for t in ts if rc.get(t, "0") != "0")
+    empties = sum(1 for t in ts if out_is_empty(os.path.join(outdir, t + ".out")))
     return calls, errors, empties
 
 
@@ -224,6 +250,10 @@ def main():
                     row.update(verdict="NO_ANSWER", note="hit max turns", answer="")
                 else:
                     ans, raw = parse_answer(res.get("result", ""))
+                    if ans is None and res.get("session_id"):
+                        fb = transcript_answer(args.rundir, res["session_id"])
+                        if fb:
+                            ans, raw = fb
                     row["answer"] = raw
                     if ans == "UNKNOWN":
                         row.update(verdict="UNKNOWN", note="honest unknown")

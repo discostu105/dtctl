@@ -136,7 +136,7 @@ n=\$(date +%s%N)
 printf '%s\0' "\$@" > "\$d/out/\$n.argv"
 "$real" --context "$EVAL_CONTEXT" "\$@" >"\$d/out/\$n.out" 2>"\$d/out/\$n.err"
 rc=\$?
-printf '%s\t%s\t%s\n' "\$n" "\$rc" "\$*" >> "\$d/calls.log"
+{ printf '%s\t%s\t' "\$n" "\$rc"; printf '%s' "\$*" | tr '\n\t' '  '; printf '\n'; } >> "\$d/calls.log"
 cat "\$d/out/\$n.out"
 cat "\$d/out/\$n.err" >&2
 exit \$rc
