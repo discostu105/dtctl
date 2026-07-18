@@ -189,11 +189,17 @@ def extract_query_dqls(ws):
             continue
         qi = argv.index("query")
         rest = argv[qi + 1:]
-        if "-f" in rest:  # query from file: read it if it still exists
+        if "-f" in rest:  # query from file or stdin ('-': read the teed .in capture)
             try:
                 path = rest[rest.index("-f") + 1]
-                with open(os.path.join(ws, path)) as qf:
-                    dqls.append(qf.read())
+                if path == "-":
+                    path = os.path.join(outdir, f[:-5] + ".in")
+                else:
+                    path = os.path.join(ws, path)
+                with open(path) as qf:
+                    dql = qf.read().strip()
+                    if dql:
+                        dqls.append(dql)
             except (IndexError, OSError):
                 pass
             continue

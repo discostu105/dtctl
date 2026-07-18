@@ -134,7 +134,8 @@ run_one() { # $1 = variant, $2 = task
 d="\$(cd "\$(dirname "\$0")/.." && pwd)"
 n=\$(date +%s%N)
 printf '%s\0' "\$@" > "\$d/out/\$n.argv"
-"$real" --context "$EVAL_CONTEXT" "\$@" >"\$d/out/\$n.out" 2>"\$d/out/\$n.err"
+# tee stdin so queries passed via '-f -' are recoverable for scan measurement
+tee "\$d/out/\$n.in" 2>/dev/null | "$real" --context "$EVAL_CONTEXT" "\$@" >"\$d/out/\$n.out" 2>"\$d/out/\$n.err"
 rc=\$?
 { printf '%s\t%s\t' "\$n" "\$rc"; printf '%s' "\$*" | tr '\n\t' '  '; printf '\n'; } >> "\$d/calls.log"
 cat "\$d/out/\$n.out"
