@@ -103,7 +103,9 @@ def score_answer(task, ans, gt):
         if task == "t7":
             if not close(num(ans["problems_7d"]), g["problems_7d"], 0.3):
                 return "WRONG", f'problems {ans["problems_7d"]} vs GT {g["problems_7d"]}'
-            if abs(num(ans["active_now"]) - g["active_now"]) > 1:
+            # ±1 at box scale (0-2 active), 5% at fleet scale (thousands
+            # active, drifting by tens per minute — tenant-B lesson)
+            if abs(num(ans["active_now"]) - g["active_now"]) > max(1, 0.05 * g["active_now"]):
                 return "WRONG", f'active {ans["active_now"]} vs GT {g["active_now"]}'
             return "PASS", ""
         if task == "t8":
@@ -289,7 +291,9 @@ def score_answer(task, ans, gt):
         if task == "h8":
             if bool(ans["synthetic_present"]) != (g["synthetic_nodes"] > 0):
                 return "WRONG", "synthetic_present mismatch"
-            if abs(num(ans["lambda_functions"]) - g["lambda_functions"]) > 1:
+            # ±1 at box scale (3 lambdas), 2% at fleet scale (a 9k-function
+            # fleet churns by a handful between GT and answer — tenant-B lesson)
+            if abs(num(ans["lambda_functions"]) - g["lambda_functions"]) > max(1, 0.02 * g["lambda_functions"]):
                 return "WRONG", f'lambda {ans["lambda_functions"]} vs GT {g["lambda_functions"]}'
             return "PASS", ""
     except (KeyError, TypeError, ValueError) as e:

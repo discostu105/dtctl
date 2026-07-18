@@ -50,13 +50,14 @@ DEV_TASKS="t1 t2 t3 t4 t5 t6 t7 t8 t9 t10 t11 t12 t13 t14 t15 t16 t17 t18 t19 t2
 HOLDOUT_TASKS="h1 h2 h3 h4 h5 h6 h7 h8"
 TASKSET=dev
 TASKS=
+TASKS_FILTERED=
 BATCH=$(date +%Y%m%d-%H%M%S)
 BATCH_GIVEN=0
 TRIALS=1
 while getopts "v:t:s:b:n:" o; do
     case $o in
         v) VARIANTS=${OPTARG//,/ } ;;
-        t) TASKS=${OPTARG//,/ } ;;
+        t) TASKS=${OPTARG//,/ }; TASKS_FILTERED=1 ;;
         s) TASKSET=$OPTARG ;;
         b) BATCH=$OPTARG; BATCH_GIVEN=1 ;;
         n) TRIALS=$OPTARG ;;
@@ -272,7 +273,7 @@ run_batch() { # $1 = rundir
     esac
 
     if [ ! -f "$rundir/ground-truth.json" ]; then
-        ./ground_truth.sh "$rundir" --sets "$GTSETS"
+        ./ground_truth.sh "$rundir" --sets "$GTSETS" --tasks "$TASKS"
     fi
 
     echo "batch $(basename "$rundir") → $rundir"
@@ -290,9 +291,27 @@ run_batch() { # $1 = rundir
     done
     wait
 
-    # Post-batch GT: the second edge of the drift envelope.
+    # Post-batch GT: the second edge of the drift envelope. A cell re-run
+    # (-t subset into an existing batch) must not clobber the batch's fuller
+    # post-GT with a subset file — merge instead of overwrite.
     if [ -z "${EVAL_SKIP_POST_GT:-}" ]; then
-        ./ground_truth.sh "$rundir" --out ground-truth-post.json --sets "$GTSETS"
+        if [ -f "$rundir/ground-truth-post.json" ] && [ -n "$TASKS_FILTERED" ]; then
+            ./ground_truth.sh "$rundir" --out ground-truth-post.new.json --sets "$GTSETS" --tasks "$TASKS"
+            python3 - "$rundir" <<'PY'
+import json, os, sys
+rundir = sys.argv[1]
+full = json.load(open(os.path.join(rundir, "ground-truth-post.json")))
+new = json.load(open(os.path.join(rundir, "ground-truth-post.new.json")))
+for k, v in new.items():
+    if k not in ("sets", "tasks_filter"):
+        full[k] = v
+json.dump(full, open(os.path.join(rundir, "ground-truth-post.json"), "w"), indent=2)
+os.remove(os.path.join(rundir, "ground-truth-post.new.json"))
+print("merged subset post-GT into existing ground-truth-post.json")
+PY
+        else
+            ./ground_truth.sh "$rundir" --out ground-truth-post.json --sets "$GTSETS" --tasks "$TASKS"
+        fi
     fi
     echo "batch complete. Score it:"
     echo "  ./score.py $rundir"

@@ -1031,3 +1031,176 @@ should be rotated into the dev suite after that.
 4. **Second tenant** (OneAgent-only / mixed-era) remains the biggest
    outstanding validity item; `EVAL_CONTEXT` already parameterizes it.
 5. **Author replacement holdout tasks** before h8 rotates into dev.
+
+---
+
+# Eighth eval — optimizations shipped, the `-o json` disarm, and a second tenant
+
+**Date**: 2026-07-18 · **Batches**: `matrix-11` (160 cells, box),
+`matrix-12` (96 cells, box, HEAD arms only), `matrix-13-tb` (65 cells,
+**tenant B** — a second, far larger internal dev tenant, anonymized per
+the privacy rule). This round shipped the seventh eval's four mined
+optimizations, discovered why they initially did nothing, fixed that,
+and took the harness to a tenant two orders of magnitude bigger.
+
+## What shipped (commit `d4b8d67`)
+
+All four seventh-eval optimizations, live-verified: UNKNOWN_DATA_OBJECT
+near-miss stream suggestions; `toRelationships`/`fromRelationships` →
+`smartscapeEdges`/`resolve scope` redirect; a lookback-view note riding
+*successful* `dt.entity.*` fetches; and default-window advice on empty
+results without an explicit window (with metric.series discovery
+wording).
+
+## matrix-11: the optimizations that weren't there
+
+The re-run scored recipes 31/32, recipes-skills 32/32, skills 30/32,
+head-base 27/32, base 25/32 — head-base barely moved, and forensics
+found why: **agent-mode auto-detection treated any explicit `--output`
+flag as an opt-out, and agents append `-o json` to nearly every call.**
+Every envelope affordance built for agents — suggestions, warnings,
+scan/window/lookback advice — was silently disarmed for exactly the
+calls that needed it, in this and every earlier batch. The guard's own
+comment ("non-JSON output format") described the correct behavior; the
+code checked only `flag.Changed`. Fixed in `93f0c76` (explicit json now
+keeps agent mode on) with a regression test. Two consequences:
+
+- matrix-11 is a *diagnostic* batch, not a treatment batch — it
+  measured the new advice muted.
+- every earlier batch **understated** the envelope's effect; the
+  matrix-5/6 advice observations came from the minority of calls
+  without `-o json`.
+
+matrix-11 also surfaced two smaller things: a **non-empty variant of
+the window trap** (both control arms reported the 2h-default-window
+compliance count as "7 days" on t6 — the empty-result advice cannot
+catch a plausible non-empty wrong-window answer; an envelope
+`context.window` field remains the general fix), and the first
+recipe-arm wrong answer in ~270 cells (t2: the agent chose
+`samplingRatio:10` for a p95 ranking and sampling hid the true top
+service's slow tail — a deliberate, warned-about approximation that
+happened to flip a rank).
+
+Ground-truth lesson of the batch: t21's raw-smartscape derivation
+counted **10** pods where only **6** were live — smartscape retains a
+superseded replicaset's pods (nodes *and* edges) for a while after a
+rollout, so a pure-topology count answers "recently backing", not
+"currently backing". GT now filters the runs_on targets by a liveness
+signal (container-CPU datapoints in the last 30m, an independent metric
+stream). With that fix, t21 became a genuinely discriminating task:
+smartscape-route arms (skills, head-base) answered 10, the recipe arms'
+live-state route answered 6.
+
+## matrix-12: the same optimizations, armed
+
+Same box tasks, HEAD binary rebuilt at `ddfb645` (envelope fix in),
+three HEAD arms re-run; base/skills carried from matrix-11 (frozen
+controls). **head-base: 32/32** — dev suite *and* holdout, no book, no
+skills. All five matrix-11 failures flipped (t4, t6, t15, t21, h8), and
+the mechanism is visible in the captures: the lookback note fired in 12
+calls, default-window advice in 25, near-miss in 2, heavy-scan in 5.
+head-base matrix-11 → matrix-12: empties 54 → **2** (−96%), calls −27%,
+output tokens −29%, dtctl seconds −40%. (Wall time rose 55%, but the
+batch ran concurrently with the tenant-B batch — API-contention noise,
+not a binary property; dtctl-side latency fell.)
+
+The honest caveats: the dev suite was mined from control failures, so a
+tuned binary acing it is partly expected — but head-base also swept the
+held-out h1–h8, including h8, whose fix derives only from dev evidence.
+And recipes/t21's single failure this round (a smartscape route instead
+of the workloads recipe, answering 10) shows task-level nondeterminism
+persists even in book arms.
+
+**What the book still buys on a friendly tenant once the binary is
+this good**: efficiency and determinism, not correctness — recipe arms
+still use ~40% fewer calls and the briefing pre-empts exploration. The
+correctness gap on box has been engineered away at the binary level,
+by the eval loop that recipes made measurable.
+
+## matrix-13-tb: tenant B (scan-light subset)
+
+A second internal dev tenant, ~60× box by topology (764k smartscape
+nodes, 2,325 hosts, ~5B log records/day, petabyte-scale log buckets),
+Azure/GCP/synthetic all **present** (box: absent), postgres absent as a
+smartscape type (box: present) — every presence/absence flips, so
+tenant-pattern memorization gets caught. Full-log-scan tasks are
+economically impossible there (t14's 24h scan would touch terabytes),
+which produced a new harness capability: `ground_truth.sh --tasks` +
+`run.sh` pass-through, so a batch measures GT only for the tasks it
+runs. The batch ran 5 arms × 13 census/metric/davis/bucket tasks.
+A recipe book was generated with the same pack as box (52 probe
+queries, 99s, 37 stamped / 11 disabled — more disabled entries than
+box, the tenant's shape showing).
+
+Also found before any cell ran, just by touching the congested tenant:
+`dtctl query` returned the raw `{"state":"NOT_STARTED","requestToken"}`
+in-flight envelope with rc 0 — three times in a row. Fixed in
+`ddfb645`: NOT_STARTED (a queued query) now polls like RUNNING, with a
+mock-server regression test.
+
+Results (scale-aware tolerances, see below): base 7/13, skills 9/13,
+head-base 10/13, recipes-skills 10/13, **recipes 11/13**. Nobody
+sweeps the hard tenant; the ordering holds but compresses. The
+noteworthy mechanics:
+
+- **The lookback trap inverts at scale and the shipped fix
+  generalizes.** On box the `dt.entity.*` lookback *under*-counts; on
+  churny tenant B it *over*-counts (t18: base/skills counted 2,489 EC2
+  via lookback vs 1,767 live; h8: base/skills found only ~1,215 of
+  9,324 Lambdas — the recently-invoked slice). head-base and recipes,
+  steered by the lookback advice (mined on box dev tasks), took the
+  smartscape route and got both right. That is the cross-tenant
+  generalization the holdout design was built to demonstrate.
+- **t16 exposed a GT definition gap, not an agent gap**: tenant B has
+  zero `DB_INSTANCE_POSTGRES` nodes but runs postgres as Azure
+  flexservers; three arms independently answered 96 (the Azure postgres
+  server count) against a GT of 0. The narrow smartscape-type GT is
+  the wrong referee for the natural-language question on cloud-managed
+  tenants; t16 needs a per-capability GT definition before it can score
+  fairly there. (Excluding t16: base 7/12, skills 9/12, head-base
+  10/12, recipes-skills 10/12, recipes 11/12.)
+- **Scale broke two absolute tolerances** (fixed in the scorer,
+  box verdicts unchanged): t7's ±1 active problems is meaningless
+  against 2,724 drifting actives (now max(1, 5%)); h8's ±1 lambda
+  against a 9,324-function fleet (now max(1, 2%) — 9,319 is correct,
+  1,215 still is not).
+- Remaining genuine failures cluster in **truncation-at-scale** (t9:
+  counting 252 OOM pods via the events route or truncated series gave
+  21–50) and **volatile top-k** (h4 least-free-disk among 2,325 hosts;
+  t8 top-CPU race) — good raw material for the next optimization
+  cycle, and none of it recipe-arm-specific.
+
+One operational note: the two skills arms of matrix-10 had died to a
+mid-batch OAuth refresh-token rotation between the harness's two
+credential copies; `run.sh` now warns (`AUTH FAILURE:`) per cell and
+documents the fresh-login-before-long-batches rule. It did not recur.
+
+## Optimization candidates for the ninth round (dev evidence only)
+
+1. **Envelope `context.window` field** — state the effective query
+   window on every query response. Generalizes the window-trap fixes to
+   the non-empty case that silently mis-labeled t6's 2h count as 7d.
+2. **Truncation visibility at scale** — when a `timeseries`/`summarize`
+   result hits a series/row cap, say so in the envelope (t9's 21-of-252
+   undercounts looked complete to the agents).
+3. **Capability-aware census advice** — the smartscapeNodes census
+   suggestion could enumerate sibling types (e.g. cloud-managed DB
+   types) when the asked-for type is absent but cloud integrations are
+   present (t16's 0-vs-96 gap, once its GT definition is settled).
+4. **`resolve scope` liveness filter** — t21's lesson applies to the
+   feature itself: scope resolution over runs_on edges includes
+   superseded pods right after a rollout.
+
+## Where this leaves the recipes question
+
+Across eight evals: the **binary-level ergonomics** extracted by this
+eval loop (errors, redirects, advice, envelope) now deliver most of the
+correctness a friendly tenant needs — they ship to every dtctl user
+and, per tenant B, generalize across tenants. The **book's** durable,
+tenant-B-visible value is what a binary cannot know: which capabilities
+exist and which are absent, verified query bodies per environment,
+canonical stream choices, and the efficiency/determinism of starting
+from a briefing instead of exploration (recipe arms remain the
+call-count and empties leaders everywhere). The §6.1 phase-3 gate
+(pack-as-markdown arm) and a `-n 3` trials protocol on tenant B are the
+right next probes.
