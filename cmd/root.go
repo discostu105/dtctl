@@ -364,6 +364,86 @@ func setupErrorHandlers(cmd *cobra.Command) {
 	}
 }
 
+// coreStreams are Grail data objects agents most often need. Used to answer
+// UNKNOWN_DATA_OBJECT guesses with real names instead of leaving the agent
+// to enumerate variants (evals: usersession→user_sessions→rum_events→…, ten
+// failed guesses, then "0 RUM events" reported as the answer).
+var coreStreams = []string{
+	"logs", "spans", "events", "bizevents",
+	"user.events", "user.sessions",
+	"security.events",
+	"dt.davis.events", "dt.davis.problems",
+	"metric.series",
+	"dt.system.buckets", "dt.system.data_objects", "dt.system.events",
+}
+
+// streamKeywords routes an unknown data-object name to the streams agents
+// were actually looking for, by topic. Checked before edit distance because
+// the guesses are usually semantic (rum_events), not typos.
+var streamKeywords = []struct {
+	keys    []string
+	streams []string
+}{
+	{[]string{"session", "rum", "useraction", "user_action", "user.action"}, []string{"user.sessions", "user.events"}},
+	{[]string{"user"}, []string{"user.events", "user.sessions"}},
+	{[]string{"metric"}, []string{"metric.series"}},
+	{[]string{"vuln", "security", "compliance", "detection"}, []string{"security.events"}},
+	{[]string{"problem"}, []string{"dt.davis.problems"}},
+	{[]string{"davis"}, []string{"dt.davis.events", "dt.davis.problems"}},
+	{[]string{"trace", "span"}, []string{"spans"}},
+	{[]string{"log"}, []string{"logs"}},
+	{[]string{"bizevent", "business"}, []string{"bizevents"}},
+	{[]string{"bucket"}, []string{"dt.system.buckets"}},
+}
+
+// unknownObjectRe pulls the offending name out of the API's
+// "<name> isn't a valid data object." detail.
+var unknownObjectRe = regexp.MustCompile(`(\S+) isn't a valid data object`)
+
+// nearestStreams suggests real stream names for an unknown data-object guess:
+// keyword routing first, edit distance over coreStreams as fallback.
+func nearestStreams(name string) []string {
+	n := strings.ToLower(strings.Trim(name, `"'`))
+	for _, kw := range streamKeywords {
+		for _, k := range kw.keys {
+			if strings.Contains(n, k) {
+				return kw.streams
+			}
+		}
+	}
+	norm := func(s string) string {
+		return strings.NewReplacer(".", "", "_", "", "-", "").Replace(strings.ToLower(s))
+	}
+	var best []string
+	for _, s := range coreStreams {
+		if d := levenshtein(norm(n), norm(s)); d <= 3 {
+			best = append(best, s)
+		}
+	}
+	return best
+}
+
+// levenshtein is a plain edit distance; inputs here are short stream names.
+func levenshtein(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(min(cur[j-1]+1, prev[j]+1), prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
 // dqlErrorAdvice maps recurring DQL mistake classes (observed in agent evals)
 // to recovery suggestions carried in the error envelope.
 func dqlErrorAdvice(e *sdkquery.QueryError) []string {
@@ -374,6 +454,18 @@ func dqlErrorAdvice(e *sdkquery.QueryError) []string {
 		s = append(s, `smartscape is queried via the COMMANDS smartscapeNodes/smartscapeEdges, not fetch — start the query with them: dtctl query 'smartscapeNodes "HOST" | limit 10'`)
 	} else if e.ErrorType == "UNKNOWN_DATA_OBJECT" && strings.Contains(text, "dt.entity.") {
 		s = append(s, `for a current-state entity census use: dtctl query 'smartscapeNodes "<TYPE>" | summarize count()' — dt.entity.* tables are event-lookback views and exist only for some types`)
+	} else if e.ErrorType == "UNKNOWN_DATA_OBJECT" {
+		if m := unknownObjectRe.FindStringSubmatch(text); len(m) == 2 {
+			if near := nearestStreams(m[1]); len(near) > 0 {
+				s = append(s, fmt.Sprintf("no data object named %q — closest real streams: %s. The full catalog: dtctl query 'fetch dt.system.data_objects | fields name'", m[1], strings.Join(near, ", ")))
+			} else {
+				s = append(s, fmt.Sprintf("no data object named %q — common streams: %s. The full catalog: dtctl query 'fetch dt.system.data_objects | fields name'", m[1], strings.Join(coreStreams, ", ")))
+			}
+		}
+	}
+	if e.ErrorType == "FIELD_DOES_NOT_EXIST" &&
+		(strings.Contains(text, "toRelationships") || strings.Contains(text, "fromRelationships")) {
+		s = append(s, `toRelationships/fromRelationships are classic Environment-API fields, not DQL — topology hops use smartscapeEdges: dtctl query 'smartscapeEdges "runs_on" | filter in(source_id, {toSmartscapeId("SERVICE-…")}) | fields target_id', or let dtctl do the hop: dtctl resolve scope <name> --for logs|spans`)
 	}
 	if e.ErrorType == "INVALID_TIMEFRAME" {
 		s = append(s, "timeframe values accept ISO-8601 timestamps or now()-relative expressions — parentheses required: now()-6h, not now-6h — e.g. from:now()-6h, to:now() or --default-timeframe-start 'now()-6h'")

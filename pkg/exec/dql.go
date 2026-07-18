@@ -642,11 +642,16 @@ func heavyScanAdvice(result *DQLQueryResponse) (warnings, suggestions []string) 
 // the idiom agents reach for when they mean "query an older window".
 var timestampFilterRe = regexp.MustCompile(`(?i)\|\s*filter\b[^|]*\btimestamp\b`)
 
-// windowAdvice explains the silent-default-window trap: a `filter timestamp`
-// predicate does NOT widen the scanned window, so filtering for data older
-// than the default window returns nothing — silently. Fires only on an empty
-// result (no rows, or the single all-zero row a `summarize count()` yields)
-// with a timestamp filter and no explicit window anywhere.
+// windowAdvice explains the silent-default-window trap on empty results.
+// Fires only on an empty result (no rows, or the single all-zero row a
+// `summarize count()` yields) from a query with no explicit window anywhere:
+//   - with a `filter timestamp` stage: the filter cannot widen the scanned
+//     window, so filtering for data older than the default returns nothing —
+//     silently (the t23 trap).
+//   - without one: the emptiness may still be the window, not the data —
+//     discovery fetches (metric.series) only show series that had datapoints
+//     inside the window, and agents reported "0 OOM pods" off exactly that
+//     (the t9 trap). Phrased as a possibility, since zero may be the answer.
 func windowAdvice(query string, records []map[string]interface{}, opts DQLExecuteOptions) []string {
 	if opts.DefaultTimeframeStart != "" || opts.DefaultTimeframeEnd != "" {
 		return nil
@@ -654,13 +659,36 @@ func windowAdvice(query string, records []map[string]interface{}, opts DQLExecut
 	if len(records) > 1 || (len(records) == 1 && !allAggregatesZero(records[0])) {
 		return nil
 	}
-	if !timestampFilterRe.MatchString(query) {
-		return nil
-	}
 	if strings.Contains(query, "from:") || strings.Contains(query, "to:") || strings.Contains(query, "timeframe:") {
 		return nil
 	}
-	return []string{"# empty result with a `filter timestamp ...` stage: timestamp filters do NOT widen the scanned window (default: the last 2h) — set the window in the fetch instead, e.g. `fetch logs, from:now()-24h, to:now()-12h`, or pass --default-timeframe-start/--default-timeframe-end"}
+	if timestampFilterRe.MatchString(query) {
+		return []string{"# empty result with a `filter timestamp ...` stage: timestamp filters do NOT widen the scanned window (default: the last 2h) — set the window in the fetch instead, e.g. `fetch logs, from:now()-24h, to:now()-12h`, or pass --default-timeframe-start/--default-timeframe-end"}
+	}
+	advice := "# empty result from the DEFAULT query window (the last 2h) — if data may exist outside it, widen the window explicitly, e.g. `, from:now()-7d`, before concluding the count is 0"
+	if strings.Contains(query, "metric.series") {
+		advice = "# empty result from the DEFAULT query window (the last 2h): metric.series lists only series with datapoints INSIDE the window — widen it for discovery, e.g. `fetch metric.series, from:now()-7d`"
+	}
+	return []string{advice}
+}
+
+// entityFetchRe spots a query fetching a classic dt.entity.* table, and
+// captures the type suffix for a concrete smartscapeNodes suggestion.
+var entityFetchRe = regexp.MustCompile(`(?i)\bfetch\s+dt\.entity\.([a-z0-9_]+)`)
+
+// lookbackAdvice rides SUCCESSFUL dt.entity.* fetches. The error-side
+// redirect (dqlErrorAdvice) cannot help here: dt.entity.<type> queries
+// SUCCEED and return the lookback population (entities that reported events
+// in the window), which diverges from the live topology — agents reported a
+// 17-host census against 12 currently monitored hosts in five consecutive
+// eval batches, every time via a query that returned rc 0.
+func lookbackAdvice(query string) []string {
+	m := entityFetchRe.FindStringSubmatch(query)
+	if m == nil {
+		return nil
+	}
+	t := strings.ToUpper(m[1])
+	return []string{fmt.Sprintf("# dt.entity.%s is an event-LOOKBACK view (entities seen in the query window), not the live topology — for a current-state census or inventory use: dtctl query 'smartscapeNodes \"%s\" | summarize count()'", m[1], t)}
 }
 
 // allAggregatesZero reports whether a single result row carries only zero
