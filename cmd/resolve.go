@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -38,9 +39,10 @@ environment) resolves to a combined filter over all instances.
 Examples:
   dtctl resolve scope SERVICE-ABC123 --for logs
   dtctl resolve scope my-backend --for logs
+  dtctl resolve scope SERVICE-AAA SERVICE-BBB SERVICE-CCC --for logs
   dtctl query --recipe entity-logs --set scope="$(dtctl resolve scope my-backend --for logs)"
 `,
-	Args: cobra.ExactArgs(1),
+	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		signal, _ := cmd.Flags().GetString("for")
 		if signal == "" {
@@ -58,7 +60,7 @@ Examples:
 
 		executor := NewDQLExecutorFromConfig(cfg, c)
 		runner := &discoverRunner{executor: executor, scanLimitGB: 5}
-		res, err := recipes.ResolveScope(context.Background(), runner, lib.Book, args[0], signal)
+		res, err := resolveScopeMulti(runner, lib, args, signal)
 		if err != nil {
 			return err
 		}
@@ -87,6 +89,60 @@ Examples:
 		}
 		return printer.Print(res)
 	},
+}
+
+// resolveScopeMulti resolves each argument and OR-combines the filters, so a
+// set of entities (e.g. every instance of a multi-deployed service) costs one
+// call instead of one per entity. Per-entity failures become notes as long as
+// at least one entity resolves; only total failure is an error.
+func resolveScopeMulti(runner recipes.Runner, lib *recipes.Library, ids []string, signal string) (*recipes.ScopeResult, error) {
+	var merged *recipes.ScopeResult
+	var filters, failures []string
+	for _, id := range ids {
+		res, err := recipes.ResolveScope(context.Background(), runner, lib.Book, id, signal)
+		if err != nil {
+			failures = append(failures, fmt.Sprintf("%s: %v", id, err))
+			continue
+		}
+		filters = append(filters, res.Filter)
+		if merged == nil {
+			merged = res
+			continue
+		}
+		merged.Entities = append(merged.Entities, res.Entities...)
+		merged.Targets = append(merged.Targets, res.Targets...)
+		merged.Notes = append(merged.Notes, res.Notes...)
+		if merged.Strategy != res.Strategy {
+			merged.Strategy = "mixed"
+		}
+		if res.Coverage == nil || (merged.Coverage != nil && *res.Coverage < *merged.Coverage) {
+			merged.Coverage = res.Coverage
+		}
+	}
+	if merged == nil {
+		return nil, fmt.Errorf("no scope resolved: %s", strings.Join(failures, "; "))
+	}
+	if len(filters) > 1 {
+		for i, f := range filters {
+			filters[i] = "(" + f + ")"
+		}
+		merged.Filter = strings.Join(filters, " or ")
+	}
+	merged.Notes = append(merged.Notes, failures...)
+	merged.Notes = dedupeStrings(merged.Notes)
+	return merged, nil
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]struct{}, len(in))
+	out := in[:0]
+	for _, s := range in {
+		if _, ok := seen[s]; !ok {
+			seen[s] = struct{}{}
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func init() {

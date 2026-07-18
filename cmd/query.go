@@ -179,6 +179,10 @@ Examples:
 		queryFile, _ := cmd.Flags().GetString("file")
 		setFlags, _ := cmd.Flags().GetStringArray("set")
 		recipeName, _ := cmd.Flags().GetString("recipe")
+		dqlFlag, _ := cmd.Flags().GetString("dql")
+		if dqlFlag != "" && len(args) == 0 {
+			args = []string{dqlFlag}
+		}
 
 		var query string
 		var recipeExec *recipeExecution
@@ -747,6 +751,7 @@ func init() {
 	queryCmd.Flags().StringP("file", "f", "", "read query from file")
 	queryCmd.Flags().StringArray("set", []string{}, "set template variable (key=value)")
 	queryCmd.Flags().String("recipe", "", "execute a named recipe from the current context's recipe book (see 'dtctl recipes')")
+	queryCmd.Flags().String("dql", "", "DQL text (alias for the positional argument)")
 
 	// Live mode flags
 	queryCmd.Flags().Bool("live", false, "enable live mode with periodic updates")

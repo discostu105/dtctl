@@ -15,8 +15,8 @@ const (
 // PackRef pins a pack by name and version (ordered in a book: lowest
 // precedence first).
 type PackRef struct {
-	Name    string `yaml:"name"`
-	Version string `yaml:"version"`
+	Name    string `json:"name" yaml:"name"`
+	Version string `json:"version" yaml:"version"`
 }
 
 // BookMetadata identifies a recipe book and the packs it was generated from.
@@ -30,33 +30,33 @@ type BookMetadata struct {
 
 // SegmentFact is a Grail segment discovered on the environment (apply with -S).
 type SegmentFact struct {
-	UID         string   `yaml:"uid"`
-	Name        string   `yaml:"name,omitempty"`
-	Description string   `yaml:"description,omitempty"`
-	Variables   []string `yaml:"variables,omitempty"`
+	UID         string   `json:"uid" yaml:"uid"`
+	Name        string   `json:"name,omitempty" yaml:"name,omitempty"`
+	Description string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Variables   []string `json:"variables,omitempty" yaml:"variables,omitempty"`
 }
 
 // Facts is everything discovered by probes — uniform provenance. Human/org
 // claims live in Book.Declared, never here.
 type Facts struct {
-	Character     string                        `yaml:"character,omitempty"`
-	Capabilities  []string                      `yaml:"capabilities,omitempty"`
-	Absent        []string                      `yaml:"absent,omitempty"`
-	EntityTypes   map[string]int64              `yaml:"entityTypes,omitempty"`
-	DataObjects   []string                      `yaml:"dataObjects,omitempty"`
-	Buckets       []string                      `yaml:"buckets,omitempty"`
-	FieldCarriage map[string]map[string]float64 `yaml:"fieldCarriage,omitempty"`
-	Segments      []SegmentFact                 `yaml:"segments,omitempty"`
-	Notes         []string                      `yaml:"notes,omitempty"`
+	Character     string                        `json:"character,omitempty" yaml:"character,omitempty"`
+	Capabilities  []string                      `json:"capabilities,omitempty" yaml:"capabilities,omitempty"`
+	Absent        []string                      `json:"absent,omitempty" yaml:"absent,omitempty"`
+	EntityTypes   map[string]int64              `json:"entityTypes,omitempty" yaml:"entityTypes,omitempty"`
+	DataObjects   []string                      `json:"dataObjects,omitempty" yaml:"dataObjects,omitempty"`
+	Buckets       []string                      `json:"buckets,omitempty" yaml:"buckets,omitempty"`
+	FieldCarriage map[string]map[string]float64 `json:"fieldCarriage,omitempty" yaml:"fieldCarriage,omitempty"`
+	Segments      []SegmentFact                 `json:"segments,omitempty" yaml:"segments,omitempty"`
+	Notes         []string                      `json:"notes,omitempty" yaml:"notes,omitempty"`
 }
 
 // ScopeRule says how to reference an entity of one type in one signal:
 // either a filter template (rendered with .id/.name) or a named hop strategy
 // resolved in code. Coverage is derived from facts.fieldCarriage.
 type ScopeRule struct {
-	Filter   string   `yaml:"filter,omitempty"`
-	Hop      string   `yaml:"hop,omitempty"`
-	Coverage *float64 `yaml:"coverage,omitempty"`
+	Filter   string   `json:"filter,omitempty" yaml:"filter,omitempty"`
+	Hop      string   `json:"hop,omitempty" yaml:"hop,omitempty"`
+	Coverage *float64 `json:"coverage,omitempty" yaml:"coverage,omitempty"`
 }
 
 // Param is a typed recipe parameter. Types: string (the default; rendered

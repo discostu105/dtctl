@@ -150,7 +150,7 @@ func resolveHop(ctx context.Context, runner Runner, rule ScopeRule, res *ScopeRe
 		res.Notes = append(res.Notes,
 			"container-name filter via "+rule.Hop+" topology — container names are not unique per service; results may include other workloads")
 	default:
-		return nil, fmt.Errorf("no %s targets with usable names found for %s", rule.Hop, res.Entities[0].ID)
+		return nil, fmt.Errorf("no %s targets with usable names found for %s — the entity may be stale; fall back to a name-pattern filter on the signal (e.g. k8s.pod.name matchesValue \"%s*\")", rule.Hop, res.Entities[0].ID, res.Entities[0].Name)
 	}
 	if rule.Coverage != nil {
 		res.Notes = append(res.Notes, fmt.Sprintf(

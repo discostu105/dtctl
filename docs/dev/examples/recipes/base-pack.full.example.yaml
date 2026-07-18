@@ -303,7 +303,7 @@ recipes:
 
   # ── traces ──────────────────────────────────────────────────────
   service-performance-summary:
-    description: "Per-service RED overview from root spans (volume, failures, avg, p95)"
+    description: "Per-service RED overview from root spans (volume, failures, avg, p95). Request-level: omits services emitting only client/internal spans — for all-span latency drop the root filter"
     requires: [spans]
     followups: [service-errors, slow-traces, entity-logs]
     revised: "2026-07-18 portable-first: group by dt.smartscape.service + getNodeName — dt.service.name is null for OneAgent-fed span populations (whole services vanish into one null group); failure flag coalesced across eras inside the aggregation. Needs re-verification."
@@ -320,7 +320,7 @@ recipes:
       | sort error_rate desc
       | limit 25
   slow-traces:
-    description: "Root requests slower than 5s with trace IDs"
+    description: "Root requests slower than 5s with trace IDs (sampled 1:10 — not a true maximum; drop samplingRatio to find the single slowest)"
     requires: [spans]
     followups: [trace-by-id]
     verify:
@@ -399,7 +399,7 @@ recipes:
       | filter arrayAvg(error_rate_pct) > 0
       | limit 25
   service-red-percentiles:
-    description: "p50/p95 service response time in ms from RED metrics (microsecond unit; rollup: required for percentile)"
+    description: "p50/p95 service response time in ms from RED metrics (microsecond unit; rollup: required for percentile). Request-level metric: omits services with no entry-point requests"
     requires: [service-metrics]
     followups: [slow-traces]
     dql: |

@@ -2,6 +2,8 @@ package recipes
 
 import (
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 )
 
@@ -33,16 +35,20 @@ type DisabledIndexEntry struct {
 // index. `dtctl commands` answers "what can I run?"; this answers "what is
 // true here?".
 type Briefing struct {
-	Context     string                          `json:"context" yaml:"context"`
-	GeneratedAt string                          `json:"generatedAt,omitempty" yaml:"generatedAt,omitempty"`
-	FactsAge    string                          `json:"factsAge,omitempty" yaml:"factsAge,omitempty"`
-	Packs       []PackRef                       `json:"packs,omitempty" yaml:"packs,omitempty"`
-	Facts       *Facts                          `json:"facts,omitempty" yaml:"facts,omitempty"`
-	Declared    map[string]string               `json:"declared,omitempty" yaml:"declared,omitempty"`
-	Scoping     map[string]map[string]ScopeRule `json:"scoping,omitempty" yaml:"scoping,omitempty"`
-	Recipes     []IndexEntry                    `json:"recipes" yaml:"recipes"`
-	Disabled    []DisabledIndexEntry            `json:"disabled,omitempty" yaml:"disabled,omitempty"`
-	Warnings    []string                        `json:"warnings,omitempty" yaml:"warnings,omitempty"`
+	Context     string    `json:"context" yaml:"context"`
+	GeneratedAt string    `json:"generatedAt,omitempty" yaml:"generatedAt,omitempty"`
+	FactsAge    string    `json:"factsAge,omitempty" yaml:"factsAge,omitempty"`
+	Packs       []PackRef `json:"packs,omitempty" yaml:"packs,omitempty"`
+	Facts       *Facts    `json:"facts,omitempty" yaml:"facts,omitempty"`
+	// Facts above is a curated view (see curatedFacts); these totals say how
+	// much the full book on disk holds beyond it.
+	EntityTypesTotal int                             `json:"entityTypesTotal,omitempty" yaml:"entityTypesTotal,omitempty"`
+	DataObjectsTotal int                             `json:"dataObjectsTotal,omitempty" yaml:"dataObjectsTotal,omitempty"`
+	Declared         map[string]string               `json:"declared,omitempty" yaml:"declared,omitempty"`
+	Scoping          map[string]map[string]ScopeRule `json:"scoping,omitempty" yaml:"scoping,omitempty"`
+	Recipes          []IndexEntry                    `json:"recipes" yaml:"recipes"`
+	Disabled         []DisabledIndexEntry            `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+	Warnings         []string                        `json:"warnings,omitempty" yaml:"warnings,omitempty"`
 }
 
 // BuildBriefing assembles the briefing from a loaded library.
@@ -63,7 +69,9 @@ func BuildBriefing(lib *Library, now func() time.Time) *Briefing {
 	} else {
 		b.GeneratedAt = lib.Book.Metadata.GeneratedAt
 		b.Packs = lib.Book.Metadata.Packs
-		b.Facts = &lib.Book.Facts
+		b.Facts = curatedFacts(&lib.Book.Facts)
+		b.EntityTypesTotal = len(lib.Book.Facts.EntityTypes)
+		b.DataObjectsTotal = len(lib.Book.Facts.DataObjects)
 		b.Declared = lib.Book.Declared
 		b.Scoping = lib.Book.Scoping
 		if t, err := time.Parse(time.RFC3339, lib.Book.Metadata.GeneratedAt); err == nil {
@@ -93,6 +101,57 @@ func BuildBriefing(lib *Library, now func() time.Time) *Briefing {
 		b.Recipes = append(b.Recipes, entry)
 	}
 	return b
+}
+
+// briefingEntityTypes caps the entity census in the bootstrap call.
+const briefingEntityTypes = 12
+
+// curatedFacts trims the raw fact battery to briefing weight: the full book
+// stays on disk; the bootstrap call ships what an agent can act on. The
+// dt.entity.* catalog dominates DataObjects (hundreds of entries) and is
+// derivable from the entity census, so it is dropped here; the census itself
+// keeps the dominant types. Eval forensics showed the uncurated facts
+// tripling the briefing's context weight.
+func curatedFacts(f *Facts) *Facts {
+	c := *f
+	if len(f.EntityTypes) > briefingEntityTypes {
+		c.EntityTypes = topNEntityTypes(f.EntityTypes, briefingEntityTypes)
+	}
+	if len(f.DataObjects) > 0 {
+		objs := make([]string, 0, len(f.DataObjects))
+		for _, o := range f.DataObjects {
+			if !strings.HasPrefix(o, "dt.entity.") {
+				objs = append(objs, o)
+			}
+		}
+		c.DataObjects = objs
+	}
+	return &c
+}
+
+func topNEntityTypes(census map[string]int64, n int) map[string]int64 {
+	type kv struct {
+		k string
+		v int64
+	}
+	entries := make([]kv, 0, len(census))
+	for k, v := range census {
+		entries = append(entries, kv{k, v})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].v != entries[j].v {
+			return entries[i].v > entries[j].v
+		}
+		return entries[i].k < entries[j].k
+	})
+	if n > len(entries) {
+		n = len(entries)
+	}
+	out := make(map[string]int64, n)
+	for _, e := range entries[:n] {
+		out[e.k] = e.v
+	}
+	return out
 }
 
 func sortDisabled(entries []DisabledIndexEntry) {

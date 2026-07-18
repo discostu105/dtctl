@@ -278,7 +278,11 @@ func printBriefingHuman(b *recipes.Briefing) {
 			output.DescribeKV("Absent:", w, "%s", strings.Join(f.Absent, ", "))
 		}
 		if len(f.EntityTypes) > 0 {
-			output.DescribeKV("Entities:", w, "%s", topEntityTypes(f.EntityTypes, 12))
+			ents := topEntityTypes(f.EntityTypes, 12)
+			if extra := b.EntityTypesTotal - len(f.EntityTypes); extra > 0 {
+				ents += fmt.Sprintf(" (+%d more types)", extra)
+			}
+			output.DescribeKV("Entities:", w, "%s", ents)
 		}
 		if len(f.Buckets) > 0 {
 			output.DescribeKV("Buckets:", w, "%s", strings.Join(f.Buckets, ", "))
