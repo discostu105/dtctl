@@ -440,7 +440,7 @@ func carriageFields(packs []*Pack) map[string][]string {
 	fields := map[string][]string{
 		"spans": {"http.request.method", "http.method", "request.is_failed", "transaction.is_failed",
 			"dt.smartscape.service", "dt.smartscape.host", "dt.smartscape.k8s_pod"},
-		"logs": {"k8s.pod.name", "k8s.namespace.name", "loglevel",
+		"logs": {"k8s.pod.name", "k8s.namespace.name", "loglevel", "service.name",
 			"dt.smartscape.service", "dt.smartscape.host", "dt.smartscape.k8s_pod"},
 	}
 	for _, p := range packs {
@@ -467,9 +467,18 @@ func builtinScoping(census map[string]int64, carriage map[string]map[string]floa
 	}
 	scoping := map[string]map[string]ScopeRule{}
 	if census["SERVICE"] > 0 {
+		// SERVICE -> logs is chosen by measured carriage: on OTel-native
+		// environments logs carry the service.name resource attribute and a
+		// direct name filter is complete and cheap; where they don't, the
+		// runs_on topology hop is authoritative (direct dt.smartscape.service
+		// stamping silently lies at its partial coverage).
+		serviceLogs := ScopeRule{Hop: "runs_on", Coverage: cov("logs", "dt.smartscape.service")}
+		if c := cov("logs", "service.name"); c != nil && *c >= 0.5 {
+			serviceLogs = ScopeRule{Filter: `service.name == "{{.name}}"`, Coverage: c}
+		}
 		scoping["SERVICE"] = map[string]ScopeRule{
 			"spans":    {Filter: `dt.smartscape.service == toSmartscapeId("{{.id}}")`, Coverage: cov("spans", "dt.smartscape.service")},
-			"logs":     {Hop: "runs_on", Coverage: cov("logs", "dt.smartscape.service")},
+			"logs":     serviceLogs,
 			"problems": {Filter: `matchesPhrase(arrayToString(affected_entity_ids), "{{.id}}")`},
 		}
 	}

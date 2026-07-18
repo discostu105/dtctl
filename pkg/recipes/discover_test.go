@@ -95,9 +95,12 @@ func discoverTestRunner() *mockRunner {
 			rec("total", float64(100), "f0", float64(50), "f1", float64(50), "f2", float64(50),
 				"f3", float64(50), "f4", float64(50), "f5", float64(50), "f6", float64(50), "f7", float64(50)),
 		}},
+		// logs fields, in carriageFields order: k8s.pod.name, k8s.namespace.name,
+		// loglevel, service.name, dt.smartscape.service, dt.smartscape.host,
+		// dt.smartscape.k8s_pod
 		{"fetch logs, from:now()-24h, samplingRatio:100 | summarize total", []map[string]interface{}{
 			rec("total", float64(100), "f0", float64(60), "f1", float64(60), "f2", float64(100),
-				"f3", float64(10), "f4", float64(20), "f5", float64(0)),
+				"f3", float64(10), "f4", float64(20), "f5", float64(0), "f6", float64(0)),
 		}},
 		{"RAPPROBE", []map[string]interface{}{rec("event.type", "DETECTION_FINDING")}},
 		{"GOODQ", manyRecords(25)},
@@ -157,9 +160,11 @@ func TestDiscover(t *testing.T) {
 	if book.Scoping["K8S_POD"]["logs"].Filter == "" || book.Scoping["AZURE_VM"] != nil {
 		t.Errorf("scoping: %+v", book.Scoping)
 	}
-	// logs carriage: dt.smartscape.service is field index 3 → 10/100 = 0.1
-	if c := book.Scoping["SERVICE"]["logs"].Coverage; c == nil || *c != 0.1 {
-		t.Errorf("SERVICE logs coverage: %v", derefF(c))
+	// service.name carriage on logs is 0.1 (< 0.5) → the hop strategy wins,
+	// carrying dt.smartscape.service's measured 0.2 coverage.
+	svcLogs := book.Scoping["SERVICE"]["logs"]
+	if svcLogs.Hop != "runs_on" || svcLogs.Coverage == nil || *svcLogs.Coverage != 0.2 {
+		t.Errorf("SERVICE logs rule: %+v (coverage %v)", svcLogs, derefF(svcLogs.Coverage))
 	}
 
 	// Guard disables, all classified.
@@ -211,6 +216,22 @@ func TestDiscover(t *testing.T) {
 
 	if report.Disabled != 6 || report.Unprobed != 1 {
 		t.Errorf("report: %+v", report)
+	}
+}
+
+func TestBuiltinScopingOTelServiceLogs(t *testing.T) {
+	// On an OTel-native environment logs carry service.name — the direct name
+	// filter wins over the topology hop, with its measured coverage.
+	scoping := builtinScoping(
+		map[string]int64{"SERVICE": 10},
+		map[string]map[string]float64{"logs": {"service.name": 0.95, "dt.smartscape.service": 0.06}},
+	)
+	rule := scoping["SERVICE"]["logs"]
+	if rule.Hop != "" || !strings.Contains(rule.Filter, "service.name") {
+		t.Errorf("expected service.name filter strategy, got %+v", rule)
+	}
+	if rule.Coverage == nil || *rule.Coverage != 0.95 {
+		t.Errorf("coverage: %v", derefF(rule.Coverage))
 	}
 }
 

@@ -57,11 +57,16 @@ var alwaysAvailableCommands = []string{
 var builtinProfiles = map[string]Profile{
 	"query": {
 		Description: "DQL queries plus Davis analyzers for investigation agents",
-		Commands:    []string{"query", "get analyzers", "describe analyzer", "exec analyzer", "verify analyzer"},
+		Commands: []string{"query", "get analyzers", "describe analyzer", "exec analyzer", "verify analyzer",
+			// Recipes consumption surface (RECIPES_CONCEPT.md §3): the briefing,
+			// full-recipe reads, and scoping filters. `query --recipe` rides the
+			// query entry; the discover/refresh lifecycle is deliberately absent —
+			// embedding products generate the recipe book out-of-band.
+			"recipes", "describe recipe", "resolve"},
 	},
 	"investigate": {
 		Description: "Read-only incident triage: query, logs, and resource discovery",
-		Commands:    []string{"query", "logs", "get", "find", "describe"},
+		Commands:    []string{"query", "logs", "get", "find", "describe", "recipes", "resolve"},
 	},
 }
 

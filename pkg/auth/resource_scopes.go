@@ -77,7 +77,9 @@ var ResourceScopes = map[string]AccessScopes{
 
 	// Recipes: `recipes discover`/`refresh` probe the environment via DQL
 	// (plus segment listing); the recipe book itself is a local file.
+	// `resolve scope` runs entity-lookup/topology DQL queries.
 	"discover": {Read: QueryScopes},
+	"scope":    {Read: QueryScopes},
 
 	// Grail storage. Buckets are managed via the bucket data scopes (delete
 	// folds into write); lookups and segments are stored as files / filter
