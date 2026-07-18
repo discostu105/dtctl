@@ -361,7 +361,7 @@ No SDK work — all four endpoints (`Get`, `GetInputSchema`, `GetResultSchema`,
 1. **`exec analyzer --validate` fate** — keep it as a thin alias for
    `verify analyzer`, or deprecate it? (Handler is shared; purely a UX/compat call.)
 2. **Real schema shape** — fetch a real input schema (e.g.
-   `dt.statistics.clustering.LogPatternExtractor`) against the `fxz` test tenant
+   `dt.statistics.clustering.LogPatternExtractor`) against a network-observability lab tenant
    and confirm the flattener assumptions before locking the table layout.
 3. **Docs/status updates** — on ship, add both commands to `docs/dev/IMPLEMENTATION_STATUS.md`
    and the `describe`/`verify` resource lists in the `commands` catalog.

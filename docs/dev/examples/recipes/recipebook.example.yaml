@@ -1,0 +1,347 @@
+# Example: generated RECIPE BOOK (materialized form).
+# This is what `dtctl recipes discover` would emit for a fictional tenant
+# ("acme-prod"). All DQL below was verified against live tenants on 2026-07-17
+# (see docs/dev/RECIPES_CONCEPT.md §10); IDs and counts are synthetic.
+#
+# The fictional pack `dynatrace-recipes@2026.07` referenced by `source:` is a
+# SUPERSET of the committed example packs — pointers that resolve against
+# base-pack.example.yaml / base-pack.full.example.yaml are marked; the rest
+# are fictional-pack recipes shown for schema illustration.
+#
+# Template syntax is Go text/template, rendered by pkg/util/template with the
+# existing `--set` flag. Params are TYPED and validated before render:
+# `string` (the default) renders ONLY through `dqlString` — the escaping func
+# that emits a properly escaped, QUOTED DQL string literal (`== {{.name |
+# dqlString}}`, never `== "{{.name}}"`); int / duration / enum / identifier
+# validate their values; `type: dql-filter` is the one type that renders raw,
+# by declared contract (values come from `dtctl resolve scope`). Unknown
+# `--set` keys are an error — a typo'd key must never silently render an
+# unfiltered template branch.
+# Stamps (`lastRun:`) are a living cache: every `query --recipe` refreshes
+# them; `params: default` (or a hash of the rendered non-default params)
+# records the conditions a stamp applies to — drift reasoning uses only
+# default-param stamps; `limitHit` marks a record count that merely reached
+# a limit. The pack pin is `source:` — retained pack versions are immutable.
+
+apiVersion: dtctl.dev/v1alpha1
+kind: RecipeBook
+metadata:
+  name: acme-prod
+  context: prod
+  generatedAt: 2026-07-17T09:00:00Z
+  generator: dtctl recipes discover v0.1
+  packs:
+    - { name: dynatrace-recipes, version: "2026.07" }
+
+facts:
+  # capabilities/absent are EVALUATED from the pack's capability definitions
+  # (each name is defined by how it is discovered) — never asserted.
+  capabilities: [k8s, k8s-metrics, spans, logs, rum, bizevents, davis, security, hosts]
+  absent: [synthetic, aws-cloudwatch, aws-lambda]
+  entityTypes: { SERVICE: 144, K8S_POD: 566, K8S_NAMESPACE: 24, HOST: 58, CONTAINER: 1145 }
+  dataObjects: [logs, spans, user.events, bizevents, security.events,
+                dt.davis.problems, dt.system.buckets]
+  buckets: [default_logs_events, custom_audit_logs]
+  fieldCarriage:              # measured per field, per table — not tenant-wide
+    spans:
+      http.request.method: 0.87
+      http.method: 0.13       # mixed-era tenant: filters use typed OR
+      request.is_failed: 1.0  # dual-written with transaction.is_failed
+      dt.smartscape.service: 1.0
+      dt.smartscape.host: 0.84
+      dt.smartscape.k8s_pod: 0.47
+    logs:
+      k8s.pod.name: 0.58
+      dt.smartscape.service: 0.20   # partial — never filter service logs by it alone
+      dt.smartscape.k8s_pod: 0.0
+  segments:                   # discovered via `dtctl get segments` — apply with -S
+    - uid: gAAAAAAAAAA
+      name: Log bucket
+      description: Logs of one bucket only
+      variables: [bucket]
+    - uid: hBBBBBBBBBB
+      name: Host group
+      description: All signals of one host group
+      variables: [hostgroup]
+  notes:
+    - "user.events discriminator is characteristics.classifier (event.category is null)"
+    - "frontend service emits no logs at all — verified, not a scoping bug"
+    - "entity tags empty (fieldsSummary) — this org does not tag"
+
+declared:                     # human/org-declared semantics — its own section,
+  ownership: "by k8s.namespace.name conventions; entity tags unused"
+                              # never mixed into discovered `facts`
+
+scoping:                      # data — consumed by `dtctl resolve scope` and by
+  SERVICE:                    # agents directly; coverage values are DERIVED
+    spans:                    # from facts.fieldCarriage at generation time
+      filter: 'dt.smartscape.service == toSmartscapeId("{{.id}}")'
+      coverage: 1.0
+    logs:
+      hop: runs_on            # named strategy: widen via runs_on topology in
+      coverage: 0.20          # `resolve scope` — direct stamping silently
+                              # lies alone at 20% carriage
+    problems:
+      filter: 'matchesPhrase(arrayToString(affected_entity_ids), "{{.id}}")'
+  K8S_POD:
+    logs:
+      filter: 'k8s.pod.name == "{{.name}}"'
+    spans:
+      filter: 'dt.smartscape.k8s_pod == toSmartscapeId("{{.id}}")'
+      coverage: 0.47
+
+recipes:
+  pods-restarting:
+    description: Pods with container restarts in the timeframe, worst first
+    source: pack:pods-restarting@2026.07   # fictional-pack recipe
+    params:
+      namespace:
+        description: exact k8s namespace; empty = all
+        default: ""
+        values: 'smartscapeNodes "K8S_NAMESPACE" | fields name | sort name'
+      timeframe: { type: duration, default: "now()-2h" }
+      limit: { type: int, default: "50" }
+    dql: |
+      smartscapeNodes "K8S_POD", from:{{.timeframe}}
+      {{- if .namespace }}
+      | filter k8s.namespace.name == {{.namespace | dqlString}}
+      {{- end }}
+      | parse k8s.object, "JSON:obj"
+      | expand cs = obj[status][containerStatuses]
+      | summarize {
+          name = takeFirst(name),
+          namespace = takeFirst(k8s.namespace.name),
+          phase = takeFirst(k8s.pod.phase),
+          ready = countIf(cs[ready] == true),
+          containers = count(),
+          restarts = sum(toLong(cs[restartCount])),
+          node = takeFirst(k8s.node.name)
+        }, by:{id}
+      | filter restarts > 0
+      | sort restarts desc
+      | limit {{.limit}}
+    lastRun: { at: 2026-07-17T09:00:12Z, records: 37, seconds: 0.8, params: default }
+    followups: [pod-logs, pod-cpu-top, problems-active]
+
+  pod-logs:
+    description: Recent logs of one pod (logs carry k8s names, never pod IDs)
+    source: pack:entity-logs@2026.07       # resolves: both committed packs
+    params:
+      name: { description: exact k8s pod name }
+      timeframe: { type: duration, default: "now()-2h" }
+      limit: { type: int, default: "100" }
+    dql: |
+      fetch logs, from:{{.timeframe}}
+      | filter k8s.pod.name == {{.name | dqlString}}
+      | sort timestamp desc
+      | fields timestamp, loglevel, content, k8s.container.name
+      | limit {{.limit}}
+    lastRun: { at: 2026-07-17T09:00:14Z, records: 100, seconds: 0.7, limitHit: true, params: default }
+    followups: [log-errors-by-workload]
+
+  service-latency:
+    description: p50/p95 request latency per service, slowest first
+    source: pack:service-latency@2026.07   # fictional-pack recipe
+    params:
+      timeframe: { type: duration, default: "now()-30m" }
+      sampling: { type: int, default: "10", description: "samplingRatio; raise on big tenants" }
+    dql: |
+      fetch spans, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+      | filter request.is_root_span == true
+      | summarize
+          p50 = percentile(duration, 50),
+          p95 = percentile(duration, 95),
+          errors = countIf(request.is_failed == true),
+          count = count(),
+        by:{svc = dt.smartscape.service}
+      | fieldsAdd name = getNodeName(svc), p95_ms = p95 / 1ms
+      | sort p95 desc
+      | limit 25
+    # request.is_failed is dual-written on this tenant (carriage 1.0), so the
+    # bare field is safe here; the pack's portable form coalesces inside the
+    # aggregation. getNodeName() resolves display names; service.name is null
+    # for OneAgent-fed span populations here.
+    lastRun: { at: 2026-07-17T09:00:18Z, records: 25, seconds: 1.1, limitHit: true, params: default }
+    followups: [service-errors, service-logs]
+
+  service-errors:
+    description: Failed-request count and rate per service
+    source: pack:service-errors@2026.07    # resolves: both committed packs
+    params:
+      timeframe: { type: duration, default: "now()-30m" }
+      sampling: { type: int, default: "10" }
+    dql: |
+      fetch spans, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+      | filter request.is_root_span == true
+      | summarize failed = countIf(request.is_failed == true), total = count(),
+        by:{svc = dt.smartscape.service}
+      | fieldsAdd name = getNodeName(svc), rate = failed * 100.0 / total
+      | filter failed > 0
+      | sort rate desc
+      | limit 25
+    lastRun: { at: 2026-07-17T09:00:21Z, records: 12, seconds: 0.9, params: default }
+    followups: [service-logs, problems-active]
+
+  service-logs:
+    description: Logs of one service via its runs_on processes/containers
+    source: pack:entity-logs@2026.07       # resolves: both committed packs
+    params:
+      scope:
+        description: >
+          filter expression from `dtctl resolve scope SERVICE-... --for logs`
+          (the hop pre-query happens there; direct dt.smartscape.service
+          filtering covers only ~20% of log lines on this tenant)
+        type: dql-filter
+      timeframe: { type: duration, default: "now()-2h" }
+      limit: { type: int, default: "100" }
+    dql: |
+      fetch logs, from:{{.timeframe}}
+      | filter {{.scope}}
+      | sort timestamp desc
+      | fields timestamp, loglevel, content, k8s.pod.name, host.name
+      | limit {{.limit}}
+    lastRun:
+      at: 2026-07-17T09:00:25Z
+      coverage: "logs exist for 31 of 144 services; empty is legitimate for the rest"
+      params: default
+    followups: [log-errors-by-workload]
+
+  log-errors-by-workload:
+    description: ERROR-level log volume per namespace/container, worst first
+    source: pack:log-errors@2026.07        # fictional-pack recipe
+    params:
+      namespace:
+        default: ""
+        values: 'smartscapeNodes "K8S_NAMESPACE" | fields name | sort name'
+      timeframe: { type: duration, default: "now()-1h" }
+    dql: |
+      fetch logs, from:{{.timeframe}}
+      | filter loglevel == "ERROR"
+      {{- if .namespace }}
+      | filter k8s.namespace.name == {{.namespace | dqlString}}
+      {{- end }}
+      | summarize c = count(), sample = takeAny(content),
+        by:{k8s.namespace.name, k8s.container.name}
+      | sort c desc
+      | limit 20
+    lastRun: { at: 2026-07-17T09:00:28Z, records: 20, seconds: 0.8, limitHit: true, params: default }
+    followups: [pod-logs]
+
+  problems-active:
+    description: Currently active Davis problems (deduped per problem)
+    source: pack:problems-active@2026.07   # fictional-pack recipe
+    params:
+      lookback: { type: duration, default: "7d" }
+    dql: |
+      fetch dt.davis.problems, from:now()-{{.lookback}}
+      | summarize
+          status = takeLast(event.status),
+          title = takeLast(event.name),
+          category = takeLast(event.category),
+        by:{display_id}
+      | filter status == "ACTIVE"
+      | sort display_id desc
+    # takeLast dedup is defensive: rows-per-problem was ~1:1 on this tenant
+    # but the table is a transition log by contract.
+    lastRun: { at: 2026-07-17T09:00:31Z, records: 12, seconds: 0.7, params: default }
+    followups: [entity-problems]
+
+  entity-problems:
+    description: Problems affecting one entity (array field spans both ID eras)
+    source: pack:entity-problems@2026.07   # resolves: base-pack.full.example.yaml
+    params:
+      id: { description: "smartscape entity id, e.g. SERVICE-..." }
+      lookback: { type: duration, default: "7d" }
+    dql: |
+      fetch dt.davis.problems, from:now()-{{.lookback}}
+      | filter matchesPhrase(arrayToString(affected_entity_ids), {{.id | dqlString}})
+      | summarize status = takeLast(event.status), title = takeLast(event.name),
+        by:{display_id}
+      | sort display_id desc
+    lastRun: { at: 2026-07-17T09:00:34Z, records: 3, seconds: 0.7, params: default }
+    followups: [service-logs, pod-logs]
+
+  rum-errors:
+    description: RUM error events by page/source (discriminator is characteristics.classifier)
+    source: pack:rum-errors@2026.07        # resolves: base-pack.example.yaml
+    params:
+      timeframe: { type: duration, default: "now()-1h" }
+      sampling: { type: int, default: "100" }
+    dql: |
+      fetch user.events, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+      | filter characteristics.classifier == "error"
+      | summarize c = count(), by:{app = app.short_name, name = event.name}
+      | sort c desc
+      | limit 20
+    lastRun: { at: 2026-07-17T09:00:38Z, records: 14, seconds: 0.7, params: default }
+
+  vulns-open-critical:
+    description: Critical/high vulnerability findings, most frequent first
+    source: pack:vulns-findings@2026.07    # fictional-pack recipe
+    params:
+      lookback: { type: duration, default: "24h" }
+      level:
+        type: enum
+        default: "CRITICAL"
+        values: 'fetch security.events, from:now()-24h | filter event.type == "VULNERABILITY_FINDING" | summarize by:{vulnerability.risk.level}'
+    dql: |
+      fetch security.events, from:now()-{{.lookback}}
+      | filter event.type == "VULNERABILITY_FINDING"
+        and vulnerability.risk.level == {{.level | dqlString}}
+      | summarize c = count(), by:{vulnerability.title}
+      | sort c desc
+      | limit 25
+    lastRun: { at: 2026-07-17T09:00:42Z, records: 25, seconds: 0.8, limitHit: true, params: default }
+
+  pod-cpu-top:
+    description: Top pods by CPU (mCores) over the timeframe
+    source: pack:pod-cpu-top@2026.07       # fictional-pack recipe
+    params:
+      namespace: { default: "" }
+      timeframe: { type: duration, default: "now()-1h" }
+    dql: |
+      timeseries cpu = avg(dt.kubernetes.container.cpu_usage, scalar:true),
+        from:{{.timeframe}},
+        by:{k8s.pod.name, k8s.namespace.name}
+      {{- if .namespace }}
+        , filter:{ k8s.namespace.name == {{.namespace | dqlString}} }
+      {{- end }}
+      | sort cpu desc
+      | limit 15
+    lastRun: { at: 2026-07-17T09:00:45Z, records: 15, seconds: 0.7, limitHit: true, params: default }
+    followups: [pods-restarting, pod-logs]
+
+  audit-log-search:
+    description: Full-text search in the audit bucket (org convention)
+    # LOCAL recipe — no `source:`: defined in this book, not in a pack (the
+    # hand-written phase-2 form). `discover`/`refresh` re-stamp it but never
+    # rewrite its body. It references a discovered Segment instead of
+    # duplicating its filter. One parameter surface: `--set bucket=...` binds
+    # the segment variable of the same name, so this runs as
+    #   dtctl query --recipe audit-log-search --set term=payment --set bucket=custom_audit_logs
+    # (equivalent to -S gAAAAAAAAAA?bucket=custom_audit_logs under the hood).
+    # A param named like a segment variable would be a lint error.
+    segments: [gAAAAAAAAAA]
+    params:
+      term: { description: "search term" }
+      timeframe: { type: duration, default: "now()-24h" }
+    dql: |
+      fetch logs, from:{{.timeframe}}
+      | search {{ printf "*%s*" .term | dqlString }}
+      | sort timestamp desc
+      | limit 100
+    lastRun: { at: 2026-07-17T09:00:49Z, records: 100, seconds: 1.2, limitHit: true, params: default }
+
+disabled:
+  synthetic-check-status:
+    class: guard              # structural: capability + census — durable,
+    at: 2026-07-17T09:00:52Z  # re-evaluated by `recipes refresh`
+    reason: "requires: [synthetic] — capability absent (definition dataObject: dt.synthetic.events; census: 0 HTTP_CHECK/SYNTHETIC_TEST)"
+  lambda-cold-starts:
+    class: guard
+    at: 2026-07-17T09:00:53Z
+    reason: "requires: [aws-lambda] — capability absent (definition entityTypes: [AWS_LAMBDA_FUNCTION]; census: 0)"
+  frontend-service-logs:
+    class: probe-empty        # absence-of-events evidence — re-probed on
+    at: 2026-07-17T09:00:55Z  # every refresh; `query --recipe` still runs it
+    reason: "0 log lines for frontend service over 24h — cross-checked: the service is span-active, so 'does not log' is the reading for THIS window"

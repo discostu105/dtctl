@@ -1,0 +1,128 @@
+# Example: BASE PACK entries (universal, cross-tenant, versioned).
+# The pack is what the generator consumes: capability definitions plus
+# recipe templates with guards and verify specs. `dtctl recipes discover`
+# evaluates capabilities and guards against discovered facts, renders,
+# probe-executes, and emits/refreshes the recipe book
+# (see recipebook.example.yaml).
+#
+# This file is an illustrative EXCERPT of the same pack committed in full as
+# base-pack.full.example.yaml — three entries shown in the fully-templated
+# form a shipped pack would carry (typed params, `values:` queries), which
+# the full file deliberately keeps in probed form. Same name@version on
+# purpose: one pack, two presentation forms — NOT two packs (retained pack
+# versions are immutable, concept §4.2). Some `followups:` here name recipes
+# of the fictional superset pack materialized in recipebook.example.yaml;
+# followups resolve against the BOOK's merged recipe namespace, and
+# unresolved edges are dropped at generation with a note (concept §2.2).
+#
+# 2026-07-18 revision: no `variants:` mechanism — recipes are written in
+# PORTABLE-FIRST form (typed-OR era filters, coalesce only in projections,
+# multi-type unions, enrichment splits). Guards are three fixed shapes
+# (requires / dataObjects / minCarriage) compared against discovered facts —
+# deliberately not an expression language. Every capability name used in
+# `requires:` is DEFINED below by how it is discovered. Verify is two fields:
+#   probe:  threshold-free capability proof
+#   expect: records | values  (values = single-row aggregates verify by
+#           their values; 1 row of zeros is not verified)
+# Params are TYPED (string is the default, escaped via `dqlString`; int /
+# duration / enum / identifier / dql-filter validate before render).
+# Sparse-window handling (the old `floor:`) is generator behavior:
+# widen-on-empty, recorded as an `override:` in the recipe book.
+
+apiVersion: dtctl.dev/v1alpha1
+kind: RecipePack
+metadata:
+  name: dynatrace-recipes
+  version: "2026.07"
+
+capabilities:
+  # Every capability is defined by its discovery — one of four fixed shapes.
+  # Structural shapes are preferred; `probe:` (+ mandatory `window:`) is for
+  # capabilities only visible as events and is WEAK evidence: absence of
+  # events is not absence of capability, so probe-defined negatives are
+  # re-evaluated on every `recipes refresh`.
+  spans: { dataObject: spans }               # shape 1: fetch target exists
+  logs: { dataObject: logs }
+  rum: { dataObject: user.events }
+  hosts: { entityTypes: [HOST] }             # shape 2: census match (wildcards ok)
+  aws: { entityTypes: ["AWS_*"] }
+  k8s-metrics: { metricKey: "dt.kubernetes.*" }   # shape 3: metric-catalog match
+  security-rap:                              # shape 4: probe + window (weak)
+    probe: 'fetch security.events, from:now()-24h | filter event.type == "DETECTION_FINDING" and detection.source == "RAP" | limit 1'
+    window: 24h
+
+recipes:
+  service-errors:
+    description: Failed-request count and rate per service
+    requires: [spans]              # guard: skip tenants without spans
+    dataObjects: [spans]           # guard: fetch target must exist
+    params:
+      timeframe: { type: duration, default: "now()-30m" }
+      sampling: { type: int, default: "10" }
+    # Portable era handling, no variant selection: request.is_failed /
+    # transaction.is_failed are coalesced INSIDE the aggregation (projection
+    # context — safe for indexes). Era-split fields in FILTERS use typed OR
+    # instead ("a == x or b == x"), never coalesce(a,b) == x, which can mute
+    # Grail indexes. getNodeName() resolves display names regardless of era.
+    dql: |
+      fetch spans, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+      | filter request.is_root_span == true
+      | summarize
+          failed = countIf(coalesce(request.is_failed, transaction.is_failed) == true),
+          total = count(),
+        by:{svc = dt.smartscape.service}
+      | fieldsAdd name = getNodeName(svc), rate = failed * 100.0 / total
+      | filter failed > 0
+      | sort rate desc
+      | limit 25
+    # `| filter failed > 0` is a threshold: empty can be healthy. The probe
+    # proves the capability without the threshold, so the generator (and the
+    # envelope) can distinguish "no failing services" from "no spans".
+    verify:
+      probe: 'fetch spans, from:now()-30m, samplingRatio:100 | filter request.is_root_span == true | limit 1'
+      expect: records
+    followups: [service-logs, problems-active]
+
+  entity-logs:
+    description: Logs for any entity; scoping resolved via `resolve scope`
+    requires: [logs]
+    dataObjects: [logs]
+    params:
+      scope:
+        description: >
+          filter expression for the target entity, produced by
+          `dtctl resolve scope <id> --for logs` (runs_on hop widening for
+          services happens there — recipes stay single-phase and echoable)
+        type: dql-filter           # raw expression BY DECLARED CONTRACT —
+                                   # the only param type rendered unescaped
+      timeframe: { type: duration, default: "now()-2h" }
+      limit: { type: int, default: "100" }
+    dql: |
+      fetch logs, from:{{.timeframe}}
+      | filter {{.scope}}
+      | sort timestamp desc
+      | fields timestamp, loglevel, content, k8s.pod.name, host.name
+      | limit {{.limit}}
+    verify:
+      # entity-scoped recipes verify as a structured coverage map, not a
+      # boolean — the result is a fraction, e.g. "logs exist for 31 of 144
+      # services; empty is legitimate for the rest"
+      coverage: { per: SERVICE, signal: logs, window: 24h }
+    followups: [log-errors-by-workload]
+
+  rum-errors:
+    description: RUM error events by page/source
+    requires: [rum]                # tenant without user.events -> disabled
+    dataObjects: [user.events]
+    params:
+      timeframe: { type: duration, default: "now()-1h" }
+      sampling: { type: int, default: "100" }
+    dql: |
+      fetch user.events, from:{{.timeframe}}, samplingRatio:{{.sampling}}
+      | filter characteristics.classifier == "error"
+      | summarize c = count(), by:{app = app.short_name, name = event.name}
+      | sort c desc
+      | limit 20
+    verify:
+      probe: 'fetch user.events, from:now()-24h, samplingRatio:100 | limit 1'
+      expect: records

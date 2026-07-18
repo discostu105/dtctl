@@ -1,0 +1,182 @@
+# RECIPE BOOK — hand-assembled TRANSCRIPT of the manual §10.1 pack-
+# verification run against the "netobs-tenant-c" tenant on 2026-07-17. No
+# generator exists yet; this file shows the referencing form
+# `dtctl recipes discover` would emit (pack pointer + stamp; DQL lives in
+# the pack). Names anonymized; entity counts ROUNDED (privacy rule, concept
+# §3); facts contain only what that run measured.
+
+# Stamps (`lastRun:`) are a living cache refreshed on every run. All runs
+# used recipe defaults, so per-stamp `params: default` is omitted here. The
+# pack pin is `source:` — retained pack versions are immutable.
+apiVersion: dtctl.dev/v1alpha1
+kind: RecipeBook
+metadata:
+  name: netobs-tenant-c
+  generatedAt: 2026-07-17
+  packs:
+    - { name: dynatrace-recipes, version: "2026.07" }
+  probes: 44 recipes executed, plus classification probes
+
+facts:
+  character: network-observability dev-lab tenant (Juniper + external network
+    devices + synthetic locations; ~1.3M logs/h, ~1.7M spans/h, ~6.3M RUM
+    events/day)
+  entityTypes: { EXT_NETWORK_INTERFACE: 6300, K8S_REPLICASET: 510, JUNIPER_RUNNING_APP: 500,
+                 EXT_NETWORK_DEVICE: 360, SYNTHETIC_LOCATION: 220, K8S_POD: 160, HOST: 12 }
+  # capabilities/absent are evaluated from the pack's capability definitions
+  # (each name is defined by how it is discovered — see base-pack.full);
+  # qualifiers that used to live in ad-hoc names ("genai-sparse",
+  # "rap-detections-in-2h", "classic-synthetic-entity-tables") are notes.
+  capabilities: [hosts, k8s, k8s-metrics, host-metrics, process-metrics, spans, spans-oneagent,
+                 logs, logs-oneagent, service-metrics, davis, davis-events, rum, rum-web,
+                 bizevents, genai, security, security-detections, kspm, synthetic,
+                 aws, aws-cloudwatch, gcp, postgres, dps]
+  absent: [k8s-node-labels, security-rap]
+  notes:
+    - "GenAI traffic is sparse (azure.ai.openai) — usage tokens + provider carried but NO gen_ai.request.model; genai-spans-recent widened to 24h"
+    - "dt.synthetic.events exists (300 failed executions/2h) while the classic entity tables dt.entity.synthetic_test/http_check do NOT — the dataObjects guard catches this"
+    - "6 security detections tenant-wide in 24h, none from Runtime Application Protection (security-rap absent)"
+
+recipes:
+  active-problems-by-category:
+    source: pack:active-problems-by-category@2026.07
+    lastRun: { at: 2026-07-17, records: 5, seconds: 0.9 }
+  alert-volume-by-category:
+    source: pack:alert-volume-by-category@2026.07
+    lastRun: { at: 2026-07-17, records: 15, seconds: 1.5 }
+  attacks-recent:
+    source: pack:attacks-recent@2026.07
+    lastRun: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "transient: 6 detections tenant-wide in 24h, none from Runtime Application Protection in the 2h window"
+  aws-census:
+    source: pack:aws-census@2026.07
+    lastRun: { at: 2026-07-17, records: 39, seconds: 0.8 }
+  aws-resource-inventory:
+    source: pack:aws-resource-inventory@2026.07
+    lastRun: { at: 2026-07-17, records: 39, seconds: 0.7 }
+  billing-usage-breakdown:
+    source: pack:billing-usage-breakdown@2026.07
+    lastRun: { at: 2026-07-17, records: 28, seconds: 0.7 }
+  bizevents-producers:
+    source: pack:bizevents-producers@2026.07
+    lastRun: { at: 2026-07-17, records: 20, seconds: 1.0, limitHit: true }
+  clusters-list:
+    source: pack:clusters-list@2026.07
+    lastRun: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  core-web-vitals:
+    source: pack:core-web-vitals@2026.07
+    lastRun: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  cpu-throttling:
+    source: pack:cpu-throttling@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  detection-count-by-severity:
+    source: pack:detection-count-by-severity@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  ebs-volumes-by-state:
+    source: pack:ebs-volumes-by-state@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  errors-by-process-group:
+    source: pack:errors-by-process-group@2026.07
+    lastRun: { at: 2026-07-17, records: 17, seconds: 0.7 }
+  failure-reason-breakdown:
+    source: pack:failure-reason-breakdown@2026.07
+    lastRun: { at: 2026-07-17, records: 3, seconds: 0.7 }
+  frontend-top-exceptions:
+    source: pack:frontend-top-exceptions@2026.07
+    lastRun: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  genai-spans-recent:
+    source: pack:genai-spans-recent@2026.07
+    override: "widened from:now()-2h to now()-24h — 0 spans at 2h, 30 at 24h (sparse azure.ai.openai traffic)"
+    lastRun: { at: 2026-07-17, records: 30, seconds: 0.9 }
+  genai-token-usage:
+    source: pack:genai-token-usage@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  high-utilization-hosts:
+    source: pack:high-utilization-hosts@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  host-inventory-by-os:
+    source: pack:host-inventory-by-os@2026.07
+    lastRun: { at: 2026-07-17, records: 3, seconds: 0.7 }
+  hosts-inventory:
+    source: pack:hosts-inventory@2026.07
+    lastRun: { at: 2026-07-17, records: 12, seconds: 0.7 }
+  idle-ec2-low-cpu:
+    source: pack:idle-ec2-low-cpu@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  kspm-compliance-pass-rate:
+    source: pack:kspm-compliance-pass-rate@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.8 }
+  log-error-rate-over-time:
+    source: pack:log-error-rate-over-time@2026.07
+    lastRun: { at: 2026-07-17, records: 25, seconds: 0.9 }
+  metrics-catalog:
+    source: pack:metrics-catalog@2026.07
+    lastRun: { at: 2026-07-17, records: 1000, seconds: 1.8, limitHit: true }
+  noisy-detector-configs:
+    source: pack:noisy-detector-configs@2026.07
+    lastRun: { at: 2026-07-17, records: 25, seconds: 1.6, limitHit: true }
+  pod-restart-patterns:
+    source: pack:pod-restart-patterns@2026.07
+    lastRun: { at: 2026-07-17, records: 0, empty: legitimate }
+    note: "threshold: k8s metrics verified (pods-with-oomkills returned data); no pod >5 restarts"
+  pods-with-oomkills:
+    source: pack:pods-with-oomkills@2026.07
+    lastRun: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  postgres-instances:
+    source: pack:postgres-instances@2026.07
+    lastRun: { at: 2026-07-17, records: 3, seconds: 0.7 }
+  problems-active-dedup:
+    source: pack:problems-active-dedup@2026.07
+    lastRun: { at: 2026-07-17, records: 20, seconds: 0.7 }
+  root-cause-by-entity:
+    source: pack:root-cause-by-entity@2026.07
+    lastRun: { at: 2026-07-17, records: 17, seconds: 0.8 }
+  rum-error-sessions:
+    source: pack:rum-error-sessions@2026.07
+    lastRun: { at: 2026-07-17, records: 50, seconds: 0.7, limitHit: true }
+  service-performance-summary:
+    source: pack:service-performance-summary@2026.07
+    lastRun: { at: 2026-07-17, records: 25, seconds: 0.9, limitHit: true }
+  service-red-error-rate:
+    source: pack:service-red-error-rate@2026.07
+    lastRun: { at: 2026-07-17, records: 2, seconds: 0.7 }
+  service-red-percentiles:
+    source: pack:service-red-percentiles@2026.07
+    lastRun: { at: 2026-07-17, records: 25, seconds: 0.7, limitHit: true }
+  slow-traces:
+    source: pack:slow-traces@2026.07
+    lastRun: { at: 2026-07-17, records: 50, seconds: 1.0, limitHit: true }
+  synthetic-failed-executions:
+    source: pack:synthetic-failed-executions@2026.07
+    lastRun: { at: 2026-07-17, records: 300, seconds: 0.9, limitHit: true }
+  top-cpu-processes:
+    source: pack:top-cpu-processes@2026.07
+    lastRun: { at: 2026-07-17, records: 1, seconds: 0.7 }
+  top-error-messages:
+    source: pack:top-error-messages@2026.07
+    lastRun: { at: 2026-07-17, records: 20, seconds: 0.7, limitHit: true }
+  top-query-cost-sources:
+    source: pack:top-query-cost-sources@2026.07
+    lastRun: { at: 2026-07-17, records: 20, seconds: 2.1, limitHit: true }
+  vulns-open-rollup:
+    source: pack:vulns-open-rollup@2026.07
+    lastRun: { at: 2026-07-17, records: 189, seconds: 0.8 }
+  workloads-status:
+    source: pack:workloads-status@2026.07
+    lastRun: { at: 2026-07-17, records: 105, seconds: 0.7 }
+
+disabled:
+  # class: guard = structural (durable, re-checked by refresh);
+  # class: probe-empty = event-absence (weak; re-probed every refresh)
+  genai-error-rate-by-model:
+    class: guard
+    at: 2026-07-17
+    reason: "carriage: gen_ai.request.model is null on this tenant's GenAI spans (azure.ai.openai emits usage+provider only) — by-model grouping impossible"
+  nodes-inventory:
+    class: guard
+    at: 2026-07-17
+    reason: "hard query error INNER_FIELD_OF_FIELD_DOES_NOT_EXIST — tags:k8s.labels absent on K8S_NODE (rawCount 0); fixed by the revised label-free base + nodes-labels split (re-verify)"
+  synthetic-monitors:
+    class: guard
+    at: 2026-07-17
+    reason: "UNKNOWN_DATA_OBJECT — classic entity tables dt.entity.synthetic_test/http_check absent on this tenant, although dt.synthetic.events EXISTS; now prevented by the dataObjects guard — use synthetic-failed-executions"
