@@ -1049,6 +1049,13 @@ any static example corpus. "Should" is a hypothesis, not a result — §6.1.
 
 ### 6.1 The benefit claim is measurable — and so far unmeasured
 
+> 2026-07-18: a first two-arm run of this eval exists — see
+> [RECIPES_EVAL.md](RECIPES_EVAL.md). Headlines: no silent-wrong answers in
+> either arm; the book's win is scan-cost on absence-proving (~10× less
+> data scanned), not call counts; and the trap task showed knowledge
+> without mechanics loses — which shipped `resolve scope`. The phase-3
+> gate (arm 2 vs arm 3) remains open.
+
 Honesty requires separating what §10.1 proved from what it did not. It
 proved the *pack* executes cleanly across five very different tenants, and
 that per-environment verification catches real hard errors, silent
