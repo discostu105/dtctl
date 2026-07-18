@@ -44,6 +44,11 @@ type Facts struct {
 	Absent        []string                      `json:"absent,omitempty" yaml:"absent,omitempty"`
 	EntityTypes   map[string]int64              `json:"entityTypes,omitempty" yaml:"entityTypes,omitempty"`
 	DataObjects   []string                      `json:"dataObjects,omitempty" yaml:"dataObjects,omitempty"`
+	// Unfetchable lists catalog objects that do not support `fetch` (the
+	// catalog's usable_with says so): they are queried through other commands
+	// (metrics → timeseries, smartscape.* → smartscapeNodes/Edges). Kept apart
+	// from DataObjects so the briefing never baits a fetch that cannot work.
+	Unfetchable   []string                      `json:"unfetchable,omitempty" yaml:"unfetchable,omitempty"`
 	Buckets       []string                      `json:"buckets,omitempty" yaml:"buckets,omitempty"`
 	FieldCarriage map[string]map[string]float64 `json:"fieldCarriage,omitempty" yaml:"fieldCarriage,omitempty"`
 	Segments      []SegmentFact                 `json:"segments,omitempty" yaml:"segments,omitempty"`

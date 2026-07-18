@@ -40,7 +40,12 @@ type Listing struct {
 	// SafetyLevel is the effective safety level of the active context, the
 	// orthogonal permission axis. Surfaced alongside Profile so both active
 	// constraints are visible at once.
-	SafetyLevel string            `json:"safety_level,omitempty" yaml:"safety_level,omitempty"`
+	SafetyLevel string `json:"safety_level,omitempty" yaml:"safety_level,omitempty"`
+	// RecipeBook advertises a per-environment recipe book or installed pack
+	// when one exists for the active context. The catalog is the one call every
+	// agent makes to orient; without this line an agent has no way to learn the
+	// environment carries verified queries and facts (`dtctl recipes`).
+	RecipeBook  string            `json:"recipe_book,omitempty" yaml:"recipe_book,omitempty"`
 	GlobalFlags map[string]*Flag  `json:"global_flags,omitempty" yaml:"global_flags,omitempty"`
 	Verbs       map[string]*Verb  `json:"verbs" yaml:"verbs"`
 	Aliases     map[string]string `json:"resource_aliases,omitempty" yaml:"resource_aliases,omitempty"`
@@ -469,8 +474,11 @@ type Minimal struct {
 	// Profile and SafetyLevel advertise the active command profile and effective
 	// safety level (the two constraints shaping the surface), so agents see them
 	// even in the minimal overview. Omitted when unconstrained.
-	Profile     string                  `json:"profile,omitempty" yaml:"profile,omitempty"`
-	SafetyLevel string                  `json:"safety_level,omitempty" yaml:"safety_level,omitempty"`
+	Profile     string `json:"profile,omitempty" yaml:"profile,omitempty"`
+	SafetyLevel string `json:"safety_level,omitempty" yaml:"safety_level,omitempty"`
+	// RecipeBook survives the minimal transform: the default catalog call is
+	// exactly where an agent decides what to run next.
+	RecipeBook  string                  `json:"recipe_book,omitempty" yaml:"recipe_book,omitempty"`
 	Verbs       map[string]*MinimalVerb `json:"verbs" yaml:"verbs"`
 	Aliases     map[string]string       `json:"resource_aliases,omitempty" yaml:"resource_aliases,omitempty"`
 }
@@ -491,6 +499,7 @@ func NewMinimal(l *Listing) *Minimal {
 		CommandModel:  l.CommandModel,
 		Profile:       l.Profile,
 		SafetyLevel:   l.SafetyLevel,
+		RecipeBook:    l.RecipeBook,
 		Verbs:         make(map[string]*MinimalVerb, len(l.Verbs)),
 		Aliases:       l.Aliases,
 	}
@@ -523,6 +532,7 @@ func NewBrief(l *Listing) *Listing {
 		CommandModel:  l.CommandModel,
 		Profile:       l.Profile,
 		SafetyLevel:   l.SafetyLevel,
+		RecipeBook:    l.RecipeBook,
 		Verbs:         make(map[string]*Verb, len(l.Verbs)),
 		Aliases:       l.Aliases,
 		// Retain patterns/antipatterns: they are the primary grounding agents

@@ -110,12 +110,19 @@ func Discover(ctx context.Context, runner Runner, packs []*Pack, opts DiscoverOp
 	book.Facts.Segments = opts.Segments
 
 	// --- facts battery (hard errors here abort: without facts nothing below is meaningful)
-	dataObjects, err := br.stringColumn(ctx, "fetch dt.system.data_objects | fields name | sort name asc | limit 5000", "name")
+	fetchable, unfetchable, err := br.dataObjectCatalog(ctx)
 	if err != nil {
 		return nil, report, fmt.Errorf("data-object discovery failed: %w", err)
 	}
-	book.Facts.DataObjects = dataObjects
-	objects := stringSet(dataObjects)
+	book.Facts.DataObjects = fetchable
+	book.Facts.Unfetchable = unfetchable
+	if len(unfetchable) > 0 {
+		book.Facts.Notes = append(book.Facts.Notes, fmt.Sprintf(
+			"catalog objects without fetch support: %s — metric data is queried via the timeseries/metrics commands, smartscape via smartscapeNodes/smartscapeEdges",
+			strings.Join(unfetchable, ", ")))
+	}
+	// Guards and capability shapes check catalog membership, not fetchability.
+	objects := stringSet(append(append([]string{}, fetchable...), unfetchable...))
 
 	if buckets, err := br.stringColumn(ctx, "fetch dt.system.buckets | fields name | sort name asc | limit 1000", "name"); err == nil {
 		book.Facts.Buckets = buckets
@@ -400,10 +407,30 @@ func (b *budgetRunner) evaluateCapabilities(ctx context.Context, defs map[string
 		if ok {
 			present = append(present, name)
 		} else {
-			absent = append(absent, name)
+			// Carry the evidence with the verdict: evals showed agents
+			// re-deriving absence with fresh probes (4 errored calls on one
+			// task) when the bare name gave them nothing to cite.
+			absent = append(absent, name+" ("+absenceEvidence(def)+")")
 		}
 	}
 	return present, absent
+}
+
+// absenceEvidence says what was checked when a capability came up absent, so
+// the briefing entry is citable without re-probing.
+func absenceEvidence(def *CapabilityDef) string {
+	switch {
+	case def.DataObject != "":
+		return "no " + def.DataObject + " in the data-object catalog"
+	case len(def.EntityTypes) > 0:
+		return "no " + strings.Join(def.EntityTypes, "|") + " entities in the live census"
+	case def.MetricKey != "":
+		return "no metric keys matching " + def.MetricKey + " in the live metric catalog"
+	case def.Probe != "":
+		return "discovery probe returned no rows"
+	default:
+		return "no discovery definition matched"
+	}
 }
 
 // measureCarriage batches countIf(isNotNull(...)) probes — one sampled,
@@ -510,6 +537,32 @@ func builtinScoping(census map[string]int64, carriage map[string]map[string]floa
 }
 
 // --- small helpers
+
+// dataObjectCatalog returns the queryable-object catalog partitioned by fetch
+// support (the catalog's usable_with column). The catalog lists objects that
+// only work through other commands — advertising those as fetch targets baited
+// agents into DATA_OBJECT_NOT_SUPPORTED loops in evals.
+func (b *budgetRunner) dataObjectCatalog(ctx context.Context) (fetchable, unfetchable []string, err error) {
+	res, err := b.run(ctx,
+		`fetch dt.system.data_objects | fieldsAdd fetchable = in("fetch", usable_with) | fields name, fetchable | sort name asc | limit 5000`)
+	if err != nil {
+		// Environments without usable_with fall back to the flat list.
+		names, ferr := b.stringColumn(ctx, "fetch dt.system.data_objects | fields name | sort name asc | limit 5000", "name")
+		return names, nil, ferr
+	}
+	for _, rec := range res.Records {
+		name, _ := rec["name"].(string)
+		if name == "" {
+			continue
+		}
+		if f, ok := rec["fetchable"].(bool); ok && !f {
+			unfetchable = append(unfetchable, name)
+		} else {
+			fetchable = append(fetchable, name)
+		}
+	}
+	return fetchable, unfetchable, nil
+}
 
 func (b *budgetRunner) stringColumn(ctx context.Context, dql, column string) ([]string, error) {
 	res, err := b.run(ctx, dql)

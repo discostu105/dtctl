@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -271,17 +272,57 @@ func collectSubcommands(cmd *cobra.Command) []string {
 	return commands
 }
 
+var (
+	unknownFlagRe = regexp.MustCompile(`unknown (?:shorthand )?flag: ['-]*(\w+)['-]*`)
+	unknownCmdRe  = regexp.MustCompile(`unknown command "(\w+)"`)
+)
+
 // enhanceFlagError adds suggestions to flag errors
 func enhanceFlagError(cmd *cobra.Command, err error) error {
 	errStr := err.Error()
 
 	// Handle unknown flag errors
 	if strings.Contains(errStr, "unknown flag") || strings.Contains(errStr, "unknown shorthand flag") {
+		if m := unknownFlagRe.FindStringSubmatch(errStr); len(m) == 2 {
+			if fe := adviseFlag(cmd, m[1]); fe != nil {
+				return fe
+			}
+		}
 		flags := collectFlags(cmd)
 		return suggest.ParseFlagError(errStr, flags)
 	}
 
 	return err
+}
+
+// adviseFlag handles flags agents carry over from other CLIs, where the
+// closest-name suggestion misleads (evals saw --limit → "did you mean --live?").
+func adviseFlag(cmd *cobra.Command, flag string) *suggest.FlagError {
+	switch {
+	case flag == "format":
+		return &suggest.FlagError{Flag: flag,
+			Message:    "unknown flag --format",
+			Suggestion: &suggest.Suggestion{Value: "output"}}
+	case cmd.Name() == "query" && flag == "limit":
+		return &suggest.FlagError{Flag: flag,
+			Message: "unknown flag --limit — DQL limits rows inside the query text: append `| limit N`"}
+	case cmd.Name() == "query" && flag == "query":
+		return &suggest.FlagError{Flag: flag,
+			Message: "unknown flag --query — pass the DQL text as the positional argument: dtctl query 'fetch ...'"}
+	}
+	return nil
+}
+
+// verbSynonyms maps verbs agents guess from other CLIs to the dtctl verb that
+// does the job; the edit-distance fallback suggests nonsense for these
+// (evals saw `list` → "did you mean alias?").
+var verbSynonyms = map[string]struct{ verb, hint string }{
+	"list":   {"get", "resources are listed with `dtctl get <resource>`; data is queried with `dtctl query '<DQL>'` (catalog: dtctl commands)"},
+	"ls":     {"get", "resources are listed with `dtctl get <resource>` (catalog: dtctl commands)"},
+	"show":   {"describe", "use `dtctl get <resource>` for lists, `dtctl describe <resource> <name>` for one item's detail"},
+	"search": {"query", "search data with DQL: dtctl query 'fetch logs | filter contains(content, \"...\")'"},
+	"remove": {"delete", "use `dtctl delete <resource> <id>`"},
+	"rm":     {"delete", "use `dtctl delete <resource> <id>`"},
 }
 
 // enhanceCommandError adds suggestions to unknown command errors
@@ -290,6 +331,16 @@ func enhanceCommandError(cmd *cobra.Command, err error) error {
 
 	// Handle unknown command errors
 	if strings.Contains(errStr, "unknown command") {
+		if m := unknownCmdRe.FindStringSubmatch(errStr); len(m) == 2 {
+			if syn, ok := verbSynonyms[m[1]]; ok {
+				return &suggest.CommandError{
+					Command:    m[1],
+					Message:    fmt.Sprintf("unknown command %q", m[1]),
+					Suggestion: &suggest.Suggestion{Value: syn.verb},
+					UsageHint:  syn.hint,
+				}
+			}
+		}
 		commands := collectSubcommands(cmd)
 		return suggest.ParseCommandError(errStr, commands)
 	}
@@ -318,6 +369,9 @@ func dqlErrorAdvice(e *sdkquery.QueryError) []string {
 		s = append(s, `smartscape is queried via the COMMANDS smartscapeNodes/smartscapeEdges, not fetch — start the query with them: dtctl query 'smartscapeNodes "HOST" | limit 10'`)
 	} else if e.ErrorType == "UNKNOWN_DATA_OBJECT" && strings.Contains(text, "dt.entity.") {
 		s = append(s, `for a current-state entity census use: dtctl query 'smartscapeNodes "<TYPE>" | summarize count()' — dt.entity.* tables are event-lookback views and exist only for some types`)
+	}
+	if e.ErrorType == "INVALID_TIMEFRAME" {
+		s = append(s, "timeframe values accept ISO-8601 timestamps or now()-relative expressions — parentheses required: now()-6h, not now-6h — e.g. from:now()-6h, to:now() or --default-timeframe-start 'now()-6h'")
 	}
 	return s
 }
@@ -434,6 +488,9 @@ func errorToDetail(err error) *output.ErrorDetail {
 			detail.Suggestions = []string{
 				fmt.Sprintf("did you mean %q?", cmdErr.Suggestion.Value),
 			}
+		}
+		if cmdErr.UsageHint != "" {
+			detail.Suggestions = append(detail.Suggestions, cmdErr.UsageHint)
 		}
 		return detail
 	}

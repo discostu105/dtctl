@@ -10,6 +10,8 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/dynatrace-oss/dtctl/pkg/commands"
+	"github.com/dynatrace-oss/dtctl/pkg/config"
+	"github.com/dynatrace-oss/dtctl/pkg/recipes"
 )
 
 var (
@@ -151,6 +153,16 @@ func annotateListingContext(l *commands.Listing) {
 	}
 	if ctx, err := cfg.CurrentContextObj(); err == nil {
 		l.SafetyLevel = ctx.GetEffectiveSafetyLevel().String()
+	}
+	// The catalog is the agent bootstrap call (evals: the control arm ran it
+	// 60×/batch) — the one place a recipe book can be discovered in-band.
+	if lib, err := recipes.LoadLibrary(config.ConfigDir(), cfg.CurrentContext); err == nil {
+		switch {
+		case lib.Book != nil:
+			l.RecipeBook = "this environment has a book of verified query recipes and probed facts — start with: dtctl recipes"
+		case len(lib.Packs) > 0:
+			l.RecipeBook = "a recipe pack is installed for this environment (unverified against it) — see: dtctl recipes"
+		}
 	}
 }
 

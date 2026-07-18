@@ -81,7 +81,8 @@ func discoverTestPack() *Pack {
 func discoverTestRunner() *mockRunner {
 	return &mockRunner{responses: []mockResponse{
 		{"dt.system.data_objects", []map[string]interface{}{
-			rec("name", "logs"), rec("name", "spans"), rec("name", "dt.davis.problems"),
+			rec("name", "logs", "fetchable", true), rec("name", "spans", "fetchable", true),
+			rec("name", "dt.davis.problems", "fetchable", true), rec("name", "metrics", "fetchable", false),
 		}},
 		{"dt.system.buckets", []map[string]interface{}{rec("name", "default_logs")}},
 		{`smartscapeNodes "*"`, []map[string]interface{}{
@@ -140,6 +141,22 @@ func TestDiscover(t *testing.T) {
 	if !contains(book.Facts.DataObjects, "spans") || len(book.Facts.Buckets) != 1 {
 		t.Errorf("facts: %+v", book.Facts)
 	}
+	// Catalog partition: metrics is usable_with-marked unfetchable — it must
+	// leave dataObjects, land in unfetchable, and be called out in a note.
+	if contains(book.Facts.DataObjects, "metrics") ||
+		len(book.Facts.Unfetchable) != 1 || book.Facts.Unfetchable[0] != "metrics" {
+		t.Errorf("unfetchable partition: dataObjects=%v unfetchable=%v",
+			book.Facts.DataObjects, book.Facts.Unfetchable)
+	}
+	foundNote := false
+	for _, n := range book.Facts.Notes {
+		if strings.Contains(n, "without fetch support: metrics") {
+			foundNote = true
+		}
+	}
+	if !foundNote {
+		t.Errorf("missing unfetchable note in %v", book.Facts.Notes)
+	}
 	if book.Facts.EntityTypes["K8S_POD"] != 10 {
 		t.Errorf("census: %v", book.Facts.EntityTypes)
 	}
@@ -151,8 +168,10 @@ func TestDiscover(t *testing.T) {
 			t.Errorf("capability %s should be present (got %v)", want, book.Facts.Capabilities)
 		}
 	}
+	// Absent entries carry citable evidence for their definition shape.
 	absent := stringSet(book.Facts.Absent)
-	if !absent["rum"] || !absent["azure"] {
+	if !absent["rum (no user.events in the data-object catalog)"] ||
+		!absent["azure (no AZURE_* entities in the live census)"] {
 		t.Errorf("absent = %v", book.Facts.Absent)
 	}
 
