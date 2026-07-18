@@ -6,7 +6,9 @@
 > neutral labels. The first eval below was ad-hoc (two arms, hand-driven);
 > the [second eval](#second-eval--repeatable-22-matrix) reran the question as
 > a repeatable 2×2 matrix using the committed harness in
-> [test/evals/recipes/](../../test/evals/recipes/).
+> [test/evals/recipes/](../../test/evals/recipes/); the
+> [third eval](#third-eval--18-task-matrix-at-scale) tripled the task set to
+> 18 and added per-batch forensics (`analyze.py`).
 
 ## Design
 
@@ -253,3 +255,118 @@ above.
 - Phase-3 gate (§6.1) still open: add a fifth variant — the pack rendered
   as a static skill — to separate "verified per-environment knowledge"
   from "more Dynatrace text in context".
+
+# Third eval — 18-task matrix at scale
+
+Same harness and variants as the second eval, tripled task set (batch
+`matrix-3`, 72 cells, Sonnet, 2026-07-18). Twelve new tasks (t7–t18) widen
+coverage: Davis problems/events, metric timeseries, k8s OOM kills, a second
+silent-wrong trap (t10: open vulnerabilities where naive event-row counting
+overcounts ~100×), bizevents, cloud-absence proof, log-bucket knowledge,
+topology census, and a sampling-sensitive slowest-trace task.
+
+## Correctness (72 runs)
+
+| | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| as run | 15/18 | 15/18 | 17/18 | 17/18 |
+| after t2 wording fix (matrix-3b) | 16/18 | 16/18 | **18/18** | **18/18** |
+
+- **The t5 trap finally fired at Sonnet tier**: skills reported the
+  entity-stamped count (15,713 vs true 242,036 — 15× low) → SILENT_WRONG.
+  Both recipes arms passed it via `resolve scope` → pod-name scoping. The
+  second eval's "trap doesn't discriminate at Sonnet tier" was run-to-run
+  luck, not a property of the tier.
+- **t10 (the new vuln trap) caught nobody** — all four arms produced the
+  latest-state dedup unprompted. Sonnet knows the state-report pattern.
+- **base's failures are all silent-wrongs in spirit**: t11 reported exactly
+  the 2 h default window as "24 h of bizevents" (336 = 4032/12; it used
+  `filter timestamp > now()-24h`, which filters *within* the silently
+  defaulted 2 h query window — the filter-vs-window trap); t12 counted the
+  generic `events` object (3,637 DAVIS_EVENT INFO rows) instead of
+  `dt.davis.events` (2,069 — the streams genuinely diverge on this tenant);
+  t15 counted 17 hosts via `fetch dt.entity.host` lookback vs 12 currently
+  monitored (Smartscape current state). skills fell into the same t15 hole.
+- **t2 was an interpretation anchor, not a capability gap**: the top-p95
+  service reports *only client spans* (zero root spans), so every
+  request-level approach silently excludes it — skills' taught
+  `is_root_span` idiom AND both pack recipes (`service-red-percentiles`,
+  `service-performance-summary` are request-semantics by design). Three
+  arms anchored on it and failed; after clarifying the task ("ALL spans,
+  including client/internal"), **all four arms pass at GT rank 1**
+  (matrix-3b). Lesson for packs: a recipe is an interpretation anchor —
+  semantics caveats ("excludes services with no entry-point spans") belong
+  in the recipe body/description.
+
+## Efficiency (per variant, summed over 18 tasks)
+
+| Metric | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| dtctl calls | 163 | 129 | 97 | **65** |
+| errored calls | 14 | 18 | 12 | **3** |
+| empty-result calls | 20 | 11 | 2 | **0** |
+| agent turns | 162 | 169 | 105 | **86** |
+| wall seconds | 790 | 647 | 506 | **417** |
+| dtctl seconds | 66 | 35 | 34 | **17** |
+| tokens out | 43.6k | 34.7k | 29.0k | **24.2k** |
+| tokens in (uncached) | **275k** | 454k | 489k | 603k |
+| cost USD | **3.87** | 5.09 | 4.60 | 5.01 |
+| scanned GB | 58.5 | 60.0 | 58.0 | **36.3** |
+
+- Every *doing* metric improves monotonically with knowledge: calls 163→65
+  (−60%), empties 20→0, wall −47%, output tokens −44%. The combo arm ran
+  zero empty-result queries across 18 investigations.
+- **skills is now the most expensive arm** — its uncached-input overhead
+  buys fewer call savings than recipes' does, and recipes-skills undercuts
+  it on cost while beating it everywhere else.
+- Scan totals are floor-dominated: t14's 24 h log scan (~20 GB) is the
+  floor; base and skills paid it **twice** (40.6 GB), the recipes arms
+  once. recipes/t6 tripled its own ~10 GB floor (transient error retry +
+  re-verification) — total scan is mostly about *not repeating* heavy
+  queries. t4 replicates the second eval: skills scanned 6.0 GB, recipes
+  arms ~0.0 GB (`genai-token-usage` precision).
+- Call-count flails without environment knowledge: t16 postgres census
+  cost skills 20 calls (invented `fetch smartscapeNodes(...)` syntax 3×)
+  and base 17 (including an `exec copilot nl2dql` detour) vs **2 calls**
+  for both recipes arms (`--recipe postgres-instances`). Proving cloud
+  absence (t13) cost base 22 calls vs 4 for recipes-skills (the book's
+  `absent:` facts + one confirming query each).
+
+## Optimizations found (analyze.py forensics)
+
+1. **Agent-mode briefing is 3× the plain one** — 28 KiB envelope vs 9 KiB
+   text, ×18 runs = 506 KiB (~75–88% of the recipes arms' entire dtctl
+   stdout). Half of it is `facts.DataObjects`: 13.7 KiB / 363 entries,
+   mostly `dt.entity.*` noise the plain briefing doesn't even display.
+   Fix: agent envelope should ship the curated briefing content (top-N
+   entity types, non-entity data objects only) — target ≤10 KiB. This is
+   the main lever on the recipes arms' uncached-input overhead.
+2. **`--dql` flag hallucination (7 wasted calls, recipes arms only)**:
+   seeing `query --recipe <name>` teaches agents to guess `query --dql
+   <text>`; dtctl's error suggests `--jq`, which is misleading. Fix:
+   accept `--dql` as alias for the positional arg, or emit "pass the DQL
+   as a positional argument".
+3. **The silent default-window hazard keeps biting** (t11 here;
+   `--default-timeframe-start` in the second eval). An agent-envelope
+   `context.window` field ("query window: 2h default") — or a warning when
+   a `timestamp` filter references time outside the scanned window — would
+   have converted base/t11's silent-wrong into a visible correction.
+4. **`resolve scope` stale-entity gap**: one of four service instances
+   returned "no runs_on targets with usable names" (rc 1); the agent
+   burned a retry, then saved itself with a `k8s.pod.name` wildcard. The
+   error is fine; the recipe followup should suggest exactly that fallback,
+   and `resolve scope` should take multiple IDs in one call (4 instances
+   currently cost 4+ calls).
+5. **Recipes need semantics caveats** (t2 lesson above): request-level vs
+   all-span, dedup semantics, lookback vs current-state — one caveat line
+   per recipe, shown by `describe recipe`, prevents anchor failures.
+6. **dt-* skills gaps observed** (upstream, not dtctl): the taught
+   `transaction.is_root_span` idiom silently excludes client-only services
+   (t2); no `smartscapeNodes` syntax coverage (t16 flail); field-name
+   guessing on classic entities (`osType`/`os.type`/`os_type`, t15).
+
+Verdict at 18 tasks: the recipe book's wins are **correctness on
+environment-semantics questions** (current-state vs lookback, canonical
+stream choice, scoping traps, absence facts) and **every efficiency metric
+except uncached input tokens and dollars** — the briefing size (opt. 1) is
+the main tax, and it is fixable.

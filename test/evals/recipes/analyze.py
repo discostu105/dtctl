@@ -86,6 +86,15 @@ def load_calls(ws):
                     rec["err_sig"] = err_signature(ef.read())
             except OSError:
                 rec["err_sig"] = "(unreadable stderr)"
+            if rec["err_sig"] == "(empty stderr)":
+                # agent mode reports errors on stdout in the JSON envelope
+                try:
+                    with open(os.path.join(outdir, ts + ".out")) as of:
+                        msg = (json.load(of).get("error") or {}).get("message", "")
+                    if msg:
+                        rec["err_sig"] = err_signature("envelope: " + msg)
+                except Exception:
+                    pass
         # empty-result detection (agent-envelope or raw records)
         rec["empty"] = False
         try:
