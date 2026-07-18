@@ -149,6 +149,8 @@ WRAP
     printf '{"variant":"%s","task":"%s","model":"%s","started":"%s"}\n' \
         "$v" "$t" "$EVAL_MODEL" "$(date -Is)" > "$ws/meta.json"
 
+    # Skill + Read are allowed since matrix-7: earlier batches denied Reads of
+    # skill reference files (beyond SKILL.md), silently weakening skills arms.
     (
         cd "$ws"
         CLAUDE_CONFIG_DIR=$cfg PATH=$ws/bin:$PATH \
@@ -156,7 +158,7 @@ WRAP
             --model "$EVAL_MODEL" \
             --output-format json \
             --max-turns "$EVAL_MAX_TURNS" \
-            --allowedTools "Bash" \
+            --allowedTools "Bash,Skill,Read" \
             --disallowedTools "WebSearch,WebFetch,Task,Agent" \
             < /dev/null > result.json 2> claude.err
     ) || echo "  $v/$t: claude exited non-zero (see $ws/claude.err)" >&2
