@@ -1,9 +1,12 @@
 # Recipes eval — does the recipe book make agents better?
 
-> First execution of the §6.1 eval from [RECIPES_CONCEPT.md](RECIPES_CONCEPT.md),
+> Executions of the §6.1 eval from [RECIPES_CONCEPT.md](RECIPES_CONCEPT.md),
 > run 2026-07-18 against one live dev tenant. Environment details are
 > anonymized per the project privacy rule; service names are replaced with
-> neutral labels.
+> neutral labels. The first eval below was ad-hoc (two arms, hand-driven);
+> the [second eval](#second-eval--repeatable-22-matrix) reran the question as
+> a repeatable 2×2 matrix using the committed harness in
+> [test/evals/recipes/](../../test/evals/recipes/).
 
 ## Design
 
@@ -116,3 +119,113 @@ mattered less against a strong model on friendly tasks. The phase-3 gate
 compared against skills, not against the pack rendered as static text, and
 should be repeated on a mixed-era tenant with the trap-class tasks weighted
 higher.
+
+---
+
+# Second eval — repeatable 2×2 matrix
+
+The first eval left two dimensions unresolved: it was not repeatable
+(hand-driven subagents, scratchpad scripts), and it never varied the
+dynatrace-for-ai skills — both arms had them, so the marginal value of the
+skills themselves was unmeasured. The harness in
+[test/evals/recipes/](../../test/evals/recipes/) fixes both: four variants
+(recipes × skills, fully crossed), six tasks, one fresh headless `claude`
+agent per cell (Sonnet, `--output-format json`, Bash-only, web access and
+subagents disallowed), isolated `CLAUDE_CONFIG_DIR` per run for skill
+visibility, a logging dtctl wrapper, per-batch ground truth, and automated
+scoring with a SILENT_WRONG verdict for the trap task. Scan cost is
+re-measured per agent query via `--metadata=scannedBytes`.
+
+Two batches ran on 2026-07-18: **matrix-1** (full 4×6 = 24 runs), then
+**matrix-2** (12 runs: t1/t3/t6 re-run after task-wording fixes — see
+finding 2).
+
+## Results
+
+Matrix-1 (original wording), per variant over 6 tasks:
+
+| | base | skills | recipes | recipes-skills |
+|---|---|---|---|---|
+| correct | 3/6 | **6/6** | 5/6 | 5/6 |
+| dtctl calls | 50 | 34 | 33 | **29** |
+| empty-result calls | 4 | 2 | 1 | **0** |
+| agent turns | 49 | 50 | **35** | **29** |
+| cost (USD) | 1.25 | 1.49 | 1.62 | 2.07 |
+
+Matrix-2 (t1/t3/t6, disambiguated wording): **12/12 correct across all four
+variants** — calls: base 34, skills **12**, recipes 17, recipes-skills 20.
+
+## Findings
+
+1. **The bare model is the danger zone; any curated knowledge fixes it.**
+   All three matrix-1 failures in `base` were *silent wrongs* — confidently
+   delivered bad numbers: a 2h default window reported as "last 1 hour"
+   (dtctl silently accepted `--default-timeframe-start -1h`, which the API
+   ignores — a real dtctl UX gap this eval surfaced), a metric-derived
+   approximation (229) reported as the RUM event count (~63k), and a
+   default-window security count reported as 7 days. Every arm with skills
+   and/or recipes avoided all three. This is the strongest argument that
+   *some* knowledge layer must ship — and the weakest for recipes
+   specifically, since generic skills already provide it.
+
+2. **Ambiguous questions make verified knowledge look wrong.** Both recipe
+   arms "failed" t6 in matrix-1 by *measuring the true raw compliance count
+   and then deduplicating* re-scan repetition (following the book's own
+   KSPM recipe pattern) — a defensible, arguably better answer scored WRONG
+   by a raw-count rubric, and four arms produced four distinct defensible
+   numbers. After the task pinned "raw event count", all arms converged
+   (12/12). Eval-methodology lesson: score verdicts are only as meaningful
+   as the task wording is precise.
+
+3. **Recipes' measured wins are query precision and empties, not calls or
+   dollars.** On book-covered tasks the recipe arms answered in 2–3 calls
+   (t1/t3/t4) with near-zero waste (0–1 empty results vs 4 for base) and the
+   fewest agent turns. The sharpest number: t4 (GenAI tokens) scanned
+   **~0.0 GB with recipes vs 6.4 GB with skills** — the verified recipe is
+   narrow where the skills-guided query brute-forces spans. Per-run dollar
+   cost was *highest* for recipe arms (the briefing + `describe recipe`
+   context is not free).
+
+4. **The negative-knowledge scan win did not reproduce on t6 this round.**
+   The clarified t6 mandates a raw 7-day count, which costs ~10 GB of scan
+   no matter what you know; arms differed only in how many multiples of
+   that floor they burned (skills 1×, recipes 2×, base/recipes-skills 3×).
+   The first eval's 10× absence-proving savings remains real but applies to
+   "is X present?" questions, not "count everything" questions.
+
+5. **The trap did not discriminate at this model tier.** All four arms
+   passed t5 (complete multi-instance log count) — Sonnet finds the
+   OTel `service.name` path even bare. The book's carriage facts and
+   `resolve scope` were used by the recipe arms (9–10 calls) but base got
+   there in 7. On a OneAgent-only tenant without the `service.name`
+   escape hatch, this task should separate the arms; that tenant is the
+   right next battleground.
+
+6. **Skills and recipes are largely redundant on a friendly tenant.**
+   `recipes-skills` was the most precise (0 empties, fewest turns) but not
+   more correct than `skills` alone, and the most expensive. The
+   combination's value should grow with tenant weirdness (mixed-era
+   fields, absences, partial carriage) — which this tenant mostly lacks.
+
+## Repeatability
+
+`test/evals/recipes/`: `build.sh` (pins both binaries by commit),
+`env.sh` (git-ignored tenant parameters), `run.sh -v <variants> -t <tasks>`
+(any subset, any batch), `score.py <batch> [--measure-scan]`. Ground truth
+is re-measured per batch, so results are comparable across time on the same
+tenant; run artifacts stay outside the repo (they contain tenant data).
+One trial per cell is still directional — batches are cheap (~$1–2 per
+variant) so repeat runs are the intended way to firm up any of the numbers
+above.
+
+## Follow-ups this eval generated
+
+- dtctl: `--default-timeframe-start` silently accepts relative values like
+  `-1h` and the API ignores them (finding 1) — should validate or support
+  relative syntax.
+- Re-run the matrix on a OneAgent-only / mixed-era tenant where the t5
+  trap has no `service.name` escape hatch (finding 5) and add an
+  absence-question variant of t6 (finding 4).
+- Phase-3 gate (§6.1) still open: add a fifth variant — the pack rendered
+  as a static skill — to separate "verified per-environment knowledge"
+  from "more Dynatrace text in context".
