@@ -14,20 +14,20 @@ import (
 
 // describedRecipe is the structured `describe recipe` payload.
 type describedRecipe struct {
-	Name        string                     `json:"name" yaml:"name"`
-	Description string                     `json:"description,omitempty" yaml:"description,omitempty"`
-	Source      string                     `json:"source,omitempty" yaml:"source,omitempty"`
-	Local       bool                       `json:"local,omitempty" yaml:"local,omitempty"`
-	Disabled    *recipes.Disabled          `json:"disabled,omitempty" yaml:"disabled,omitempty"`
-	Requires    []string                   `json:"requires,omitempty" yaml:"requires,omitempty"`
-	DataObjects []string                   `json:"dataObjects,omitempty" yaml:"dataObjects,omitempty"`
-	Params      map[string]*recipes.Param  `json:"params,omitempty" yaml:"params,omitempty"`
-	DQL         string                     `json:"dql" yaml:"dql"`
-	Segments    []string                   `json:"segments,omitempty" yaml:"segments,omitempty"`
-	Override    string                     `json:"override,omitempty" yaml:"override,omitempty"`
-	LastRun     *recipes.LastRun           `json:"lastRun,omitempty" yaml:"lastRun,omitempty"`
-	Note        string                     `json:"note,omitempty" yaml:"note,omitempty"`
-	Followups   []string                   `json:"followups,omitempty" yaml:"followups,omitempty"`
+	Name        string                    `json:"name" yaml:"name"`
+	Description string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	Source      string                    `json:"source,omitempty" yaml:"source,omitempty"`
+	Local       bool                      `json:"local,omitempty" yaml:"local,omitempty"`
+	Disabled    *recipes.Disabled         `json:"disabled,omitempty" yaml:"disabled,omitempty"`
+	Requires    []string                  `json:"requires,omitempty" yaml:"requires,omitempty"`
+	DataObjects []string                  `json:"dataObjects,omitempty" yaml:"dataObjects,omitempty"`
+	Params      map[string]*recipes.Param `json:"params,omitempty" yaml:"params,omitempty"`
+	DQL         string                    `json:"dql" yaml:"dql"`
+	Segments    []string                  `json:"segments,omitempty" yaml:"segments,omitempty"`
+	Override    string                    `json:"override,omitempty" yaml:"override,omitempty"`
+	LastRun     *recipes.LastRun          `json:"lastRun,omitempty" yaml:"lastRun,omitempty"`
+	Note        string                    `json:"note,omitempty" yaml:"note,omitempty"`
+	Followups   []string                  `json:"followups,omitempty" yaml:"followups,omitempty"`
 }
 
 // describeRecipeCmd shows one recipe in full: DQL, typed params, stamp,

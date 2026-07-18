@@ -131,11 +131,11 @@ func InstalledPacks(configDir string) ([]*Pack, error) {
 // Resolved is one recipe with its book/pack fields merged (book override >
 // later pack > earlier pack) and its classification attached.
 type Resolved struct {
-	Name   string
-	Recipe *Recipe   // effective merged recipe (never nil)
-	Source string    // "pack:<recipe>@<version>" or "" for local recipes
-	Local  bool      // defined in the book, no pack pointer
-	InBook bool      // has an entry in the book (stamped or classified)
+	Name     string
+	Recipe   *Recipe   // effective merged recipe (never nil)
+	Source   string    // "pack:<recipe>@<version>" or "" for local recipes
+	Local    bool      // defined in the book, no pack pointer
+	InBook   bool      // has an entry in the book (stamped or classified)
 	Disabled *Disabled // non-nil when the book disabled it (with evidence)
 }
 

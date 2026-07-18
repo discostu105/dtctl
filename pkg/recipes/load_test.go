@@ -115,7 +115,7 @@ func TestLibraryResolution(t *testing.T) {
 		},
 		Recipes: map[string]*Recipe{
 			// referencing entry with a book-key different from the pack recipe name
-			"my-logs": {Source: "pack:entity-logs@2026.07", Description: "override desc"},
+			"my-logs":   {Source: "pack:entity-logs@2026.07", Description: "override desc"},
 			"local-one": {Description: "local", DQL: "fetch logs | limit 1"},
 		},
 		Disabled: map[string]*Disabled{
