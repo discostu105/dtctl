@@ -79,6 +79,29 @@ echo "ground truth: t18 EC2 + k8s namespaces"
 T18E=$(q 'smartscapeNodes "*" | filter type == "AWS_EC2_INSTANCE" | summarize c = count()')
 T18N=$(q 'smartscapeNodes "*" | filter type == "K8S_NAMESPACE" | summarize c = count()')
 
+echo "ground truth: t19 distinct davis events + naive generic-stream rows"
+T19=$(q 'fetch dt.davis.events, from:now()-24h | summarize c = countDistinct(event.id)')
+T19N=$(q 'fetch events, from:now()-24h | summarize c = count()')
+T19F=$(q 'fetch events, from:now()-24h | filter event.kind == "DAVIS_EVENT" | summarize c = count()')
+
+echo "ground truth: t20 distinct traces through trap service (hop ∪ service.name)"
+SCOPE_SPANS=$("$BIN" --context "$EVAL_CONTEXT" resolve scope "$EVAL_TRAP_SERVICE" --for spans --plain --no-agent 2>/dev/null)
+T20=$(q "fetch spans, from:now()-4h | filter ($SCOPE_SPANS) or service.name == \"$EVAL_TRAP_SERVICE\" | summarize c = countDistinct(trace.id)")
+
+echo "ground truth: t21 pods behind trap service (runs_on hop, all instances)"
+SVCIDS=$(q "smartscapeNodes \"SERVICE\" | filter name == \"$EVAL_TRAP_SERVICE\" | fields id" \
+    | python3 -c 'import json,sys; print(", ".join("toSmartscapeId(\"%s\")" % r["id"] for r in json.load(sys.stdin)["records"]))')
+T21=$(q "smartscapeEdges \"runs_on\" | filter in(source_id, {$SVCIDS}) | fieldsAdd tid = toString(target_id) | filter startsWith(tid, \"K8S_POD-\") | summarize c = countDistinct(tid)")
+
+echo "ground truth: t22 top ERROR-log namespaces"
+T22=$(q 'fetch logs, from:now()-6h | filter status == "ERROR" | summarize c = count(), by:{k8s.namespace.name} | sort c desc | limit 3')
+
+echo "ground truth: t23 logs in the [24h,12h] ago window"
+T23=$(q 'fetch logs, from:now()-24h, to:now()-12h | summarize c = count()')
+
+echo "ground truth: t24 fleet-average host CPU over 3h"
+T24=$(q 'timeseries cpu = avg(dt.host.cpu.usage), from:now()-3h | fields a = arrayAvg(cpu)')
+
 python3 - "$RUNDIR" <<PYEOF
 import json, sys, datetime
 
@@ -109,6 +132,14 @@ t16 = rows('''$T16''')
 t17 = rows('''$T17''')
 t18e = rows('''$T18E''')
 t18n = rows('''$T18N''')
+t19 = rows('''$T19''')
+t19n = rows('''$T19N''')
+t19f = rows('''$T19F''')
+t20 = rows('''$T20''')
+t21 = rows('''$T21''')
+t22 = [r for r in rows('''$T22''') if r.get("k8s.namespace.name")]
+t23 = rows('''$T23''')
+t24 = rows('''$T24''')
 
 def c0(rs):
     return int(rs[0]["c"]) if rs else 0
@@ -141,6 +172,12 @@ gt = {
     "t17": {"duration_ms": int(t17[0]["duration"]) / 1e6 if t17 else 0,
             "service": t17[0]["svc"] if t17 else ""},
     "t18": {"ec2": c0(t18e), "namespaces": c0(t18n)},
+    "t19": {"events": c0(t19), "naive_rows": c0(t19n), "naive_filtered": c0(t19f)},
+    "t20": {"traces": c0(t20)},
+    "t21": {"pods": c0(t21)},
+    "t22": {"top": [{"namespace": r["k8s.namespace.name"], "count": int(r["c"])} for r in t22]},
+    "t23": {"count": c0(t23)},
+    "t24": {"cpu": float(t24[0]["a"]) if t24 else 0.0},
 }
 path = sys.argv[1] + "/ground-truth.json"
 with open(path, "w") as f:

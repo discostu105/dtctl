@@ -22,7 +22,7 @@ import subprocess
 import sys
 
 VARIANTS = ["base", "skills", "recipes", "recipes-skills"]
-TASKS = ["t" + str(i) for i in range(1, 19)]
+TASKS = ["t" + str(i) for i in range(1, 25)]
 
 
 def close(a, b, tol):
@@ -174,6 +174,41 @@ def score_answer(task, ans, gt):
                 return "WRONG", f'ec2 {ans["ec2_instances"]} vs GT {g["ec2"]}'
             if not close(num(ans["k8s_namespaces"]), g["namespaces"], 0.25):
                 return "WRONG", f'namespaces {ans["k8s_namespaces"]} vs GT {g["namespaces"]}'
+            return "PASS", ""
+        if task == "t19":
+            c, true = num(ans["events"]), g["events"]
+            if close(c, true, 0.25) or abs(c - true) <= 2:
+                return "PASS", ""
+            # the trap: row-counting a Davis-event stream (each event appears
+            # once per state update in the generic `events` stream)
+            for naive in (g["naive_rows"], g["naive_filtered"]):
+                if naive > 1.5 * max(true, 1) and close(c, naive, 0.3):
+                    return "SILENT_WRONG", f"{c:.0f} ≈ naive stream rows {naive} (true {true})"
+            return "WRONG", f'{c:.0f} vs GT {true} (naive {g["naive_rows"]}/{g["naive_filtered"]})'
+        if task == "t20":
+            if not close(num(ans["traces"]), g["traces"], 0.3):
+                return "WRONG", f'traces {ans["traces"]} vs GT {g["traces"]}'
+            return "PASS", ""
+        if task == "t21":
+            if abs(num(ans["pods"]) - g["pods"]) > 1:
+                return "WRONG", f'pods {ans["pods"]} vs GT {g["pods"]}'
+            return "PASS", ""
+        if task == "t22":
+            top = g["top"]
+            for i, row in enumerate(top):
+                if name_match(str(ans["namespace"]), row["namespace"]):
+                    if i == 0 or row["count"] >= 0.8 * top[0]["count"]:
+                        if close(num(ans["count"]), row["count"], 0.4):
+                            return "PASS", f"matched GT rank {i + 1}"
+                        return "WRONG", f'count {ans["count"]} vs GT {row["count"]}'
+            return "WRONG", f'namespace {ans["namespace"]!r} not in GT top {len(top)}'
+        if task == "t23":
+            if not close(num(ans["count"]), g["count"], 0.2):
+                return "WRONG", f'count {ans["count"]} vs GT {g["count"]}'
+            return "PASS", ""
+        if task == "t24":
+            if not close(num(ans["cpu_percent"]), g["cpu"], 0.25):
+                return "WRONG", f'cpu {ans["cpu_percent"]} vs GT {g["cpu"]:.2f}'
             return "PASS", ""
     except (KeyError, TypeError, ValueError) as e:
         return "NO_ANSWER", f"answer missing/invalid field: {e}"

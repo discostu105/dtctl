@@ -30,7 +30,14 @@ per vulnerability (counting raw report events overcounts ~100×), (t11) top
 bizevents producer, (t12) top Davis event category, (t13) Azure/GCP absence
 proof, (t14) top log retention bucket, (t15) host census + dominant OS,
 (t16) PostgreSQL instance count, (t17) slowest root span (sampling hides the
-max), (t18) EC2 + k8s-namespace topology census.
+max), (t18) EC2 + k8s-namespace topology census, (t19) **trap** — distinct
+Davis events where row-counting the generic `events` stream double-counts
+state updates (the canonical stream is `dt.davis.events`), (t20) distinct
+traces through the multi-instance service, (t21) pods currently backing the
+multi-instance service (topology hop across all deployments), (t22) namespace
+with the most ERROR logs, (t23) log count in an explicit historical window
+(24h→12h ago — probes silent default-window handling), (t24) fleet-wide
+average host CPU from a metric timeseries.
 
 ## How it works
 
