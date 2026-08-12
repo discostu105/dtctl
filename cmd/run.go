@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
 	"sync"
 
 	"github.com/spf13/cobra"
@@ -38,6 +41,15 @@ type RunOptions struct {
 	// writes the host filesystem (the CLI default); embedded callers pass a
 	// vfs.MapFS built from the request's virtual files. See pkg/vfs.
 	FS vfs.FS
+
+	// Stdout and Stderr receive the invocation's output; Stdin feeds commands
+	// that read it ("-" file arguments, piped input). nil means the process
+	// streams (the CLI default). The redirection captures every output path —
+	// fmt.Print*, the output package, cobra help, error envelopes — as the
+	// exact byte stream the CLI would print. See redirectStdio.
+	Stdout io.Writer
+	Stderr io.Writer
+	Stdin  io.Reader
 }
 
 // runMu serializes invocations. The command tree is package state (277
@@ -70,14 +82,32 @@ func Run(argv []string, opts RunOptions) int {
 	cleanup, err := applyRunEnvironment(opts)
 	if err != nil {
 		// A malformed RunOptions is an embedding-caller bug, not a command
-		// error — report it on stderr with a usage exit code.
-		output.PrintHumanError("%s", err)
+		// error — report it on the caller's stderr with a usage exit code.
+		reportOptionsError(opts, err)
 		return client.ExitUsageError
 	}
 	defer cleanup()
 
+	restoreStdio, err := redirectStdio(opts.Stdout, opts.Stderr, opts.Stdin)
+	if err != nil {
+		reportOptionsError(opts, err)
+		return client.ExitUsageError
+	}
+	defer restoreStdio()
+
 	restorePristineTree()
 	return executeArgs(argv)
+}
+
+// reportOptionsError surfaces a RunOptions problem on the invocation's stderr
+// (falling back to the process stderr), without going through the redirected
+// stream machinery that may itself be the thing that failed.
+func reportOptionsError(opts RunOptions, err error) {
+	w := io.Writer(os.Stderr)
+	if opts.Stderr != nil {
+		w = opts.Stderr
+	}
+	fmt.Fprintf(w, "Error: %v\n", err)
 }
 
 // pristineCommandState is the subset of cobra.Command that dtctl mutates
