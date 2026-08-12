@@ -54,3 +54,4 @@ snapshot.json
 result
 result-*
 dtctl.wasm
+spike/wasihost/wasihost
