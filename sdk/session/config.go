@@ -7,7 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/adrg/xdg"
 	"gopkg.in/yaml.v3"
 
 	"github.com/dynatrace-oss/dtctl/sdk/urls"
@@ -173,32 +172,9 @@ type Preferences struct {
 	Hooks  Hooks  `yaml:"hooks,omitempty"`
 }
 
-// DefaultConfigPath returns the default config file path following XDG Base Directory spec
-// Returns: XDG_CONFIG_HOME/dtctl/config (typically ~/.config/dtctl/config)
-func DefaultConfigPath() string {
-	return filepath.Join(xdg.ConfigHome, "dtctl", "config")
-}
-
-// ConfigDir returns the config directory path following XDG Base Directory spec
-func ConfigDir() string {
-	return filepath.Join(xdg.ConfigHome, "dtctl")
-}
-
-// CacheDir returns the cache directory path following XDG Base Directory spec
-func CacheDir() string {
-	return filepath.Join(xdg.CacheHome, "dtctl")
-}
-
-// DataDir returns the data directory path following XDG Base Directory spec
-func DataDir() string {
-	return filepath.Join(xdg.DataHome, "dtctl")
-}
-
-// StateDir returns the state directory path following XDG Base Directory spec
-// (persistent but disposable data: history, logs). Typically ~/.local/state/dtctl.
-func StateDir() string {
-	return filepath.Join(xdg.StateHome, "dtctl")
-}
+// The XDG base-directory helpers (DefaultConfigPath, ConfigDir, CacheDir,
+// DataDir, StateDir) live in paths_xdg.go / paths_wasip1.go — the adrg/xdg
+// dependency does not compile on wasip1.
 
 // LocalConfigName is the name of the per-project config file
 const LocalConfigName = ".dtctl.yaml"

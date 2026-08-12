@@ -111,6 +111,12 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 		logger:  noopLogger{},
 	}
 
+	// On platforms without sockets (wasip1) route HTTP through the embedding
+	// host. Set before options so an explicit WithTransport still wins.
+	if rt := platformDefaultTransport(); rt != nil {
+		c.http.SetTransport(rt)
+	}
+
 	// Apply options
 	for _, opt := range opts {
 		opt(c)

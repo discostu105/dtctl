@@ -53,3 +53,4 @@ snapshot.json
 # Nix / direnv local caches
 result
 result-*
+dtctl.wasm
