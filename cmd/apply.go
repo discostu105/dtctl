@@ -194,6 +194,12 @@ resources in sync with their file definitions.
 
 		// Configure pre-apply and post-apply hooks
 		if !noHooks {
+			// Capability gate: hooks execute arbitrary configured commands.
+			// Fail loudly when the config requests one the host forbids —
+			// silently skipping a validation hook would be worse.
+			if !caps.ApplyHooks && (cfg.GetPreApplyHook() != "" || cfg.GetPostApplyHook() != "") {
+				return &CapabilityError{Feature: "apply hooks"}
+			}
 			if hookCmd := cfg.GetPreApplyHook(); hookCmd != "" {
 				applier = applier.WithPreApplyHook(hookCmd).WithSourceFile(file)
 			}

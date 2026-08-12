@@ -122,6 +122,10 @@ Examples:
 
 // openBrowser opens a URL in the default browser
 func openBrowser(url string) error {
+	if !caps.BrowserOpen {
+		return &CapabilityError{Feature: "opening a browser (open)"}
+	}
+
 	var cmd *exec.Cmd
 
 	switch runtime.GOOS {

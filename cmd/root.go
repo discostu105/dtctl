@@ -124,6 +124,10 @@ func execute() int {
 		}
 
 		if isShell {
+			if !caps.ShellAliases {
+				output.PrintHumanError("%s", &CapabilityError{Feature: "shell aliases"})
+				return 1
+			}
 			if err := execShellAlias(expanded[0]); err != nil {
 				return 1
 			}
@@ -550,6 +554,16 @@ func errorToDetail(err error) *output.ErrorDetail {
 			Code:        "profile_blocked",
 			Message:     profileErr.Headline(),
 			Suggestions: profileErr.Suggestions(),
+		}
+	}
+
+	// CapabilityError — a host-restricted ability (subprocess spawn: plugins,
+	// aliases, hooks, editor, browser) was requested but not granted.
+	var capErr *CapabilityError
+	if errors.As(err, &capErr) {
+		return &output.ErrorDetail{
+			Code:    "capability_disabled",
+			Message: capErr.Error(),
 		}
 	}
 
