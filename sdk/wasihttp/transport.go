@@ -3,7 +3,6 @@
 package wasihttp
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
