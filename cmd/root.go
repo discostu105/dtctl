@@ -47,14 +47,15 @@ var (
 	noAgent      bool // --no-agent flag: opt out of auto-detected agent mode
 
 	// tracingRootCtx holds the context carrying the root OTel span for this
-	// invocation. Set by execute() and read by NewClientFromConfig to inject
+	// invocation. Set by executeArgs() and read by NewClientFromConfig to inject
 	// W3C trace context headers on outgoing Dynatrace API requests.
 	//
 	// This is a package-level variable (rather than a function parameter) because
 	// NewClientFromConfig is referenced as a function value in breakpoint_helpers.go
 	// and changing its signature would cascade across 100+ call sites. The global is
-	// acceptable here because dtctl is a single-invocation CLI: execute() sets it
-	// once before any client is created, and the process exits shortly after.
+	// acceptable here because invocations are serialized (see Run): executeArgs()
+	// sets it before any client is created, and no other invocation can run
+	// concurrently in the same process.
 	tracingRootCtx context.Context
 )
 
@@ -83,15 +84,19 @@ func validateGlobalFlags() error {
 	return nil
 }
 
-// Execute adds all child commands to the root command and sets flags appropriately.
+// Execute runs the CLI process: one invocation from os.Args, then exit.
+// Embedders use Run instead, which returns the exit code without terminating
+// the process. Routing through Run (rather than executeArgs directly) keeps a
+// single execution path, and ensures deferred functions (e.g. tracing
+// shutdown/flush) run before os.Exit, which os.Exit would otherwise bypass.
 func Execute() {
-	os.Exit(execute())
+	os.Exit(Run(os.Args[1:], RunOptions{}))
 }
 
-// execute runs the CLI and returns an exit code. Separating it from Execute
-// ensures that deferred functions (e.g. tracing shutdown/flush) run before
-// os.Exit is called, which os.Exit would otherwise bypass.
-func execute() int {
+// executeArgs runs one invocation of the given command line (program name
+// excluded) and returns an exit code. Callers go through Run, which provides
+// serialization and the pristine-tree guarantee.
+func executeArgs(argv []string) int {
 	// Setup enhanced error handling after all subcommands are registered
 	setupErrorHandlers(rootCmd)
 
@@ -99,11 +104,15 @@ func execute() int {
 	// agent-mode auto-preflight). Must run after all subcommands are registered.
 	installScopePreflight(rootCmd)
 
+	// Cobra falls back to os.Args when no args were set — always pin the
+	// requested argv so embedded invocations never see the host's arguments.
+	rootCmd.SetArgs(argv)
+
 	// --- Alias resolution (before Cobra parses args AND before tracing init) ---
 	// Resolving aliases first ensures the span name reflects the real command,
 	// not the pre-expansion alias. Load config quietly; if it fails, skip alias
 	// resolution (the real command will produce the proper error later).
-	spanArgs := os.Args[1:]
+	spanArgs := argv
 	if cfg, err := config.Load(); err == nil {
 		// Security: warn when an auto-discovered local .dtctl.yaml carries
 		// code-execution keys (aliases / apply hooks) that are ignored. This
@@ -116,8 +125,7 @@ func execute() int {
 				cfg.LocalConfigPath())
 		}
 
-		// os.Args[0] is the binary name; work with os.Args[1:]
-		expanded, isShell, err := resolveAlias(os.Args[1:], cfg)
+		expanded, isShell, err := resolveAlias(argv, cfg)
 		if err != nil {
 			output.PrintHumanError("%s", err)
 			return 1

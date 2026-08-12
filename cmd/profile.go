@@ -51,7 +51,7 @@ func (e *ProfileError) Error() string {
 //
 // A nil profile is the full command tree (no-op), preserving today's behavior.
 // The filter runs once, after the whole command tree is registered and before
-// Cobra dispatches — see execute() in root.go.
+// Cobra dispatches — see executeArgs() in root.go.
 func applyProfile(root *cobra.Command, p *config.Profile) {
 	if p == nil {
 		return

@@ -62,7 +62,7 @@ func TestErrorToDetailCapabilityError(t *testing.T) {
 func TestSubprocessSpawnsConfinedToGateways(t *testing.T) {
 	// file → the capability that gates its spawn(s).
 	gateways := map[string]string{
-		"alias_resolve.go":        "ShellAliases (gated at the execute() call site in root.go)",
+		"alias_resolve.go":        "ShellAliases (gated at the executeArgs() call site in root.go)",
 		"edit.go":                 "Editor (gated in launchEditor)",
 		"exec_forward_unix.go":    "PluginDispatch (only called from tryPluginDispatch)",
 		"exec_forward_windows.go": "PluginDispatch (only called from tryPluginDispatch)",

@@ -1,0 +1,142 @@
+package cmd
+
+import (
+	"encoding/json"
+	"sync"
+
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
+	"github.com/dynatrace-oss/dtctl/pkg/output"
+)
+
+// RunOptions configures a single embedded invocation. The zero value is the
+// CLI default: every capability granted.
+type RunOptions struct {
+	// Capabilities restricts process-level abilities (subprocess spawns) for
+	// this invocation. nil grants everything (the CLI default); embedded
+	// callers typically pass &Capabilities{} to grant nothing.
+	Capabilities *Capabilities
+}
+
+// runMu serializes invocations. The command tree is package state (277
+// command values wired by init), so two interleaved executions would share
+// flag values and tree mutations. In-process callers therefore queue;
+// parallelism comes from running more instances — the model the WASI spike
+// validated at 20-47ms per-instance overhead (spike/SPIKE_RESULTS.md) — or
+// more processes. See the dtctl-as-a-service design, work item E1.
+var runMu sync.Mutex
+
+// Run executes one dtctl invocation in-process and returns its exit code.
+// argv is the command line without the program name (os.Args[1:] shape).
+//
+// Run is the embedding seam for the service engine and for `dtctl serve`:
+// unlike Execute it never terminates the process, and every invocation starts
+// from a pristine command tree — flag values reset to declared defaults, and
+// per-run tree mutations (command-profile masks, scope-preflight wraps)
+// undone. Concurrent calls are safe and execute one at a time.
+func Run(argv []string, opts RunOptions) int {
+	runMu.Lock()
+	defer runMu.Unlock()
+
+	granted := AllCapabilities()
+	if opts.Capabilities != nil {
+		granted = *opts.Capabilities
+	}
+	prev := SetCapabilities(granted)
+	defer SetCapabilities(prev)
+
+	restorePristineTree()
+	return executeArgs(argv)
+}
+
+// pristineCommandState is the subset of cobra.Command that dtctl mutates
+// between construction and execution. applyProfile overwrites RunE/Run/Args/
+// Hidden/DisableFlagParsing to mask commands, and installScopePreflight wraps
+// RunE; restoring these fields returns a command to its as-registered state.
+type pristineCommandState struct {
+	runE               func(*cobra.Command, []string) error
+	run                func(*cobra.Command, []string)
+	args               cobra.PositionalArgs
+	hidden             bool
+	disableFlagParsing bool
+}
+
+var (
+	pristineOnce sync.Once
+	pristineTree map[*cobra.Command]pristineCommandState
+)
+
+func capturePristineState(c *cobra.Command) pristineCommandState {
+	return pristineCommandState{
+		runE:               c.RunE,
+		run:                c.Run,
+		args:               c.Args,
+		hidden:             c.Hidden,
+		disableFlagParsing: c.DisableFlagParsing,
+	}
+}
+
+// restorePristineTree returns the whole command tree to its as-registered
+// state: the snapshot taken on first use (after all init() wiring, before any
+// execution) is written back over every command, and all flag values return
+// to their declared defaults. Each execution then applies its own per-run
+// mutations (scope-preflight wraps, profile masks) from a clean slate, so
+// nothing from one invocation — a --context override, a profile mask, an
+// output format — can leak into the next.
+func restorePristineTree() {
+	pristineOnce.Do(func() {
+		pristineTree = make(map[*cobra.Command]pristineCommandState)
+		walkCommands(rootCmd, func(c *cobra.Command) {
+			pristineTree[c] = capturePristineState(c)
+		})
+	})
+	walkCommands(rootCmd, func(c *cobra.Command) {
+		state, ok := pristineTree[c]
+		if !ok {
+			// A command registered after the first run (not a pattern dtctl
+			// uses, but harmless): its current state becomes its pristine one.
+			state = capturePristineState(c)
+			pristineTree[c] = state
+		}
+		c.RunE = state.runE
+		c.Run = state.run
+		c.Args = state.args
+		c.Hidden = state.hidden
+		c.DisableFlagParsing = state.disableFlagParsing
+		// No command sets IO writers at registration time, so pristine means
+		// nil: cobra then resolves os.Stdout/os.Stderr dynamically at print
+		// time. A caller-bound writer (tests do this) must not outlive its
+		// invocation.
+		c.SetOut(nil)
+		c.SetErr(nil)
+		c.SetIn(nil)
+		resetFlagSet(c.Flags())
+		resetFlagSet(c.PersistentFlags())
+	})
+	// Color decisions are cached per process but depend on per-run inputs
+	// (--plain, NO_COLOR, TTY-ness of the current stdout).
+	output.ResetColorCache()
+}
+
+// resetFlagSet returns every flag in fs to its declared default. Mirrors
+// testutil.ResetCommandFlags (cmd/testutil/helpers.go), which stays separate
+// so test helpers don't have to reach into the cmd package.
+func resetFlagSet(fs *pflag.FlagSet) {
+	fs.VisitAll(func(flag *pflag.Flag) {
+		flag.Changed = false
+		if sv, ok := flag.Value.(pflag.SliceValue); ok {
+			// SliceValue.Set appends rather than replaces; use Replace to
+			// restore the declared default. StringArray stores DefValue as
+			// JSON; other slice types fall back to nil (empty) if the format
+			// doesn't parse.
+			var defaults []string
+			if flag.DefValue != "[]" {
+				_ = json.Unmarshal([]byte(flag.DefValue), &defaults)
+			}
+			_ = sv.Replace(defaults)
+		} else {
+			_ = flag.Value.Set(flag.DefValue)
+		}
+	})
+}
