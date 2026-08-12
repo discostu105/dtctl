@@ -174,14 +174,19 @@ func execute() int {
 	}
 
 	if err := rootCmd.Execute(); err != nil {
-		// silentExitError carries an exit code only (e.g. --check-scopes already
-		// printed its verdict); set the status and return without re-printing.
+		// silentExitError carries an exit code only (e.g. --check-scopes printed
+		// its verdict, diff found differences, wait timed out); set the status
+		// and return without re-printing.
 		var silent *silentExitError
 		if errors.As(err, &silent) {
 			if silent.code == 0 {
 				rootSpan.SetStatus(codes.Ok, "")
 			} else {
-				rootSpan.SetStatus(codes.Error, "insufficient scope")
+				reason := silent.reason
+				if reason == "" {
+					reason = "silent non-zero exit"
+				}
+				rootSpan.SetStatus(codes.Error, reason)
 			}
 			return silent.code
 		}

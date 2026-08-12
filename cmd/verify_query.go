@@ -192,9 +192,10 @@ Examples:
 
 		// Handle errors (network, auth, API)
 		if err != nil {
-			// Exit with appropriate code
+			// Exit with the mapped code; nothing further is printed (the
+			// verify contract encodes the failure class in the exit code).
 			if exitCode != 0 {
-				os.Exit(exitCode)
+				return &silentExitError{code: exitCode, reason: err.Error()}
 			}
 			return err
 		}
@@ -226,9 +227,9 @@ Examples:
 			}
 		}
 
-		// Exit with appropriate code if non-zero
+		// Non-zero code without an error: the verdict was already printed.
 		if exitCode != 0 {
-			os.Exit(exitCode)
+			return &silentExitError{code: exitCode, reason: "query verification failed"}
 		}
 
 		return nil

@@ -218,15 +218,16 @@ Examples:
 			}
 		}
 
-		// Set exit code based on result
+		// Exit code encodes the failure mode (documented contract: 1 timeout,
+		// 2 max attempts, 3 other); the result output was already printed.
 		if !result.Success {
 			switch result.FailureReason {
 			case "timeout":
-				os.Exit(1)
+				return &silentExitError{code: 1, reason: "wait: timeout"}
 			case "max attempts exceeded":
-				os.Exit(2)
+				return &silentExitError{code: 2, reason: "wait: max attempts exceeded"}
 			default:
-				os.Exit(3)
+				return &silentExitError{code: 3, reason: "wait: condition not met"}
 			}
 		}
 

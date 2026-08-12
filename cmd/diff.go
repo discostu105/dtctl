@@ -138,12 +138,11 @@ func runDiff(cmd *cobra.Command, args []string) error {
 		fmt.Print(result.Patch)
 	}
 
-	exitCode := ExitCodeNoDiff
 	if result.HasChanges {
-		exitCode = ExitCodeHasDiff
+		// diff(1) semantics: exit 1 signals "differences found" without an
+		// error message — the patch itself is the output.
+		return &silentExitError{code: ExitCodeHasDiff, reason: "differences found"}
 	}
-
-	os.Exit(exitCode)
 	return nil
 }
 
