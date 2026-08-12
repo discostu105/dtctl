@@ -8,6 +8,6 @@ import (
 	"github.com/dynatrace-oss/dtctl/sdk/wasihttp"
 )
 
-// platformDefaultTransport routes all HTTP through the embedding host on
+// PlatformDefaultTransport routes all HTTP through the embedding host on
 // wasip1, where the guest has no sockets. See sdk/wasihttp.
-func platformDefaultTransport() http.RoundTripper { return wasihttp.NewTransport() }
+func PlatformDefaultTransport() http.RoundTripper { return wasihttp.NewTransport() }

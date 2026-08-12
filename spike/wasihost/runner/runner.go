@@ -136,7 +136,10 @@ func (r *Runner) Execute(ctx context.Context, req Request) (Result, error) {
 	defer st.closeAll()
 
 	var stdout, stderr bytes.Buffer
+	// Anonymous module name so one compiled module can instantiate
+	// concurrently (one instance per in-flight request).
 	modCfg := wazero.NewModuleConfig().
+		WithName("").
 		WithArgs(append([]string{"dtctl"}, req.Args...)...).
 		WithStdout(&stdout).
 		WithStderr(&stderr).

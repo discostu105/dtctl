@@ -113,7 +113,7 @@ func New(baseURL string, opts ...Option) (*Client, error) {
 
 	// On platforms without sockets (wasip1) route HTTP through the embedding
 	// host. Set before options so an explicit WithTransport still wins.
-	if rt := platformDefaultTransport(); rt != nil {
+	if rt := PlatformDefaultTransport(); rt != nil {
 		c.http.SetTransport(rt)
 	}
 

@@ -16,6 +16,7 @@ import (
 
 	"github.com/dynatrace-oss/dtctl/sdk/agentmode"
 	sdkauth "github.com/dynatrace-oss/dtctl/sdk/auth"
+	"github.com/dynatrace-oss/dtctl/sdk/httpclient"
 )
 
 // defaultUserAgentProduct identifies clients whose builder did not set an
@@ -138,6 +139,12 @@ func NewClient(baseURL, token string, opts ...ClientOption) (*Client, error) {
 		SetTimeout(6*time.Minute). // Allow for long-running Grail queries (up to 5 min)
 		SetHeader("User-Agent", userAgent).
 		SetHeader("Accept-Encoding", "gzip")
+
+	// On platforms without sockets (wasip1) route HTTP through the embedding
+	// host — same seam as httpclient.New, which this constructor mirrors.
+	if rt := httpclient.PlatformDefaultTransport(); rt != nil {
+		httpClient.SetTransport(rt)
+	}
 
 	return &Client{
 		http:    httpClient,
