@@ -11,6 +11,7 @@ import (
 
 	"github.com/dynatrace-oss/dtctl/pkg/exec"
 	"github.com/dynatrace-oss/dtctl/pkg/util/template"
+	"github.com/dynatrace-oss/dtctl/pkg/vfs"
 	"github.com/dynatrace-oss/dtctl/pkg/wait"
 )
 
@@ -102,7 +103,7 @@ Examples:
 				}
 				query = string(content)
 			} else {
-				content, err := os.ReadFile(queryFile)
+				content, err := vfs.ReadFile(queryFile)
 				if err != nil {
 					return fmt.Errorf("failed to read query file: %w", err)
 				}

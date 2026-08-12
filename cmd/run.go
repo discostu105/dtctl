@@ -9,6 +9,7 @@ import (
 
 	"github.com/dynatrace-oss/dtctl/pkg/client"
 	"github.com/dynatrace-oss/dtctl/pkg/output"
+	"github.com/dynatrace-oss/dtctl/pkg/vfs"
 )
 
 // RunOptions configures a single embedded invocation. The zero value is the
@@ -31,6 +32,12 @@ type RunOptions struct {
 	// The mutation is process-wide while the invocation runs — see
 	// applyRunEnvironment.
 	Env map[string]string
+
+	// FS resolves user-supplied file paths (-f and friends) for this
+	// invocation, including writebacks like `apply --write-id`. nil reads and
+	// writes the host filesystem (the CLI default); embedded callers pass a
+	// vfs.MapFS built from the request's virtual files. See pkg/vfs.
+	FS vfs.FS
 }
 
 // runMu serializes invocations. The command tree is package state (277

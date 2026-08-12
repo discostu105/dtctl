@@ -12,6 +12,7 @@ import (
 	"github.com/dynatrace-oss/dtctl/pkg/output"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/document"
 	"github.com/dynatrace-oss/dtctl/pkg/util/template"
+	"github.com/dynatrace-oss/dtctl/pkg/vfs"
 )
 
 // applyCmd represents the apply command
@@ -156,7 +157,7 @@ resources in sync with their file definitions.
 		}
 
 		// Read the file
-		fileData, err := os.ReadFile(file)
+		fileData, err := vfs.ReadFile(file)
 		if err != nil {
 			return fmt.Errorf("failed to read file: %w", err)
 		}

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/dynatrace-oss/dtctl/pkg/config"
+	"github.com/dynatrace-oss/dtctl/pkg/vfs"
 )
 
 // Session is a per-invocation target + credential override for embedded
@@ -137,7 +138,9 @@ func applyRunEnvironment(opts RunOptions) (cleanup func(), err error) {
 	}
 
 	runSession = opts.Session
+	prevFS := vfs.SetActive(opts.FS)
 	return func() {
+		vfs.SetActive(prevFS)
 		runSession = nil
 		// Restore in reverse so an opts.Env entry that overrode a scrub
 		// unwinds through the scrub back to the original host value.

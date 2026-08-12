@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/dynatrace-oss/dtctl/pkg/config"
+	"github.com/dynatrace-oss/dtctl/pkg/vfs"
 )
 
 func TestApplyRunEnvironment_ScrubAndRestore(t *testing.T) {
@@ -189,6 +190,39 @@ func TestRunWithSession_ProfileViaEnv(t *testing.T) {
 		"per-request profile must mask the command surface")
 
 	require.Equal(t, "host-profile-value", os.Getenv("DTCTL_PROFILE"))
+}
+
+// TestRunWithSession_VirtualFile is the E6 core assertion: -f resolves
+// against the request's virtual filesystem, so a file that exists nowhere on
+// the host still applies — exactly the service scenario ("dtctl apply -f
+// x.yaml" where x.yaml lives in a LangChain-style virtual file system).
+func TestRunWithSession_VirtualFile(t *testing.T) {
+	env := newSessionMockEnv(t)
+	t.Setenv("CLAUDECODE", "")
+	t.Setenv("CLAUDE_CODE", "")
+
+	virtual := vfs.NewMapFS(map[string][]byte{
+		"bucket.yaml": []byte("bucketName: virtual_bucket\ntable: logs\nretentionDays: 35\n"),
+	})
+
+	code, _ := captureRun(t,
+		[]string{"create", "bucket", "-f", "bucket.yaml", "--plain"},
+		RunOptions{
+			Session: &Session{EnvironmentURL: env.URL, Token: "tenant-token"},
+			FS:      virtual,
+		})
+	require.Zero(t, code, "create from a virtual file must succeed")
+
+	env.mu.Lock()
+	mutations := env.mutations
+	env.mu.Unlock()
+	require.Equal(t, 1, mutations)
+
+	// Without the FS the same invocation must fail: the file is virtual only.
+	code, _ = captureRun(t,
+		[]string{"create", "bucket", "-f", "bucket.yaml", "--plain"},
+		RunOptions{Session: &Session{EnvironmentURL: env.URL, Token: "tenant-token"}})
+	require.NotZero(t, code, "the virtual file must not exist on the host")
 }
 
 // TestRunWithSession_HostAliasesIgnored: aliases are host-config convenience;
