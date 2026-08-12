@@ -7,16 +7,30 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/dynatrace-oss/dtctl/pkg/client"
 	"github.com/dynatrace-oss/dtctl/pkg/output"
 )
 
 // RunOptions configures a single embedded invocation. The zero value is the
-// CLI default: every capability granted.
+// CLI default: every capability granted, config and credentials resolved from
+// the host (config file, env, keyring), host environment untouched.
 type RunOptions struct {
 	// Capabilities restricts process-level abilities (subprocess spawns) for
 	// this invocation. nil grants everything (the CLI default); embedded
 	// callers typically pass &Capabilities{} to grant nothing.
 	Capabilities *Capabilities
+
+	// Session, when non-nil, pins the invocation to one environment + token
+	// and detaches it from the host's config file, contexts, keyring, and
+	// credential env vars. See Session.
+	Session *Session
+
+	// Env sets environment variables for the duration of the invocation
+	// (restored afterwards), e.g. DTCTL_PROFILE to select a command profile
+	// per request. Applied after session scrubbing, so an explicit entry wins.
+	// The mutation is process-wide while the invocation runs — see
+	// applyRunEnvironment.
+	Env map[string]string
 }
 
 // runMu serializes invocations. The command tree is package state (277
@@ -45,6 +59,15 @@ func Run(argv []string, opts RunOptions) int {
 	}
 	prev := SetCapabilities(granted)
 	defer SetCapabilities(prev)
+
+	cleanup, err := applyRunEnvironment(opts)
+	if err != nil {
+		// A malformed RunOptions is an embedding-caller bug, not a command
+		// error — report it on stderr with a usage exit code.
+		output.PrintHumanError("%s", err)
+		return client.ExitUsageError
+	}
+	defer cleanup()
 
 	restorePristineTree()
 	return executeArgs(argv)

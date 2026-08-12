@@ -158,6 +158,13 @@ func extractContextOverride(args []string) string {
 // for the full command tree, and a non-nil error only when a referenced profile
 // name does not exist.
 func resolveActiveProfile(args []string) (*config.Profile, error) {
+	// Session-backed invocations resolve against the synthetic config: no
+	// user-defined profiles and no context binding, but DTCTL_PROFILE (set per
+	// request via RunOptions.Env) still selects a built-in preset.
+	if runSession != nil {
+		return runSession.syntheticConfig().ResolveProfile()
+	}
+
 	var (
 		cfg *config.Config
 		err error

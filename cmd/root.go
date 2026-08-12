@@ -112,8 +112,11 @@ func executeArgs(argv []string) int {
 	// Resolving aliases first ensures the span name reflects the real command,
 	// not the pre-expansion alias. Load config quietly; if it fails, skip alias
 	// resolution (the real command will produce the proper error later).
+	// Session-backed invocations skip aliases entirely: they are a host-config
+	// convenience, and a tenant request must not expand through the host's
+	// alias table.
 	spanArgs := argv
-	if cfg, err := config.Load(); err == nil {
+	if cfg, err := config.Load(); err == nil && runSession == nil {
 		// Security: warn when an auto-discovered local .dtctl.yaml carries
 		// code-execution keys (aliases / apply hooks) that are ignored. This
 		// makes adoption of an untrusted per-project config visible instead of
@@ -944,6 +947,13 @@ func GetAgentMode() bool {
 // written, so a scripted `DTCTL_CONTEXT=x dtctl ...` cannot repoint other
 // processes on the machine.
 func LoadConfig() (*config.Config, error) {
+	// A session-backed invocation (embedded callers, see Session) is pinned to
+	// its own environment + token: the config file and context overrides do
+	// not apply.
+	if runSession != nil {
+		return runSession.syntheticConfig(), nil
+	}
+
 	var cfg *config.Config
 	var err error
 
