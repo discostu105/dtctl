@@ -214,6 +214,45 @@ func TestConcurrentInstancesAreIsolated(t *testing.T) {
 	}
 }
 
+// TestLargeResponseMemory streams a ~13MB bucket list through the host shim
+// and records the instance memory high-water mark. The ABI streams in 256KB
+// chunks; the guest still buffers the full JSON to parse it (inherent CLI
+// semantics, same as native) — this test quantifies that cost.
+func TestLargeResponseMemory(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /platform/storage/management/v1/bucket-definitions", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"buckets":[`)
+		for i := 0; i < 50000; i++ {
+			if i > 0 {
+				fmt.Fprint(w, ",")
+			}
+			fmt.Fprintf(w, `{"bucketName":"bucket_%06d","table":"logs","displayName":"Synthetic bucket %d for the streaming probe","status":"active","retentionDays":35,"version":1,"updatable":true}`, i, i)
+		}
+		fmt.Fprint(w, `]}`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	r := newTestRunner(t)
+
+	res, err := r.Execute(context.Background(), Request{
+		Args:           []string{"get", "buckets", "-o", "json", "--agent"},
+		EnvironmentURL: srv.URL,
+		Token:          "dt0c01.test.token",
+		Timeout:        120 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.ExitCode != 0 {
+		t.Fatalf("exit=%d stderr=%s", res.ExitCode, res.Stderr)
+	}
+	if !strings.Contains(string(res.Stdout), "bucket_049999") {
+		t.Errorf("last bucket missing — response truncated?")
+	}
+	t.Logf("large response: stdout=%.1f MB mem=%.1f MB dur=%s",
+		float64(len(res.Stdout))/1e6, float64(res.MemoryBytes)/1e6, res.Duration)
+}
+
 func TestEgressDeniedForForeignHost(t *testing.T) {
 	srv := mockDynatrace(t)
 	r := newTestRunner(t)
