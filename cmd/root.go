@@ -93,6 +93,15 @@ func Execute() {
 	os.Exit(Run(os.Args[1:], RunOptions{}))
 }
 
+// AddCommand registers an additional top-level command on the dtctl root.
+// It exists for commands that live outside this package because they import
+// packages that themselves import cmd — registering from here would be an
+// import cycle. `dtctl serve` (pkg/serve, wired in main) is the canonical
+// case. Call before the first Execute/Run.
+func AddCommand(c *cobra.Command) {
+	rootCmd.AddCommand(c)
+}
+
 // executeArgs runs one invocation of the given command line (program name
 // excluded) and returns an exit code. Callers go through Run, which provides
 // serialization and the pristine-tree guarantee.
@@ -166,6 +175,14 @@ func executeArgs(argv []string) int {
 	applyProfile(rootCmd, prof)
 	// --- End command profile filter ---
 
+	// --- Blocked-command filter (embedded callers) ---
+	// Mask commands the embedding caller declared unsupported in its
+	// environment (RunOptions.BlockedCommands) — e.g. the service engine
+	// removes host-oriented commands like config/ctx/auth. Applied after the
+	// profile filter so both masks compose; a nil set is the full surface.
+	applyBlockedCommands(rootCmd, runBlocked)
+	// --- End blocked-command filter ---
+
 	// Initialise OpenTelemetry tracing. Done after alias resolution so that
 	// the span name reflects the actual command (not a pre-alias invocation).
 	// The root span covers the entire invocation; shutdown flushes buffered
@@ -238,7 +255,22 @@ func executeArgs(argv []string) int {
 		rootSpan.SetStatus(codes.Error, err.Error())
 		rootSpan.RecordError(err)
 
-		if agentMode || plainMode {
+		// Masked commands (profile mask, blocked-command filter) disable flag
+		// parsing so the guard is the only observable outcome — which also
+		// means --agent/--plain never reached the flag vars. Honor them from
+		// the raw argv so a machine caller still gets the structured envelope.
+		structuredError := agentMode || plainMode
+		if !structuredError {
+			var maskedProfile *ProfileError
+			var maskedUnsupported *UnsupportedCommandError
+			if errors.As(err, &maskedProfile) || errors.As(err, &maskedUnsupported) {
+				structuredError = hasRawFlag(spanArgs, "--agent") ||
+					hasShortFlagLetter(spanArgs, 'A') ||
+					hasRawFlag(spanArgs, "--plain")
+			}
+		}
+
+		if structuredError {
 			detail := errorToDetail(err)
 			detail.Suggestions = append(detail.Suggestions, allHints...)
 			// Agent/plain mode: error envelopes go to stdout (not stderr) because
@@ -568,6 +600,17 @@ func errorToDetail(err error) *output.ErrorDetail {
 		}
 	}
 
+	// UnsupportedCommandError — command removed from the surface by the
+	// embedding caller (e.g. host-oriented commands inside the service engine).
+	var unsupportedErr *UnsupportedCommandError
+	if errors.As(err, &unsupportedErr) {
+		return &output.ErrorDetail{
+			Code:        "unsupported_in_service",
+			Message:     unsupportedErr.Headline(),
+			Suggestions: unsupportedErr.Suggestions(),
+		}
+	}
+
 	// CapabilityError — a host-restricted ability (subprocess spawn: plugins,
 	// aliases, hooks, editor, browser) was requested but not granted.
 	var capErr *CapabilityError
@@ -774,6 +817,11 @@ func exitCodeForError(err error) int {
 
 	var profileErr *ProfileError
 	if errors.As(err, &profileErr) {
+		return client.ExitUsageError
+	}
+
+	var unsupportedErr *UnsupportedCommandError
+	if errors.As(err, &unsupportedErr) {
 		return client.ExitUsageError
 	}
 
@@ -1293,8 +1341,12 @@ Use "{{.CommandPath}} [command] --help" for more information about a command.{{e
 
 // initConfig reads in config file and ENV variables if set
 func initConfig() {
-	// Auto-detect AI agent environment and enable agent mode
-	if !agentMode && !noAgent {
+	// Auto-detect AI agent environment and enable agent mode. Session-backed
+	// invocations skip auto-detection entirely: whether the *host process*
+	// runs under an AI agent says nothing about the request, and host env
+	// must not shape a tenant's output. Service callers opt in per request,
+	// explicitly, with --agent on the command line.
+	if !agentMode && !noAgent && runSession == nil {
 		if info := aidetect.Detect(); info.Detected {
 			// Only auto-enable if user hasn't explicitly chosen a non-JSON
 			// output format. An explicit `-o json` is compatible — the agent

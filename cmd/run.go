@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -50,6 +51,14 @@ type RunOptions struct {
 	Stdout io.Writer
 	Stderr io.Writer
 	Stdin  io.Reader
+
+	// BlockedCommands removes top-level commands (with their whole subtree)
+	// from this invocation's surface: hidden from help, the `dtctl commands`
+	// catalog, and completion, and guarded so dispatch returns an
+	// UnsupportedCommandError (agent-mode code "unsupported_in_service").
+	// Keyed by top-level command name; the value is the human-readable reason.
+	// nil is the full surface (the CLI default). See applyBlockedCommands.
+	BlockedCommands map[string]string
 }
 
 // runMu serializes invocations. The command tree is package state (277
@@ -59,6 +68,20 @@ type RunOptions struct {
 // validated at 20-47ms per-instance overhead (spike/SPIKE_RESULTS.md) — or
 // more processes. See the dtctl-as-a-service design, work item E1.
 var runMu sync.Mutex
+
+// runActive is true while an invocation executes (between runMu acquisition
+// and release).
+var runActive atomic.Bool
+
+// RunActive reports whether a Run invocation is currently executing. Long-
+// running commands that themselves embed Run — `dtctl serve` accepting
+// requests — use it to refuse execution from inside another invocation:
+// blocking in a RunE would hold the invocation lock for the server's whole
+// lifetime and deadlock every request (main dispatches serve outside Run for
+// exactly this reason).
+func RunActive() bool {
+	return runActive.Load()
+}
 
 // Run executes one dtctl invocation in-process and returns its exit code.
 // argv is the command line without the program name (os.Args[1:] shape).
@@ -71,6 +94,8 @@ var runMu sync.Mutex
 func Run(argv []string, opts RunOptions) int {
 	runMu.Lock()
 	defer runMu.Unlock()
+	runActive.Store(true)
+	defer runActive.Store(false)
 
 	granted := AllCapabilities()
 	if opts.Capabilities != nil {
@@ -78,6 +103,9 @@ func Run(argv []string, opts RunOptions) int {
 	}
 	prev := SetCapabilities(granted)
 	defer SetCapabilities(prev)
+
+	runBlocked = opts.BlockedCommands
+	defer func() { runBlocked = nil }()
 
 	cleanup, err := applyRunEnvironment(opts)
 	if err != nil {

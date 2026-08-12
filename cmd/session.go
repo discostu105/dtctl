@@ -92,10 +92,13 @@ var runSession *Session
 // invocation, so host-level credentials and config selection cannot leak into
 // a tenant's request. DTCTL_TOKEN/DT_API_TOKEN/DTCTL_ACCOUNT_TOKEN mirror
 // credentialEnvVars (plugin_dispatch.go); DTCTL_CONFIG/DTCTL_CONTEXT would
-// repoint config discovery, which a session fully replaces.
+// repoint config discovery, which a session fully replaces; DTCTL_PROFILE and
+// DTCTL_OUTPUT would let the host's preferences shape the request's command
+// surface and output format (per-request values are set explicitly via
+// RunOptions.Env, which applies after this scrub).
 var sessionScrubbedEnvVars = []string{
 	"DTCTL_TOKEN", "DT_API_TOKEN", "DTCTL_ACCOUNT_TOKEN",
-	"DTCTL_CONFIG", "DTCTL_CONTEXT",
+	"DTCTL_CONFIG", "DTCTL_CONTEXT", "DTCTL_PROFILE", "DTCTL_OUTPUT",
 }
 
 // applyRunEnvironment installs the invocation's session and environment

@@ -185,6 +185,10 @@ resources in sync with their file definitions.
 		// Create applier with safety checker (safety checks happen inside applier
 		// with proper ownership determination for updates)
 		applier := apply.NewApplier(c)
+		// The source file is the --write-id writeback target (and hook
+		// context) — it must be set regardless of whether hooks are
+		// configured, or the id never lands back in the file.
+		applier = applier.WithSourceFile(file)
 		if !dryRun {
 			checker, err := NewSafetyChecker(cfg)
 			if err != nil {

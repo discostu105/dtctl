@@ -22,7 +22,10 @@ pkg/
   ├── plugin/    # kubectl-style exec plugin resolution/discovery (docs/dev/PLUGIN_CONVENTIONS.md)
   ├── resources/ # Resource handlers — thin CLI wrappers that delegate to sdk/api/
   ├── output/    # Formatters (table, JSON, YAML, charts, agent envelope, color control)
-  └── exec/      # DQL query execution
+  ├── exec/      # DQL query execution
+  ├── vfs/       # Virtual-filesystem seam: user-supplied file paths resolve against the host disk (CLI) or per-request virtual files (engine)
+  ├── engine/    # Embeddable service engine: one dtctl command line per request — multi-tenant session, virtual files, CLI-identical output
+  └── serve/     # `dtctl serve` — reference HTTP wrapper over pkg/engine (wired in main, outside the invocation lock)
 sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
   ├── session/     # The session layer (docs/dev/CONFIG_CONTRACT.md): config model + load/save, credential stores, OAuth flow/refresh + cross-process lock, client-from-context with parameterized User-Agent, safety semantics
   ├── api/         # Typed API wrappers (one package per Dynatrace API surface)
