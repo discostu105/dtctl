@@ -64,7 +64,7 @@ Token-based authentication and multi-environment configuration are covered in th
 - **Multi-environment**: Switch between dev/staging/prod with a single command; safety levels prevent accidental changes
 - **Watch mode**: Real-time monitoring with `--watch` for all resources
 - **DQL passthrough**: Execute queries directly, with template variables and file-based input
-- **Embeddable**: `dtctl serve http` (or `pkg/engine` in Go) runs the same command surface in-process for services and Workflow actions — multi-tenant per request, no host config, output byte-identical to the CLI
+- **Embeddable**: `dtctl serve http` (experimental, opt in with `DTCTL_EXPERIMENTAL_SERVE=1`) or `pkg/engine` in Go runs the same command surface in-process for services and Workflow actions — multi-tenant per request, no host config, output byte-identical to the CLI
 - **[NO_COLOR](https://no-color.org/) support**: Respects `NO_COLOR`, `FORCE_COLOR=1`, and auto-detects TTY
 
 ## Supported Resources
@@ -125,7 +125,7 @@ These skills provide the domain context (e.g., how to write DQL queries, which m
 
 ## Running as a Service
 
-`dtctl serve http` exposes the CLI over HTTP for AI agents and automation: one request executes one dtctl command line for one tenant (`POST /v1/execute`) and returns the exact output the CLI would have printed. Each request brings its own environment URL and token, file arguments resolve against per-request virtual files, and host-only commands are unavailable. Go callers can embed `pkg/engine` directly instead. It is a reference implementation with no authentication of its own — see [Server Mode](https://dynatrace-oss.github.io/dtctl/docs/serve/) before exposing it beyond localhost.
+`dtctl serve http` exposes the CLI over HTTP for AI agents and automation. It is **experimental**: set `DTCTL_EXPERIMENTAL_SERVE=1` to enable the command, and expect the contract to change. One request executes one dtctl command line for one tenant (`POST /v1/execute`) and returns the exact output the CLI would have printed. Each request brings its own environment URL and token, file arguments resolve against per-request virtual files, and host-only commands are unavailable. Go callers can embed `pkg/engine` directly instead. It is a reference implementation with no authentication of its own — see [Server Mode](https://dynatrace-oss.github.io/dtctl/docs/serve/) before exposing it beyond localhost.
 
 ## Observability
 

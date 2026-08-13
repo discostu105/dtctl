@@ -186,6 +186,7 @@ doctor      - Health check (config, context, token, connectivity, auth)
 diff        - Show differences between local and remote resources
 commands    - Machine-readable command catalog for AI agents (JSON/YAML, --brief, howto)
 serve       - Run dtctl as a server, one subcommand per protocol (serve http)
+              (experimental: registered only with DTCTL_EXPERIMENTAL_SERVE)
 
 # (not implemented yet)
 # patch       - Update specific fields of a resource

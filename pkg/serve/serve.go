@@ -20,6 +20,22 @@ import (
 	"github.com/dynatrace-oss/dtctl/cmd"
 )
 
+// ExperimentalEnvVar gates the `dtctl serve` command surface. Server mode is
+// still taking shape — the request/response contract, the one-invocation-at-a-
+// time concurrency model, and the absence of per-request deadlines are all
+// subject to change — so released builds do not expose it unless the operator
+// opts in. Set it to a truthy value to register the command.
+//
+// The gate covers the *command* only. pkg/engine stays importable: embedding it
+// is a deliberate Go API choice made at compile time, not a surface an end user
+// can stumble into. Remove this gate — and the env var — when serve is GA.
+const ExperimentalEnvVar = "DTCTL_EXPERIMENTAL_SERVE"
+
+// Experimental reports whether the `dtctl serve` command surface is enabled.
+func Experimental() bool {
+	return cmd.ExperimentalEnabled(ExperimentalEnvVar)
+}
+
 // Run executes `dtctl serve ...` standalone with the given arguments
 // (everything after "serve") and returns the process exit code. main
 // dispatches to it *before* the normal command pipeline: a server must run

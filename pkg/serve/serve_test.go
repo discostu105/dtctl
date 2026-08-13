@@ -5,6 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -181,4 +185,68 @@ func TestUnknownProtocolFails(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), `unknown protocol "grpc"`)
 	require.Contains(t, err.Error(), "http", "the error must list what is available")
+}
+
+// TestExperimentalGate: server mode is opt-in. The gate reads the environment
+// the same way the account surface does, so operators learn one convention.
+func TestExperimentalGate(t *testing.T) {
+	for _, c := range []struct {
+		value string
+		want  bool
+	}{
+		{"", false}, {"0", false}, {"false", false}, {"no", false}, {"off", false},
+		{"OFF", false}, {" false ", false},
+		{"1", true}, {"true", true}, {"yes", true}, {"on", true}, {"anything", true},
+	} {
+		t.Setenv(ExperimentalEnvVar, c.value)
+		require.Equalf(t, c.want, Experimental(), "%s=%q", ExperimentalEnvVar, c.value)
+	}
+
+	// Unset is off — the released-build default.
+	t.Setenv(ExperimentalEnvVar, "")
+	require.NoError(t, os.Unsetenv(ExperimentalEnvVar))
+	require.False(t, Experimental())
+}
+
+// TestExperimentalGateHidesCommand builds the real binary and checks the gate
+// end to end: the wiring lives in main (both the dispatch and the registration),
+// which no unit test in this package can reach. Without the opt-in, `serve` must
+// be an ordinary unknown command — not hidden-but-runnable, and not advertised
+// in help or the command catalog.
+func TestExperimentalGateHidesCommand(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds the dtctl binary; skipped in -short mode")
+	}
+	name := "dtctl"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	exe := filepath.Join(t.TempDir(), name)
+	build := exec.Command("go", "build", "-o", exe, ".")
+	build.Dir = filepath.Join("..", "..") // module root, where main lives
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "build failed: %s", out)
+
+	run := func(env []string, args ...string) (int, string) {
+		c := exec.Command(exe, args...)
+		c.Env = append(os.Environ(), env...)
+		combined, _ := c.CombinedOutput()
+		return c.ProcessState.ExitCode(), string(combined)
+	}
+
+	off := []string{ExperimentalEnvVar + "="}
+	code, output := run(off, "serve", "http", "--addr", "127.0.0.1:0")
+	require.NotZero(t, code, "serve must not run without the opt-in")
+	require.Contains(t, output, `unknown command "serve"`)
+
+	// Matched as a command entry ("  serve   Run dtctl as a server"), so the
+	// assertion does not trip over unrelated prose containing "server".
+	_, output = run(off, "--help")
+	require.NotRegexp(t, `(?m)^\s+serve\s`, output,
+		"an off-by-default surface must not be advertised in help")
+
+	// With the opt-in the command exists again; bare `serve` is discovery.
+	code, output = run([]string{ExperimentalEnvVar + "=1"}, "serve")
+	require.Zero(t, code, "bare serve prints help and exits 0: %s", output)
+	require.Contains(t, output, "http")
 }

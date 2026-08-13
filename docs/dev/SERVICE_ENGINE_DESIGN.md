@@ -1,6 +1,7 @@
 # dtctl as a Service — Engine Design
 
-**Status:** Implemented
+**Status:** Implemented; `dtctl serve` is experimental and gated behind
+`DTCTL_EXPERIMENTAL_SERVE` (see [Maturity](#maturity))
 **Created:** 2026-08-13
 **Audience:** anyone changing `cmd/`, adding a command, or reading a user-supplied file.
 
@@ -245,6 +246,30 @@ The service is not a perfect mirror, and the differences are intentional:
 - **`Env` is not exposed over HTTP.** Arbitrary variables reach proxies,
   exporters, and other process-level behavior. Embedding hosts that need it use
   `engine.Request.Env` directly, in-process.
+
+## Maturity
+
+`pkg/engine` is the stable half: a Go caller opts into it at compile time, and
+the isolation rules above are enforced by guard tests.
+
+`dtctl serve` is **experimental** and registered only when
+`DTCTL_EXPERIMENTAL_SERVE` is set (the `DTCTL_EXPERIMENTAL_ACCOUNT` convention;
+`serve.Experimental()` and the gate in `main`). Without it the command does not
+exist — no help entry, no catalog entry, an ordinary "unknown command". The gate
+comes off when the items below are settled, because each one changes what an
+operator can rely on:
+
+- **No per-request deadline.** A started execution cannot be interrupted, and it
+  holds the single invocation slot. One `wait` with a long timeout, or a `query`
+  against a slow environment, stalls every queued request behind it.
+- **No admission control.** Requests queue on the invocation mutex without a
+  bound; there is no "server busy" answer and no way to shed load.
+- **Unbounded commands are still reachable.** `query --live` never returns on
+  its own. Deciding whether the service surface excludes such commands (as it
+  excludes `inspect`) or the transport imposes deadlines is the open half of the
+  question below.
+- **Per-invocation tracing cost.** `tracing.Init`/shutdown runs per invocation
+  with a 5s flush budget; in a long-lived server that belongs at process scope.
 
 ## Open questions
 

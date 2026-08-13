@@ -38,7 +38,7 @@ dtctl [verb] [resource-type] [resource-name] [flags]
 | `doctor` | Health check (config, context, token, connectivity, auth) |
 | `commands` | Machine-readable command catalog for AI agents |
 | `inventory` | Probe the environment: which data, entity types, and capabilities exist here |
-| `serve` | Run dtctl as a server that executes command lines for agents and automation |
+| `serve` | Run dtctl as a server that executes command lines for agents and automation (experimental: `DTCTL_EXPERIMENTAL_SERVE=1`) |
 
 ## Global Flags
 
@@ -359,7 +359,12 @@ See [Environment Inventory]({{ '/docs/inventory/' | relative_url }}) for the dis
 
 ## Serve
 
+**Experimental**, and not registered unless you opt in — without the variable
+below, `dtctl serve` is an unknown command:
+
 ```bash
+export DTCTL_EXPERIMENTAL_SERVE=1
+
 dtctl serve                                      # List the protocols this build can speak
 dtctl serve http                                 # JSON over HTTP on 127.0.0.1:7211
 dtctl serve http --addr 0.0.0.0:8080             # Custom listen address

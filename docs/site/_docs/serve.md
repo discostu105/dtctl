@@ -19,6 +19,24 @@ to dtctl from inside the platform.
 > binds to localhost by default. Put your own authentication and TLS in front
 > before exposing it — see [Security](#security).
 
+## Experimental: opt in first
+
+Server mode is **experimental and off by default**. The request/response
+contract, the one-command-at-a-time concurrency model, and the absence of
+per-request deadlines are all still subject to change, so a released build does
+not expose the command until you ask for it:
+
+```bash
+export DTCTL_EXPERIMENTAL_SERVE=1
+dtctl serve http
+```
+
+Without the variable, `dtctl serve` is an ordinary unknown command — it does not
+appear in `--help` or in the `dtctl commands` catalog. This mirrors
+`DTCTL_EXPERIMENTAL_ACCOUNT`. The gate covers the *command* only:
+[`pkg/engine`](#embedding-pkgengine-instead) is importable Go API, and embedding
+it is a compile-time choice rather than something an operator can trip over.
+
 ## The command surface
 
 `serve` is a **parent** command; each protocol is its own subcommand. Naming the
