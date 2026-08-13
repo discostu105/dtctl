@@ -90,16 +90,23 @@ func (s *Session) syntheticConfig() *config.Config {
 var runSession *Session
 
 // sessionScrubbedEnvVars are unset for the duration of a session-backed
-// invocation, so host-level credentials and config selection cannot leak into
-// a tenant's request. DTCTL_TOKEN/DT_API_TOKEN/DTCTL_ACCOUNT_TOKEN mirror
+// invocation, so host-level credentials and preferences cannot leak into a
+// tenant's request. DTCTL_TOKEN/DT_API_TOKEN/DTCTL_ACCOUNT_TOKEN mirror
 // credentialEnvVars (plugin_dispatch.go); DTCTL_CONFIG/DTCTL_CONTEXT would
 // repoint config discovery, which a session fully replaces; DTCTL_PROFILE and
 // DTCTL_OUTPUT would let the host's preferences shape the request's command
 // surface and output format (per-request values are set explicitly via
 // RunOptions.Env, which applies after this scrub).
+//
+// The rest are here because a request's *output bytes* must not depend on the
+// host's environment: FORCE_COLOR would inject ANSI escapes into every
+// response, NO_COLOR is scrubbed alongside it so colour resolves from the
+// invocation alone, and DTCTL_SPILL/DTCTL_SPILL_DIR would re-enable spilling
+// (or redirect it) behind the HostDiskSpill capability's back.
 var sessionScrubbedEnvVars = []string{
 	"DTCTL_TOKEN", "DT_API_TOKEN", "DTCTL_ACCOUNT_TOKEN",
 	"DTCTL_CONFIG", "DTCTL_CONTEXT", "DTCTL_PROFILE", "DTCTL_OUTPUT",
+	"FORCE_COLOR", "NO_COLOR", "DTCTL_SPILL", "DTCTL_SPILL_DIR",
 }
 
 // applyRunEnvironment installs the invocation's session and environment

@@ -3,12 +3,13 @@ package cmd
 import "fmt"
 
 // Capabilities enumerates the process-level abilities the host grants the
-// command tree. Every path that would spawn a subprocess (or hand the process
-// over entirely, as Unix plugin dispatch does via exec) is gated on one of
-// these, so an embedding caller — the service engine, `dtctl serve`, tests —
-// can make those paths structurally unreachable instead of relying on
-// configuration. The CLI binary grants everything; embedded callers grant
-// nothing (see docs/dev/SERVICE_ENGINE_DESIGN.md).
+// command tree: spawning a subprocess (or handing the process over entirely, as
+// Unix plugin dispatch does via exec), and reaching for the host's disk outside
+// the vfs seam. Every such path is gated on one of these, so an embedding
+// caller — the service engine, `dtctl serve`, tests — can make it structurally
+// unreachable instead of relying on configuration. The CLI binary grants
+// everything; embedded callers grant nothing (see
+// docs/dev/SERVICE_ENGINE_DESIGN.md).
 type Capabilities struct {
 	// PluginDispatch allows unknown commands to exec dtctl-* binaries from
 	// PATH (full process replacement on Unix).
@@ -21,6 +22,11 @@ type Capabilities struct {
 	Editor bool
 	// BrowserOpen allows `open` to spawn the OS URL handler.
 	BrowserOpen bool
+	// HostDiskSpill allows large results to spill to a file on the host disk
+	// (`--spill`, `--spill-to`, and the automatic spill in agent mode). The
+	// spilled file and the path returned to the caller are both host state, so
+	// an embedded invocation returns its rows inline instead.
+	HostDiskSpill bool
 }
 
 // AllCapabilities is the CLI default: everything granted.
@@ -31,6 +37,7 @@ func AllCapabilities() Capabilities {
 		ApplyHooks:     true,
 		Editor:         true,
 		BrowserOpen:    true,
+		HostDiskSpill:  true,
 	}
 }
 

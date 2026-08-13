@@ -46,9 +46,13 @@ type Request struct {
 	// command writes (e.g. `apply --write-id` stamping an id back into the
 	// source) land in it. Paths are normalized, so "x.yaml", "./x.yaml" and
 	// "/x.yaml" are the same file. nil is an empty filesystem — not the host
-	// disk; the engine never touches host files.
+	// disk: a user-named path resolves here or not at all, which the
+	// TestUserFilePathsGoThroughVFS guard enforces across cmd/ and pkg/.
+	// (Host state dtctl owns — a temp file, a cache — is a separate matter;
+	// the commands that use it are blocked or ungranted in a service.)
 	Files map[string][]byte
-	// Stdin feeds commands that read standard input (`-f -`). nil is EOF.
+	// Stdin feeds commands that read standard input (`-f -`). nil is an empty
+	// stream (immediate EOF) — never the host process's stdin.
 	Stdin []byte
 
 	// Env sets additional environment variables for the run (e.g.
@@ -102,10 +106,11 @@ func Execute(ctx context.Context, req Request) (*Result, error) {
 		env[config.ProfileEnvVar] = req.Profile
 	}
 
-	var stdin io.Reader
-	if req.Stdin != nil {
-		stdin = bytes.NewReader(req.Stdin)
-	}
+	// Always a reader, never nil: a nil RunOptions.Stdin leaves the *host*
+	// process's stdin in place, which a request must never see (and which can
+	// block forever on an open pipe, wedging the serialized engine). A nil
+	// req.Stdin yields an empty reader, i.e. immediate EOF.
+	stdin := io.Reader(bytes.NewReader(req.Stdin))
 
 	files := vfs.NewMapFS(req.Files)
 	var stdout, stderr bytes.Buffer

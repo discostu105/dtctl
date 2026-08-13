@@ -26,6 +26,11 @@ var unsupportedCommands = map[string]string{
 	"doctor":     "it diagnoses the local dtctl installation and config",
 	"completion": "it generates shell completion scripts for a local shell",
 	"serve":      "the service cannot be nested inside itself",
+	// inspect is a reader for files dtctl spilled to the local disk. A service
+	// request never spills (the HostDiskSpill capability is not granted, so
+	// results come back inline), and the path it takes would resolve on the
+	// server's disk rather than in the request — host state on both counts.
+	"inspect": "it reads result files spilled to the local disk; a service request receives its rows inline instead",
 }
 
 // UnsupportedCommands returns the top-level commands the engine blocks, keyed

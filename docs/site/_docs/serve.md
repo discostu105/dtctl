@@ -140,26 +140,41 @@ reached a terminal or a server. Two consequences worth internalizing:
 Servers are multi-tenant per invocation. The local dtctl config file, the
 keyring, and the credential and config environment variables (`DTCTL_TOKEN`,
 `DT_API_TOKEN`, `DTCTL_ACCOUNT_TOKEN`, `DTCTL_CONFIG`, `DTCTL_CONTEXT`) are
-**never read** — they are scrubbed for the duration of each run. Nothing about
-the host process's identity leaks into a request, and nothing from one request
-survives into the next.
+**never read** — they are scrubbed for the duration of each run, along with the
+host preferences that would otherwise shape a response's bytes (`DTCTL_PROFILE`,
+`DTCTL_OUTPUT`, `DTCTL_SPILL`, `DTCTL_SPILL_DIR`, `FORCE_COLOR`, `NO_COLOR`).
+Nothing about the host process's identity leaks into a request, and nothing from
+one request survives into the next.
 
-File arguments follow the same rule: `-f`, `--data-file`, query files, and
-writebacks resolve against the request's `files` map, never the server's disk.
-Paths are normalized, so `x.yaml`, `./x.yaml`, and `/x.yaml` are the same file. A
-`files` map you did not send is an empty filesystem, not the host filesystem.
+File arguments follow the same rule: `-f`, `--data-file`, query files, files to
+`diff`, and writebacks resolve against the request's `files` map, never the
+server's disk. Paths are normalized, so `x.yaml`, `./x.yaml`, and `/x.yaml` are
+the same file. A `files` map you did not send is an empty filesystem, not the
+host filesystem. Standard input is the request's `stdin` and nothing else: a
+request that sends none reads an empty stream, never the server's.
+
+These are enforced, not merely intended: `TestUserFilePathsGoThroughVFS` fails
+the build if any file under `cmd/` or `pkg/` reaches the host filesystem outside
+the seam without a documented reason.
 
 ## What is unavailable, and why
 
 Server mode is deliberately not a perfect mirror of the local CLI:
 
 - **Host-only commands are removed from the surface**: `config`, `ctx`, `auth`,
-  `account`, `alias`, `edit`, `plugin`, `skills`, `doctor`, `completion`, and
-  `serve` itself. They manage host-local state (a config file, a keyring, a
-  shell, locally installed tools, an interactive session) that does not exist for
-  a service request — or would nest the service inside itself. They are hidden
-  from `--help` and from the `dtctl commands` catalog, and invoking one returns
-  the stable agent error code `unsupported_in_service` with the reason attached.
+  `account`, `alias`, `edit`, `plugin`, `skills`, `doctor`, `completion`,
+  `inspect`, and `serve` itself. They manage host-local state (a config file, a
+  keyring, a shell, locally installed tools, a spilled result file, an
+  interactive session) that does not exist for a service request — or would nest
+  the service inside itself. They are hidden from `--help` and from the
+  `dtctl commands` catalog, and invoking one returns the stable agent error code
+  `unsupported_in_service` with the reason attached.
+- **Results are never spilled to disk.** Locally, a large result can spill to a
+  file and return a path (`--spill`, `--spill-to`, and automatically in agent
+  mode). A service request has no host disk of its own: the file would outlive
+  the request on the *server's* disk and the path would be unreadable by the
+  caller, so rows always come back inline. Asking for a spill explicitly returns
+  `capability_disabled` rather than quietly inlining the result.
 - **No subprocesses.** Plugins, shell aliases, pre-apply hooks, interactive
   editors, and browser opens are all disabled; requesting one yields
   `capability_disabled`. Everything a request needs happens in-process.

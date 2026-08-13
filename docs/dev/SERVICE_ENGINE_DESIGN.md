@@ -130,14 +130,22 @@ content, err := vfs.ReadFileOrStdin(flagValue) // when "-" means stdin
 ```
 
 Applies to every path a **user named**: `-f`, `--file`, `--data-file`, query
-files, and writebacks like `apply --write-id`. Under an embedded invocation
-those files exist only in the request; a direct `os.ReadFile` silently reads the
-*server's* filesystem instead — a broken feature and a traversal into host
-state in one line.
+files, files to `diff`, and writebacks like `apply --write-id`. Under an embedded
+invocation those files exist only in the request; a direct `os.ReadFile` silently
+reads the *server's* filesystem instead — a broken feature and a traversal into
+host state in one line.
+
+The rule follows the path, not the package. `cmd/diff.go` read its `-f` flags
+through the seam while the `pkg/diff` helper one call deeper used `os.ReadFile`,
+which is the same hole with an extra stack frame — and `dtctl inspect` took a
+path argument straight to `os.Open`. Both survived a `cmd/`-only guard; both are
+why the guard now scans `pkg/` too.
 
 Paths **dtctl chose itself** — editor round-trip temp files, the config file,
 spill buffers — are host state and stay on `os`. That is the whole test: whose
-file is it?
+file is it? Host state is only defensible while an embedded invocation cannot
+reach it, so pair it with the thing that keeps it unreachable: a blocked command
+(rule 6) or an ungranted capability (rule 2).
 
 Also never open `/dev/stdin` as a path. The stream seam swaps the `os.Stdin`
 *variable*; a path reaches the process's real fd 0, past the redirection, and
@@ -145,14 +153,22 @@ does not exist on Windows. Use `os.Stdin` (the variable) or
 `vfs.ReadFileOrStdin`.
 
 **Guard:** `TestUserFilePathsGoThroughVFS` (`cmd/vfs_guard_test.go`) fails on any
-direct `os` file call in `cmd/` outside an annotated allowlist.
+direct `os` file call under `cmd/` or `pkg/` outside an annotated allowlist,
+where each entry names what keeps that path unreachable from a service request.
 
-### 2. Never spawn a subprocess without a capability gate
+### 2. Never reach the host without a capability gate
 
 Every path in `cmd/` that spawns or replaces the process goes through one of the
-five gateway files, each gated on a `cmd.Capabilities` field. Embedded callers
-grant nothing, which makes those paths structurally unreachable rather than
-merely discouraged.
+five gateway files, each gated on a `cmd.Capabilities` field. The same applies to
+host-disk features that live outside the vfs seam: result spilling writes a file
+the caller cannot read and that outlives the request, so it is gated on
+`HostDiskSpill`. Embedded callers grant nothing, which makes those paths
+structurally unreachable rather than merely discouraged.
+
+A capability is the right tool when the ability is *conditional* on the host; a
+blocked command (rule 6) is right when the whole command is meaningless without
+one. `--spill` is the former (the rows come back inline instead); `inspect`, a
+reader for spilled files, is the latter.
 
 **Guard:** `TestSubprocessSpawnsConfinedToGateways` (`cmd/capabilities_test.go`)
 confines `exec.Command`/`syscall.Exec` in `cmd/` to the gateway files.

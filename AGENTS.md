@@ -27,7 +27,7 @@ pkg/
   ├── exec/      # DQL query execution
   ├── vfs/       # Virtual-filesystem seam: user-supplied file paths resolve against the host disk (CLI) or per-request virtual files (engine)
   ├── engine/    # Embeddable service engine: one dtctl command line per request — multi-tenant session, virtual files, CLI-identical output
-  └── serve/     # `dtctl serve <protocol>` — reference servers over pkg/engine, one subcommand per protocol (`serve http` today; wired in main, outside the invocation lock)
+  └── serve/     # `dtctl serve <protocol>` — reference servers over pkg/engine, one subcommand per protocol (`serve http` today; wired in main, outside the invocation lock). Experimental: registered only when DTCTL_EXPERIMENTAL_SERVE is set
 sdk/            # Separate Go module (github.com/dynatrace-oss/dtctl/sdk)
   ├── session/     # The session layer (docs/dev/CONFIG_CONTRACT.md): config model + load/save, credential stores, OAuth flow/refresh + cross-process lock, client-from-context with parameterized User-Agent, safety semantics
   ├── api/         # Typed API wrappers (one package per Dynatrace API surface)
@@ -223,9 +223,14 @@ content, err := vfs.ReadFileOrStdin(pathFromFlag) // ✅ when "-" means stdin
 ```
 
 The test is **whose file is it**: a path the *user named* (`-f`, `--file`,
-`--data-file`, a query file, an `apply --write-id` writeback) is request state
-and must go through the seam. A path *dtctl chose* (editor temp file, config
-file, spill buffer) is host state and stays on `os`.
+`--data-file`, a query file, a file to `diff`, an `apply --write-id` writeback)
+is request state and must go through the seam. A path *dtctl chose* (editor temp
+file, config file, spill buffer) is host state and stays on `os` — but only when
+a blocked command or an ungranted capability keeps a request from reaching it.
+
+**The rule follows the path, not the package.** `cmd/` reading through the seam
+and then handing the path to a `pkg/` helper that calls `os.ReadFile` is the
+same hole one frame deeper. The guard scans `cmd/` *and* `pkg/`.
 
 Never open `/dev/stdin` as a path — the seam swaps the `os.Stdin` *variable*, so
 a path slips past it and doesn't exist on Windows. Use `os.Stdin` or
@@ -233,11 +238,14 @@ a path slips past it and doesn't exist on Windows. Use `os.Stdin` or
 
 *Guard*: `go test ./cmd/ -run TestUserFilePathsGoThroughVFS`
 
-### 2. No subprocess without a capability gate
+### 2. No subprocess — and no host disk — without a capability gate
 
 Spawning (`exec.Command`, `syscall.Exec`) belongs in one of the five gateway
-files, each gated on a `cmd.Capabilities` field. Embedded callers grant nothing,
-so those paths become structurally unreachable rather than merely discouraged.
+files, each gated on a `cmd.Capabilities` field. Host-disk features outside the
+vfs seam are gated the same way: result spilling needs `HostDiskSpill`, because a
+spilled file outlives the request on the server and its path means nothing to the
+caller. Embedded callers grant nothing, so those paths become structurally
+unreachable rather than merely discouraged.
 
 *Guard*: `go test ./cmd/ -run TestSubprocessSpawnsConfinedToGateways`
 
