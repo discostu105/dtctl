@@ -4,7 +4,7 @@
 // install a per-request FS — typically a MapFS built from the request's
 // virtual files — so `apply -f x.yaml` works against files that exist only
 // in the request, and writebacks (e.g. `apply --write-id`) land back in the
-// request instead of on the host (design work item E6).
+// request instead of on the host (docs/dev/SERVICE_ENGINE_DESIGN.md).
 //
 // Only user-supplied paths go through this seam. Internal scratch files
 // (editor round-trip temp files, spill buffers, caches) deliberately stay on

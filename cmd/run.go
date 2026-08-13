@@ -64,9 +64,9 @@ type RunOptions struct {
 // runMu serializes invocations. The command tree is package state (277
 // command values wired by init), so two interleaved executions would share
 // flag values and tree mutations. In-process callers therefore queue;
-// parallelism comes from running more instances — the model the WASI spike
-// validated at 20-47ms per-instance overhead (spike/SPIKE_RESULTS.md) — or
-// more processes. See the dtctl-as-a-service design, work item E1.
+// parallelism comes from running more instances — the model a WASI spike
+// measured at 20-47ms per-instance overhead — or more processes.
+// See docs/dev/SERVICE_ENGINE_DESIGN.md ("Serialization").
 var runMu sync.Mutex
 
 // runActive is true while an invocation executes (between runMu acquisition

@@ -8,7 +8,7 @@ import "fmt"
 // these, so an embedding caller — the service engine, `dtctl serve`, tests —
 // can make those paths structurally unreachable instead of relying on
 // configuration. The CLI binary grants everything; embedded callers grant
-// nothing (see the dtctl-as-a-service design, work item E3).
+// nothing (see docs/dev/SERVICE_ENGINE_DESIGN.md).
 type Capabilities struct {
 	// PluginDispatch allows unknown commands to exec dtctl-* binaries from
 	// PATH (full process replacement on Unix).

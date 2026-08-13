@@ -12,11 +12,12 @@ import (
 // callers. When set on RunOptions, the invocation runs against exactly this
 // environment and token: the host's config file, contexts, keyring, and
 // credential env vars are all out of the picture, which is what a multi-tenant
-// service needs — every request brings its own tenant (design work item E4).
+// service needs — every request brings its own tenant
+// (docs/dev/SERVICE_ENGINE_DESIGN.md).
 //
 // A session replaces credential *resolution*, not command *policy*: blocking
 // commands that make no sense service-side (config, ctx, login) is the
-// engine's job (work item E8), on top of this seam.
+// engine's job, on top of this seam.
 type Session struct {
 	// EnvironmentURL is the Dynatrace environment to run against
 	// (e.g. https://abc12345.apps.dynatrace.com). Required.

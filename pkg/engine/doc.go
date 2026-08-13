@@ -1,10 +1,10 @@
 // Package engine executes dtctl command lines in-process for services.
 //
-// It is the embedding surface of the dtctl-as-a-service design: a caller
-// hands over a command string exactly as a user would type it locally, plus
-// the tenant to run it against (environment URL + token) and an optional set
-// of virtual files, and gets back the exact byte streams the CLI would have
-// printed, the exit code, and the final state of the virtual files.
+// It is the embedding surface described in docs/dev/SERVICE_ENGINE_DESIGN.md: a
+// caller hands over a command string exactly as a user would type it locally,
+// plus the tenant to run it against (environment URL + token) and an optional
+// set of virtual files, and gets back the exact byte streams the CLI would
+// have printed, the exit code, and the final state of the virtual files.
 //
 //	res, err := engine.Execute(ctx, engine.Request{
 //	    Command:        `apply -f workflow.yaml --write-id --agent`,

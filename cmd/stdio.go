@@ -11,7 +11,8 @@ import (
 // os.Stdin (rather than threading writers through every command) catches
 // every output path at once — fmt.Print*, the output package, cobra help,
 // error envelopes — which is exactly the CLI-identical byte stream the
-// service contract wants (design work item E7). Safe because invocations are
+// service contract wants (docs/dev/SERVICE_ENGINE_DESIGN.md). Safe because
+// invocations are
 // serialized (runMu) and the pristine-tree restore clears any cobra-bound
 // writers.
 //
