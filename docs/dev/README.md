@@ -29,6 +29,17 @@ Technical architecture and implementation details:
 
 ---
 
+### [PRODUCT_IDEAS.md](PRODUCT_IDEAS.md)
+Product ideation (September 2026):
+- **Ten ranked bets** - The highest-leverage ideas for humans, AI agents, and automations
+- **Environment knowledge** - Recipes, inventory and dynatui: what the branches contain, eval evidence, and a layered plan
+- **Ideas by audience** - Humans, agents, CI/CD, platform adoption, and out-of-the-box
+- **Rough edges** - Inconsistencies found during the review
+
+**Use this for**: Roadmap discussions and picking the next features to design.
+
+---
+
 ### [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)
 Current implementation status and feature tracking:
 - ✅ **Implemented Features** - Verbs, resources, special features
