@@ -83,6 +83,35 @@ func TestEmptyFlagValueIsRejected(t *testing.T) {
 	}
 }
 
+// clearFlag returns one flag to its declared default, as resetFlagSet does for
+// a whole set. Tests that reset a flag with Set(name, "") cannot use that on a
+// flag that rejects an empty value: the Set fails and the old value stays.
+func clearFlag(cmd *cobra.Command, name string) {
+	f := cmd.Flags().Lookup(name)
+	f.Changed = false
+	if rv, ok := f.Value.(interface{ Reset() }); ok {
+		rv.Reset()
+		return
+	}
+	_ = f.Value.Set(f.DefValue)
+}
+
+// TestRejectEmptySliceFlagKeepsHelpDefault pins that wrapping a repeatable
+// flag leaves its help line alone: pflag prints "(default [])" for a value
+// type it does not recognize, and the wrapper is one.
+func TestRejectEmptySliceFlagKeepsHelpDefault(t *testing.T) {
+	if _, ok := shareDashboardCmd.Flags().Lookup("user").Value.(*nonEmptySliceValue); !ok {
+		t.Fatal("share dashboard --user is no longer wrapped; pick another wrapped slice flag")
+	}
+	usage := shareDashboardCmd.UsageString()
+	if strings.Contains(usage, "(default [])") {
+		t.Errorf("usage shows a default for a wrapped slice flag:\n%s", usage)
+	}
+	if !strings.Contains(usage, "--user stringArray") {
+		t.Errorf("usage lost the --user flag:\n%s", usage)
+	}
+}
+
 func TestNonEmptyFlagResetRestoresDefault(t *testing.T) {
 	cmd := &cobra.Command{Use: "x"}
 	cmd.Flags().String("name", "fallback", "")
