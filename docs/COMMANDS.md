@@ -284,8 +284,8 @@ _mutating | access: run | safety: OperationCreate_
 | analyzer | `davis:analyzers:execute` |
 | api | _(none declared)_ |
 | function | `app-engine:functions:run` |
-| preview-processor | _(none declared)_ |
-| slo | _(none declared)_ |
+| preview-processor | `openpipeline:configurations:read` |
+| slo | `slo:slos:read`, `slo:objective-templates:read` |
 | workflow | `automation:workflows:run` |
 
 Subcommands:
@@ -455,8 +455,10 @@ _mutating | access: write | safety: OperationUpdate_
 
 | Resource | Required scopes |
 | --- | --- |
+| claim | `document:environment-shares:claim` |
 | dashboard | `document:documents:write` |
 | document | `document:documents:write` |
+| get | `document:environment-shares:read` |
 | notebook | `document:documents:write` |
 
 
