@@ -141,6 +141,13 @@ type DQLExecuteOptions struct {
 	// effect unless the API actually returned type information.
 	EmitTypes bool
 
+	// TypesRequested reports that the user explicitly asked for the type block:
+	// --include-types was passed and is true. EmitTypes is set whenever the flag
+	// was passed at all, --include-types=false included; the "has no effect"
+	// warning keys off this field instead, so declining the block never warns
+	// about not getting it. It does not affect what is printed on stdout.
+	TypesRequested bool
+
 	// Typed opts in to casting scalar columns (long, double, duration, boolean)
 	// to their native JSON/YAML types using the DQL type metadata, instead of the
 	// wire form where integer-valued columns arrive as strings. Off by default so
@@ -1026,6 +1033,17 @@ func (e *DQLExecutor) printRecords(query string, result *DQLQueryResponse, recor
 		effectiveFormat = choice.Format
 	}
 
+	// An explicit --include-types asks for the type block as a sibling of
+	// "records", which only the document-shaped encodings in the default branch
+	// below have room for. Say so on stderr rather than dropping it silently
+	// (#435); stdout is unchanged. Checked after -o auto has resolved, so an
+	// auto run that picks csv warns and one that picks yaml does not.
+	if opts.TypesRequested {
+		if w := includeTypesInertWarning(effectiveFormat, len(records)); w != "" {
+			output.PrintWarning("%s", w)
+		}
+	}
+
 	printer := output.NewPrinterWithOpts(output.PrinterOptions{
 		Format:     effectiveFormat,
 		JQFilter:   opts.JQFilter,
@@ -1118,6 +1136,32 @@ func (e *DQLExecutor) printRecords(query string, result *DQLQueryResponse, recor
 		}
 		return printer.Print(result)
 	}
+}
+
+// includeTypesInertWarning returns the warning for an explicit --include-types
+// whose type block the resolved output format cannot carry, or "" when the
+// format emits it. It mirrors the format switch in printResults: every format
+// with its own case there prints the rows alone, and only the default branch
+// (json/yaml/toon — and, under --jq, the filter input) carries "types".
+//
+// The chart formats depend on rows, the number of records the chart branch
+// sees. With none it hands the raw API response to the chart printer, which
+// falls back to JSON and so prints the response's own "types" block; there is
+// nothing to warn about then. With rows, it passes {"records": ...} alone, so
+// even the not-chartable JSON fallback carries no types.
+func includeTypesInertWarning(format string, rows int) string {
+	switch format {
+	case "chart", "sparkline", "spark", "barchart", "bar", "braille", "br":
+		if rows == 0 {
+			return ""
+		}
+		return fmt.Sprintf("--include-types has no effect with %s output (types are emitted for -o json/yaml/toon)", format)
+	case "table", "wide", "csv", "jsonl":
+		return fmt.Sprintf("--include-types has no effect with %s output (types are emitted for -o json/yaml/toon)", format)
+	case "parquet":
+		return "--include-types has no effect with parquet output (the column types are already encoded in the Parquet schema)"
+	}
+	return ""
 }
 
 // printAgentJQ emits an agent envelope whose result is the --jq output.
