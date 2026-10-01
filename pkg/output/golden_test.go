@@ -697,6 +697,28 @@ func TestGolden_GetDocuments(t *testing.T) {
 	}
 }
 
+func TestGolden_ClaimEnvironmentShare(t *testing.T) {
+	claim := &document.EnvironmentShareClaim{
+		DocumentID:   "doc-1234",
+		Name:         "Prod overview",
+		DocumentType: "dashboard",
+		Access:       []string{"read"},
+		AccessLevel:  "read",
+		URL:          "https://abc.apps.dynatrace.com/ui/apps/dynatrace.dashboards/dashboard/doc-1234",
+	}
+
+	for _, format := range []string{"table", "wide", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			var buf bytes.Buffer
+			printer := NewPrinterWithWriter(format, &buf)
+			if err := printer.Print(claim); err != nil {
+				t.Fatalf("Print failed: %v", err)
+			}
+			assertGolden(t, "claim/environment-share-"+format, buf.String())
+		})
+	}
+}
+
 // dashboardWithContentFixture models a single dashboard as returned by
 // `get dashboard <id>` — with a populated Content body. This is the path the
 // content-as-raw-bytes regression broke; the list fixtures above never set

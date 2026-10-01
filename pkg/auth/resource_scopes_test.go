@@ -55,7 +55,7 @@ var baselineScopes = map[config.SafetyLevel][]string{
 		"hub:catalog:read",
 		"openpipeline:configurations:read",
 	},
-	config.SafetyLevelReadWriteMine: { // 55 scopes
+	config.SafetyLevelReadWriteMine: { // 56 scopes
 		"openid",
 		"offline_access",
 		"automation:workflows:read",
@@ -109,6 +109,7 @@ var baselineScopes = map[config.SafetyLevel][]string{
 		"davis:analyzers:execute",
 		"davis-copilot:conversations:execute",
 		"app-engine:functions:run",
+		"document:environment-shares:claim",
 		"email:emails:send",
 		"dev-obs:breakpoints:set",
 	},
@@ -329,7 +330,7 @@ func TestRequiredScopesMatchSafetyLevels(t *testing.T) {
 	union := asSet(GetScopesForSafetyLevel(config.SafetyLevelDangerouslyUnrestricted))
 
 	for resource, as := range ResourceScopes {
-		for _, access := range []Access{AccessRead, AccessWrite, AccessDelete, AccessRun} {
+		for _, access := range []Access{AccessRead, AccessWrite, AccessDelete, AccessRun, AccessClaim} {
 			for _, scope := range as.For(access) {
 				if !union[scope] {
 					t.Errorf("ResourceScopes[%q].%s scope %q is not granted by any safety level", resource, access, scope)
@@ -353,6 +354,7 @@ func TestAccessForVerb(t *testing.T) {
 		want     Access
 	}{
 		{"get", "", AccessRead},
+		{"claim", "OperationCreate", AccessClaim},
 		{"describe", "", AccessRead},
 		{"query", "", AccessRead},
 		{"create", "OperationCreate", AccessWrite},
