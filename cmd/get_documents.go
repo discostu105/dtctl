@@ -279,6 +279,9 @@ Examples:
 		if err != nil {
 			return err
 		}
+		if err := requireDocumentType(metadata, "dashboard", dashboardID); err != nil {
+			return err
+		}
 
 		// Safety check with actual ownership
 		currentUserID, _ := c.CurrentUserID()
@@ -346,6 +349,9 @@ Examples:
 		// Get current version for optimistic locking and details for confirmation
 		metadata, err := handler.GetMetadata(notebookID)
 		if err != nil {
+			return err
+		}
+		if err := requireDocumentType(metadata, "notebook", notebookID); err != nil {
 			return err
 		}
 
@@ -583,10 +589,15 @@ var deleteDocumentCmd = &cobra.Command{
 	Long: `Delete a document by ID or name.
 
 Works for any document type (dashboard, notebook, launchpad, custom app documents, etc.).
+An argument that is an existing document's ID, including a custom non-UUID ID,
+always refers to that document; otherwise it is matched against document names.
 
 Examples:
   # Delete by ID
   dtctl delete document a1b2c3d4-e5f6-7890-abcd-ef1234567890
+
+  # Delete by a custom ID (e.g. one set with 'create document --id')
+  dtctl delete document my-launchpad
 
   # Delete by name (interactive disambiguation if multiple matches)
   dtctl delete document "My Launchpad"
