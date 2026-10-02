@@ -252,6 +252,10 @@ func (f *OAuthFlow) RefreshToken(refreshToken string) (*TokenSet, error) {
 		"refresh_token": {refreshToken},
 		"client_id":     {f.config.ClientID},
 	}
+	// Repeat the resource so the refreshed token keeps its "res" claim.
+	if f.config.EnvironmentURL != "" {
+		data.Set("resource", f.config.EnvironmentURL)
+	}
 
 	req, err := http.NewRequest("POST", f.config.TokenURL, strings.NewReader(data.Encode()))
 	if err != nil {
@@ -536,6 +540,11 @@ func (f *OAuthFlow) exchangeCode(code string) (*TokenSet, error) {
 		"client_id":     {f.config.ClientID},
 		"redirect_uri":  {f.getRedirectURI()},
 		"code_verifier": {f.codeVerifier},
+	}
+	// The resource must repeat here: the token's "res" claim comes from this request,
+	// and account APIs such as service-users answer 401 without it.
+	if f.config.EnvironmentURL != "" {
+		data.Set("resource", f.config.EnvironmentURL)
 	}
 
 	req, err := http.NewRequest("POST", f.config.TokenURL, strings.NewReader(data.Encode()))
