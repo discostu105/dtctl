@@ -1,0 +1,33 @@
+{
+  "name": "dt-prod-signals",
+  "version": "0.1.0",
+  "description": "Shows Dynatrace production signals (errors, exceptions, latency) for the file Claude is working on, via dtctl",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "timeframe": {
+      "type": "string",
+      "title": "Timeframe",
+      "description": "How far back to look for production telemetry",
+      "options": ["30m", "2h", "6h", "24h"],
+      "default": "2h"
+    },
+    "context": {
+      "type": "string",
+      "title": "dtctl context",
+      "description": "dtctl context to query; empty uses dtctl's current context",
+      "default": ""
+    },
+    "matchRepo": {
+      "type": "boolean",
+      "title": "Match repository",
+      "description": "Only count spans whose vcs.repository.url.full is this repo's git remote",
+      "default": true
+    },
+    "autoLookup": {
+      "type": "boolean",
+      "title": "Look up automatically",
+      "description": "Query Dynatrace when Claude reads or edits a source file",
+      "default": true
+    }
+  }
+}
