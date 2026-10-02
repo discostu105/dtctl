@@ -78,6 +78,11 @@ type SessionStatus struct {
 	// token's own scope claim, an audience-reduced subset of the grant. Such a
 	// list is fine to display but cannot prove a scope is missing.
 	grantedScopesPartial bool
+
+	// storage is the store the token was actually read from (Storage is its
+	// label). doctor compares it with the keyring probe, which only tests reads
+	// and so cannot see a keyring that refused the write.
+	storage auth.TokenStorage
 }
 
 // buildSessionStatusFunc builds a SessionStatus for a given context + token name.
@@ -100,14 +105,18 @@ func buildSessionStatus(contextName string, ctx *config.Context, tokenName strin
 		return nil, err
 	}
 
-	stored, err := tokenManager.GetTokenInfo(tokenName)
+	stored, storage, err := tokenManager.GetTokenInfoWithStorage(tokenName)
 	if err != nil || stored == nil {
 		// Not an OAuth token (e.g. platform token) or not stored yet.
 		return status, nil
 	}
 
 	status.IsOAuth = true
-	status.Storage = config.OAuthStorageBackend()
+	// Report the store the token was found in, not the keyring probe: a keyring
+	// that answers reads but refused the write leaves the token in the file
+	// store while the probe still succeeds (#393).
+	status.storage = storage
+	status.Storage = storage.Label()
 	status.AccessTokenPresent = stored.AccessToken != ""
 	if !stored.ExpiresAt.IsZero() {
 		t := stored.ExpiresAt
@@ -718,11 +727,15 @@ Non-interactive login (CI/CD):
 			return fmt.Errorf("failed to create token manager: %w", err)
 		}
 
-		if err := tokenManager.SaveToken(tokenName, tokens); err != nil {
+		// Report the store the tokens actually landed in: the keyring probe only
+		// tests reads, so a keyring that refused the write still looks
+		// available (#393).
+		storage, err := tokenManager.SaveTokenWithStorage(tokenName, tokens)
+		if err != nil {
 			return fmt.Errorf("failed to store tokens: %w", err)
 		}
 
-		output.PrintSuccess("Tokens stored in %s as '%s'", config.OAuthStorageBackend(), tokenName)
+		output.PrintSuccess("Tokens stored in %s as '%s'", storage.Label(), tokenName)
 
 		// Identify placeholder contexts from the raw (unexpanded) config.
 		// A context is a placeholder if its environment expands to the empty string
