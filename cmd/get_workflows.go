@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -241,7 +242,7 @@ Examples:
 			// server total exceeds what was returned so agents don't assume completeness.
 			if list.Count > len(list.Results) {
 				ap.SetHasMore(true)
-				suggestions = append(suggestions, fmt.Sprintf("Showing %d of %d. Raise --limit (currently %d) or narrow the window with --started-since/--state.", len(list.Results), list.Count, limit))
+				suggestions = append(suggestions, executionsCapAdvice(len(list.Results), list.Count, limit)...)
 			}
 			ap.SetSuggestions(suggestions)
 		}
@@ -347,7 +348,7 @@ func init() {
 	getWorkflowExecutionsCmd.Flags().Int64("limit", 100, "Maximum number of executions to return (max 1000)")
 	getWorkflowExecutionsCmd.Flags().String("state", "", "Filter by state: RUNNING, SUCCESS, ERROR, CANCELLED, UNKNOWN")
 	getWorkflowExecutionsCmd.Flags().String("trigger", "", "Filter by trigger type: Manual, Schedule, Event, Workflow")
-	getWorkflowExecutionsCmd.Flags().String("started-since", "", "Show executions started at or after this time (YYYY-MM-DD or ISO 8601)")
+	getWorkflowExecutionsCmd.Flags().String("started-since", "", "Show executions started at or after this time (a duration ago such as 7d, YYYY-MM-DD or ISO 8601)")
 	getWorkflowExecutionsCmd.Flags().String("started-until", "", "Show executions started at or before this time (YYYY-MM-DD = end of day 23:59:59, or ISO 8601)")
 	getWorkflowsCmd.Flags().Bool("mine", false, "Show only workflows owned by current user")
 	getWorkflowsCmd.Flags().String("filter", "", "Search workflows by title")
@@ -379,10 +380,14 @@ func parseExecTime(s string, endOfDay bool) (string, error) {
 			return t.UTC().Format(time.RFC3339), nil
 		}
 	}
+	// A duration ago ("7d", "12h"), as --from takes it elsewhere.
+	if d, err := parseAgo(s); err == nil {
+		return time.Now().Add(-d).UTC().Format(time.RFC3339), nil
+	}
 	// Fall back to date-only
 	t, err := time.Parse("2006-01-02", s)
 	if err != nil {
-		return "", fmt.Errorf("use YYYY-MM-DD or ISO 8601 (e.g. 2006-01-02T15:04:05Z)")
+		return "", fmt.Errorf("use a duration ago (7d, 12h), YYYY-MM-DD or ISO 8601 (e.g. 2006-01-02T15:04:05Z)")
 	}
 	if endOfDay {
 		t = t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
@@ -396,4 +401,28 @@ func init() {
 	stability.MarkStable(deleteWorkflowCmd)
 	stability.MarkStable(getWorkflowExecutionsCmd)
 	stability.MarkStable(getWorkflowsCmd)
+}
+
+// executionsCapAdvice explains a truncated listing; at MaxExecutionLimit raising --limit cannot help.
+func executionsCapAdvice(shown, total int, limit int64) []string {
+	if limit > 0 && limit < workflow.MaxExecutionLimit {
+		return []string{fmt.Sprintf("Showing %d of %d. Raise --limit (currently %d, at most %d) or narrow the window with --started-since/--state.", shown, total, limit, workflow.MaxExecutionLimit)}
+	}
+	return []string{fmt.Sprintf("Showing %d of %d: the listing returns at most %d executions, so counts taken from it are incomplete; narrow the window with --started-since/--state.", shown, total, workflow.MaxExecutionLimit)}
+}
+
+// parseAgo reads a duration ago: a Go duration (12h, 90m) or whole days (7d).
+func parseAgo(s string) (time.Duration, error) {
+	if n, ok := strings.CutSuffix(s, "d"); ok {
+		days, err := strconv.Atoi(n)
+		if err != nil || days <= 0 {
+			return 0, fmt.Errorf("invalid duration %q", s)
+		}
+		return time.Duration(days) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("invalid duration %q", s)
+	}
+	return d, nil
 }
