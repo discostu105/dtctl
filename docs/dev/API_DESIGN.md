@@ -47,6 +47,8 @@ Do not invent a new query language via CLI flags.
 
 **Templating**: Allow basic variable substitution in DQL files (`--set host=h-123`) to make them reusable.
 
+**Metadata carve-out**: The rule is about *data* queries. dtctl may wrap a *metadata* query (what exists, what it means, what it relates to) when the answer needs several sources or client-side logic, takes no parameters beyond its subject, and feeds an agent's ability to write DQL — `dtctl inventory` is the precedent. Each such command exposes the DQL it ran. See [SCHEMA_DISCOVERY_DESIGN.md](SCHEMA_DISCOVERY_DESIGN.md).
+
 ### 3. Configuration Management (The "Monaco Bridge")
 
 dtctl is the "Runtime" companion to Monaco's "Build time."
