@@ -75,13 +75,14 @@ dtctl as an in-process library a service calls once per request:
 
 ### [MCP_SERVE_DESIGN.md](MCP_SERVE_DESIGN.md)
 Proposed `dtctl serve mcp` — dtctl as a Model Context Protocol server over `pkg/engine`:
-- **Why and for whom** - shell-less MCP clients after the local Dynatrace MCP server's deprecation; the hosted Remote MCP Server is read-only
-- **Two tools, not a typed catalog** - `dtctl` (run a command line) and `dtctl_commands`; knowledge as resources
+- **Why and for whom** - shell-less MCP clients after the local Dynatrace MCP server's deprecation; the hosted Remote MCP Server is read-only analysis
+- **Four tools, not a hand-written typed catalog** - `dtctl`, `dtctl_commands`, `dtctl_recipes`, `dtctl_run`; knowledge as resources
+- **Recipes as the typed layer** - a recipe's declared params are already a schema; `--expose-recipes` materialises them as tools, default decided by measurement
+- **Two servers, kept apart** - no proxy for the hosted server; `--print-client-config` writes both entries
 - **Host-credentialed mode** - the one engine seam it needs (`Request.HostContext`), and why the agent cannot retarget the server
-- **Writes** - elicitation as UX, safety level as enforcement
-- **Phase 2** - passing the hosted server's Davis tools through under one server entry
+- **Evaluation** - a transport axis (CLI / MCP / hosted) on the recipes eval harness
 
-**Use this for**: adding a protocol under `dtctl serve`, or deciding what dtctl exposes to an MCP client.
+**Use this for**: adding a protocol under `dtctl serve`, deciding what dtctl exposes to an MCP client, or comparing dtctl with the Remote MCP Server.
 
 ---
 
