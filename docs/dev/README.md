@@ -75,12 +75,13 @@ dtctl as an in-process library a service calls once per request:
 
 ### [SCHEMA_DISCOVERY_DESIGN.md](SCHEMA_DISCOVERY_DESIGN.md)
 Field discovery for agents from `fieldsSnapshot` and the semantic dictionary:
-- **The Principle** - the metadata carve-out from the "dumb pipe" rule, and why schema is metadata
-- **`describe schema` / `describe field`** - which fields exist here, how common, what they mean, which are deprecated
-- **Empty-result diagnosis** - whole-object evidence instead of a 100-record sample
+- **The Principle** - the metadata carve-out from the "dumb pipe" rule; discovery is content, correctness is binary
+- **`meta-*` recipes** - `meta-fields`, `meta-model-fields`, `meta-field`, `meta-entity-type`: which fields exist here, how common, what they mean, which are deprecated
+- **Empty-result diagnosis** - whole-object `fieldsSnapshot` evidence instead of a 100-record sample, enriched from the dictionary
+- **`verify recipe`** - a field-existence check the DQL verify API cannot do
 - **Dictionary gaps** - what the dictionary does not cover and how the design degrades
 
-**Use this for**: touching `pkg/exec/empty_diagnosis.go`, adding schema or field commands, or deciding whether a DQL-backed command is allowed.
+**Use this for**: touching `pkg/exec/empty_diagnosis.go`, adding a `meta-` recipe, or deciding whether a DQL-backed feature is allowed.
 
 ---
 
