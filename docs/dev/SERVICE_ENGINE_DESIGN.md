@@ -284,7 +284,8 @@ dtctl serve http     JSON over HTTP (POST /v1/execute, GET /healthz)
 
 Bare `dtctl serve` prints help and exits 0 — naming the protocol is mandatory,
 so no single protocol is the silent default and a future `dtctl serve mcp` lands
-beside `http` rather than competing with an incumbent. An unrecognized protocol
+beside `http` rather than competing with an incumbent (its design:
+[MCP_SERVE_DESIGN.md](MCP_SERVE_DESIGN.md)). An unrecognized protocol
 name is an error with a non-zero exit, not a help dump, so a supervisor cannot
 mistake a typo for a started server.
 

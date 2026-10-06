@@ -73,6 +73,18 @@ dtctl as an in-process library a service calls once per request:
 
 ---
 
+### [MCP_SERVE_DESIGN.md](MCP_SERVE_DESIGN.md)
+Proposed `dtctl serve mcp` — dtctl as a Model Context Protocol server over `pkg/engine`:
+- **Why and for whom** - shell-less MCP clients after the local Dynatrace MCP server's deprecation; the hosted Remote MCP Server is read-only
+- **Two tools, not a typed catalog** - `dtctl` (run a command line) and `dtctl_commands`; knowledge as resources
+- **Host-credentialed mode** - the one engine seam it needs (`Request.HostContext`), and why the agent cannot retarget the server
+- **Writes** - elicitation as UX, safety level as enforcement
+- **Phase 2** - passing the hosted server's Davis tools through under one server entry
+
+**Use this for**: adding a protocol under `dtctl serve`, or deciding what dtctl exposes to an MCP client.
+
+---
+
 ### [GENERIC_API_ACCESS.md](GENERIC_API_ACCESS.md)
 API spec discovery and the governed HTTP passthrough:
 - **Discovery** - `dtctl get apis`, `dtctl describe api`, and the (undocumented) index/spec conventions
