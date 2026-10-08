@@ -138,6 +138,14 @@
   --shadow-pop: var(--shadow);
 }
 
+:root {
+  --rail-w: 200px;
+}
+@media (max-width: 1023px) {
+  :root {
+    --rail-w: 56px;
+  }
+}
 html,
 body,
 #root {

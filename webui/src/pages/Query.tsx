@@ -9,7 +9,6 @@ import { QueryInfo } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { CopyButton, Empty, ErrorBox, Kbd, Segmented, SkeletonRows, Tip } from '../components/ui'
 import { dqlKey, forceFresh, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
-import { typeOfId } from '../lib/dql'
 import { fmtAbs, fmtCompact, fmtTime } from '../lib/format'
 import { highlightDql } from '../lib/highlight'
 import { dtLinks } from '../lib/links'
@@ -314,7 +313,7 @@ function Cell({ v, type }: { v: unknown; type?: string }) {
   if (Array.isArray(v)) return <span className="font-mono text-xs text-ink-3">[{v.length}] {JSON.stringify(v).slice(0, 80)}</span>
   if (typeof v === 'object') return <span className="font-mono text-xs text-ink-3">{JSON.stringify(v).slice(0, 120)}</span>
   const s = String(v)
-  if (/^[A-Z][A-Z0-9_]+-[0-9A-F]{16}$/.test(s)) return <EntityLink id={s} type={typeOfId(s)} className="font-mono text-xs" />
+  if (/^[A-Z][A-Z0-9_]+-[0-9A-F]{16}$/.test(s)) return <EntityLink id={s} className="text-xs" />
   if (typeof v === 'boolean') return <span className={clsx('font-mono text-xs', v ? 'text-ok' : 'text-ink-3')}>{s}</span>
   return <span className={clsx(type === 'string' && s.length > 40 && 'font-mono text-xs')}>{s}</span>
 }

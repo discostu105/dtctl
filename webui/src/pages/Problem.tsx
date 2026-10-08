@@ -8,11 +8,12 @@ import { Markdown } from '../components/Markdown'
 import { Panel } from '../components/Panel'
 import { Inspector, LogDetail, LogStream, ProblemStatus, SidePanel, SpanTable } from '../components/signals'
 import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, Tabs, TimeAgo, useNow } from '../components/ui'
-import { arr, num, useDql, useEntityNames, useMeta, type Rec } from '../lib/api'
+import { arr, num, useDql, useMeta, type Rec } from '../lib/api'
 import { evidenceQuery, logsQuery, problemDetailQuery, signalFilterAll, spanFilter, spanScopable, spansQuery, type Entity } from '../lib/dql'
 import { fmtCompact, fmtDateTime, span, titleCase } from '../lib/format'
 import { dtLinks } from '../lib/links'
 import { ERROR_LEVELS } from '../lib/shared'
+import { useNames } from '../lib/names'
 import { pushRecent, useTitle } from '../lib/store'
 import { intervalFor } from '../lib/timeframe'
 
@@ -106,7 +107,7 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
   const [sel, setSel] = useState<Rec | null>(null)
 
   const tags: string[] = arr(p.entity_tags)
-  const names = useEntityNames([...related.map((e) => e.id), ...(evidence.data?.records ?? []).map((e) => e.entity_id)])
+  const names = useNames([...related.map((e) => e.id), ...(evidence.data?.records ?? []).map((e) => e.entity_id)])
 
   return (
     <div className="flex h-full">

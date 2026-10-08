@@ -8,7 +8,7 @@ import { FilterInput, PageHeader, Panel } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { Spark } from '../components/Spark'
 import { Badge, CopyButton, Empty, ErrorBox, Segmented, Skeleton, SkeletonRows, Tabs, TimeAgo, Tip, type Tone } from '../components/ui'
-import { arr, num, useDql, useEntityNames, useMeta, type DqlSpec, type Rec } from '../lib/api'
+import { arr, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
 import { fmtCompact, fmtDateTime, fmtInt, fmtMs, fmtTime } from '../lib/format'
 import { dtLinks, traceHref } from '../lib/links'
 import {
@@ -16,6 +16,7 @@ import {
   sessionsQuery, VITAL_LABEL, vitalRating, vitalValue, type SessionLens, type Vital,
 } from '../lib/rum'
 import { tfSpec } from '../lib/shared'
+import { useNames } from '../lib/names'
 import { pushRecent, useTitle } from '../lib/store'
 import { floorTf, sparkInterval, useTimeframe, type Timeframe } from '../lib/timeframe'
 
@@ -91,7 +92,7 @@ export function FrontendsTable({
   const res = useDql(frontendsSpec(tf, realOnly))
   const traffic = useDql(tfSpec(rumTf(tf), frontendTrafficQuery(sparkInterval(rumTf(tf).ms)), { ttl: 60 }))
   const rows = res.data?.records
-  const names = useEntityNames((rows ?? []).map((r) => r['dt.smartscape.frontend']))
+  const names = useNames((rows ?? []).map((r) => r['dt.smartscape.frontend']))
   const byId = useMemo(() => new Map((traffic.data?.records ?? []).map((r) => [r['dt.smartscape.frontend'], r])), [traffic.data])
 
   const cols: Column[] = [
@@ -172,7 +173,7 @@ export default function Experience() {
   const realOnly = useRealOnly()
   const app = params.get('app')
   const tab = (params.get('tab') as Tab) || 'sessions'
-  const names = useEntityNames(app ? [app] : [])
+  const names = useNames(app ? [app] : [])
 
   const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(location.search)
@@ -623,7 +624,7 @@ export function Session({ id }: { id: string }) {
   const views = all.filter((e) => e['characteristics.classifier'] === 'view_summary')
   const worstLcp = Math.max(...views.map((v) => num(v['web_vitals.largest_contentful_paint']) / 1e6).filter(Number.isFinite), -1)
   const frontendId = arr(s?.['dt.smartscape.frontend'])[0]
-  const fnames = useEntityNames(frontendId ? [frontendId] : [])
+  const fnames = useNames(frontendId ? [frontendId] : [])
 
   if (sres.error) return <ErrorBox error={sres.error} />
   if (sres.isLoading)

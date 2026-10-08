@@ -178,22 +178,6 @@ export function useMeta() {
   return useQuery({ queryKey: ['meta'], queryFn: () => getJSON<Meta>('/api/meta'), staleTime: Infinity })
 }
 
-/** Resolve Smartscape IDs → names in one (cached) query. */
-export function useEntityNames(ids: string[]) {
-  const uniq = [...new Set(ids.filter(Boolean))].sort()
-  const res = useDql(
-    uniq.length
-      ? {
-          query: `smartscapeNodes "*"\n| filter in(id, {${uniq.map((i) => `toSmartscapeId(${JSON.stringify(i)})`).join(', ')}})\n| fields id, name\n| limit ${uniq.length + 5}`,
-          ttl: 300,
-        }
-      : null,
-  )
-  const m = new Map<string, string>()
-  for (const r of res.data?.records ?? []) if (r.name) m.set(r.id, r.name)
-  return m
-}
-
 // ── record helpers ─────────────────────────────────────────────────────────
 
 /** DQL longs arrive as strings; coerce anything numeric-ish. */

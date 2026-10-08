@@ -47,8 +47,11 @@ function k8sNameFilter(e: Entity) {
 /** logs/events filter for one entity, matching both ID eras + source entity. */
 export function signalFilter(e: Entity) {
   const parts: string[] = [`${smartscapeField(e.type)} == toSmartscapeId(${q(e.id)})`]
-  const lf = legacyField(e.type)
-  if (lf) parts.push(`${lf} == ${q(e.id)}`)
+  // Classic IDs (PROCESS_GROUP-…, KUBERNETES_CLUSTER-…) are stamped on records
+  // as dt.entity.<type>; unknown fields are null in DQL, so this arm is
+  // harmless for Smartscape-only types.
+  const lf = legacyField(e.type) ?? `dt.entity.${e.type.toLowerCase()}`
+  parts.push(`${lf} == ${q(e.id)}`)
   const kf = k8sNameFilter(e)
   if (kf) parts.push(kf)
   parts.push(`dt.smartscape_source.id == toSmartscapeId(${q(e.id)})`)

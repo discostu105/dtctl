@@ -1,15 +1,14 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
 import clsx from 'clsx'
-import { AlertOctagon, ChevronRight, X } from 'lucide-react'
-import { useMemo, useRef, useState, type ReactNode } from 'react'
+import { AlertOctagon, ChevronRight, Maximize2, Minimize2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { num, type Rec } from '../lib/api'
-import { typeOfId } from '../lib/dql'
 import { fmtNs, fmtTime, span, titleCase } from '../lib/format'
 import { problemHref, traceHref } from '../lib/links'
 import { DataTable, type Column } from './DataTable'
 import { EntityLink } from './Entity'
-import { Badge, CopyButton, Empty, SkeletonRows, TimeAgo, type Tone } from './ui'
+import { Badge, CopyButton, Empty, Kbd, SkeletonRows, TimeAgo, Tip, type Tone } from './ui'
 
 // ── log levels ───────────────────────────────────────────────────────────────
 
@@ -55,7 +54,7 @@ function Value({ k, v }: { k: string; v: unknown }): ReactNode {
   }
   if (typeof v === 'object') return <pre className="font-mono text-xs whitespace-pre-wrap text-ink-2">{JSON.stringify(v, null, 2)}</pre>
   const s = String(v)
-  if (ENTITY_ID.test(s)) return <EntityLink id={s} type={typeOfId(s)} className="font-mono text-xs" />
+  if (ENTITY_ID.test(s)) return <EntityLink id={s} showId className="text-xs" />
   if (TRACE_FIELDS.has(k) && /^[0-9a-f]{32}$/i.test(s))
     return (
       <Link href={traceHref(s)} className="font-mono text-xs text-accent-ink hover:underline">
@@ -125,18 +124,69 @@ export function Inspector({ rec, hide = [] }: { rec: Rec; hide?: string[] }) {
   )
 }
 
-/** Right-hand detail panel. */
+const MAX_KEY = 'dtctl-web:panel-max'
+function loadMax() {
+  try {
+    return localStorage.getItem(MAX_KEY) === '1'
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Right-hand detail panel. Maximizable (button, double-click the header, or
+ * `m`) to fill the content area; the choice is remembered across panels.
+ * `Esc` restores a maximized panel first, then closes.
+ */
 export function SidePanel({ title, onClose, children, actions, width = 'w-[min(640px,48vw)]' }: { title: ReactNode; onClose: () => void; children: ReactNode; actions?: ReactNode; width?: string }) {
+  const [max, setMax] = useState(loadMax)
+  const toggle = () =>
+    setMax((m) => {
+      try {
+        localStorage.setItem(MAX_KEY, m ? '0' : '1')
+      } catch {
+        /* ignore */
+      }
+      return !m
+    })
+  const state = useRef({ max, toggle, onClose })
+  state.current = { max, toggle, onClose }
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).closest('input, textarea, [contenteditable=true], [cmdk-root]') || e.metaKey || e.ctrlKey || e.altKey) return
+      if (e.key === 'm') {
+        e.preventDefault()
+        state.current.toggle()
+      } else if (e.key === 'Escape') {
+        if (state.current.max) state.current.toggle()
+        else state.current.onClose()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
   return (
-    <aside className={clsx('anim-slide flex h-full shrink-0 flex-col border-l border-line bg-panel', width)}>
-      <div className="flex h-11 shrink-0 items-center gap-2 border-b border-line px-3">
+    <aside
+      className={clsx(
+        'flex shrink-0 flex-col border-l border-line bg-panel',
+        max ? 'anim-pop fixed top-12 right-0 bottom-0 left-[var(--rail-w)] z-40 shadow-pop' : `anim-slide h-full ${width}`,
+      )}
+    >
+      <div className="flex h-11 shrink-0 cursor-default items-center gap-2 border-b border-line px-3 select-none" onDoubleClick={toggle}>
         <div className="min-w-0 flex-1 truncate text-sm font-medium">{title}</div>
         {actions}
-        <button type="button" onClick={onClose} className="rounded p-1 text-ink-3 hover:bg-line hover:text-ink" aria-label="Close">
-          <X className="size-4" />
-        </button>
+        <Tip content={<span className="flex items-center gap-2">{max ? 'Restore' : 'Maximize'} <Kbd>M</Kbd></span>}>
+          <button type="button" onClick={toggle} className="rounded p-1 text-ink-3 hover:bg-line hover:text-ink" aria-label={max ? 'Restore panel' : 'Maximize panel'}>
+            {max ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+          </button>
+        </Tip>
+        <Tip content={<span className="flex items-center gap-2">Close <Kbd>Esc</Kbd></span>}>
+          <button type="button" onClick={onClose} className="rounded p-1 text-ink-3 hover:bg-line hover:text-ink" aria-label="Close">
+            <X className="size-4" />
+          </button>
+        </Tip>
       </div>
-      <div className="min-h-0 flex-1 overflow-auto p-3">{children}</div>
+      <div className={clsx('min-h-0 flex-1 overflow-auto p-3', max && 'mx-auto w-full max-w-[1400px] px-6')}>{children}</div>
     </aside>
   )
 }

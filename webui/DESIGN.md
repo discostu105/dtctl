@@ -58,11 +58,11 @@ proposal brings dynatui's model to the browser.
 ```
 
 * **Pulse** (home): one triage screen that answers "is anything on fire right now?"
-* **Signals**: Problems, Logs, Traces, Changes (events/deployments), Security.
+* **Signals**: Problems, Logs, Traces, Experience (RUM), AI (GenAI), Changes (events/deployments), Security.
 * **Topology**: Services, Kubernetes, Hosts, Smartscape (all entity types).
 * **Power**: Query (a DQL workbench) and Documents (dashboards and notebooks, which open in Dynatrace).
 
-There are 13 destinations, all one keystroke away (`g p` problems, `g s` services, …).
+There are 15 destinations, all one keystroke away (`g p` problems, `g s` services, `g u` experience, `g a` AI, …).
 
 ## 4. Key journeys
 
@@ -109,6 +109,30 @@ query in the app can be opened here.
 Smartscape: a census of entity types, then instances of a type, then the
 **entity page**. The Related tab groups edges by verb and direction
 (runs on ▸, calls ▸, ◂ called by), and every node is clickable.
+
+### J8 — "How do real users experience my app?" (frontend / product)
+Experience: each frontend with p75 Core Web Vitals (LCP, INP, CLS, TTFB), each rated
+good / needs improvement / poor by shape *and* color. Pick a frontend, then work through its sessions,
+grouped errors and pages. A session opens as a journey timeline (views, navigations,
+actions, errors) on the session's own time axis. Requests that carry a trace ID link
+**straight into the backend trace waterfall**, so one path runs from a click to the database.
+**Love:** real users only by default, because synthetic monitors also emit RUM. RUM data is
+sparse, so the window is floored at 24h and the page says so. Flags, device icons and replay markers are shown.
+
+### J9 — "What are my agents and LLMs doing, and are they any good?" (AI engineering)
+AI: LLM calls, tokens, prompt-cache hit rate, time to first token, tool failure rate
+and eval pass rate. Below that are tables of models, agents (each one links to its GenAI entity and spans) and tools.
+Any LLM call opens a **conversation view**: role-tagged turns, with reasoning, tool calls and tool
+results shown as collapsible blocks, and system instructions collapsed. LLM-as-judge evaluations
+show each criterion as met or not, with the judge's reason. All of this comes from the OpenTelemetry GenAI conventions.
+
+### Cross-cutting details
+* **Every ID resolves to a name automatically.** All entity IDs rendered anywhere (inspector, query
+  results, evidence, chips) go through one resolver that batches lookups per tick into a single
+  Smartscape lookup. IDs Smartscape doesn't know fall back to their classic `dt.entity.*`
+  table, so `PROCESS_GROUP-…` reads as "Linux System".
+* **Every detail panel is maximizable.** Use the button, double-click the header, or press `M`. The
+  choice is remembered. `Esc` first restores the panel, then closes it.
 
 ## 5. Visual design
 
@@ -158,7 +182,9 @@ nodes), Hosts, entity page (for any Smartscape type), Logs explorer, Traces with
 waterfall, Changes, Security (vulnerabilities), Query workbench, Smartscape
 browser, Documents, the ⌘K palette, the timeframe picker, and light and dark themes.
 
-Not built (yet): segments, writes of any kind, RUM sessions, metric explorer,
+Since then: Experience (RUM), AI observability, automatic ID → name resolution, maximizable panels.
+
+Not built (yet): segments, writes of any kind, session replay playback, metric explorer,
 custom dashboards, multi-context switching in the UI (restart with `--context`).
 
 ## 8. Measured (PoC, real tenant)

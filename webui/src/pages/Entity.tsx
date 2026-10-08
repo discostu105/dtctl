@@ -17,6 +17,7 @@ import { dtLinks } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { pushRecent, useTitle } from '../lib/store'
 import { absolute, intervalFor, setTimeframe, useTimeframe } from '../lib/timeframe'
+import { useResolved } from '../lib/names'
 import { EventList } from './Problem'
 import { ErrorsView, SessionsView } from './Rum'
 
@@ -35,7 +36,8 @@ export default function EntityPage({ id }: { id: string }) {
   const detailSpec: DqlSpec = { query: detailQuery({ id, type }), ttl: 60 }
   const detail = useDql(detailSpec)
   const rec = detail.data?.records[0]
-  const name: string = rec?.name || search.get('n') || id
+  const resolved = useResolved(id)
+  const name: string = rec?.name || search.get('n') || resolved?.name || id
   const entity: Entity = useMemo(() => ({ id, type, name: rec?.name || search.get('n') || undefined }), [id, type, rec?.name])
 
   useTitle(name)
@@ -154,7 +156,7 @@ export default function EntityPage({ id }: { id: string }) {
           ]}
         />
         <div className="min-h-[420px]">
-          {tab === 'overview' && <Overview rec={rec} loading={detail.isLoading} type={type} />}
+          {tab === 'overview' && <Overview rec={rec} loading={detail.isLoading} type={type} classic={resolved?.source === 'classic'} />}
           {tab === 'logs' && <EntityLogs entity={entity} />}
           {tab === 'sessions' && (
             <div className="flex h-[560px] flex-col">
@@ -282,8 +284,15 @@ const FACT_KEYS: [string, string][] = [
   ['dt.host_group.id', 'Host group'],
 ]
 
-function Overview({ rec, loading, type }: { rec: Rec | undefined; loading: boolean; type: string }) {
+function Overview({ rec, loading, type, classic }: { rec: Rec | undefined; loading: boolean; type: string; classic?: boolean }) {
   if (loading) return <SkeletonRows rows={8} />
+  if (!rec && classic)
+    return (
+      <Empty
+        title="Classic entity"
+        hint="This ID comes from the classic entity model (dt.entity.*), not Smartscape, so there is no topology record. Its logs, events and problems still work in the tabs above."
+      />
+    )
   if (!rec) return <Empty title="Entity not found in Smartscape" hint="It may no longer exist, or the timeframe may be before it was created." />
   const facts: [string, React.ReactNode][] = FACT_KEYS.filter(([k]) => rec[k] != null && rec[k] !== '').map(([k, label]) => [
     label,

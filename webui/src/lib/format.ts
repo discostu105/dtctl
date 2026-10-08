@@ -101,12 +101,14 @@ export function fmtAbs(v: unknown) {
 
 export function shortType(t: string) {
   return t
+    .replace(/^GENAI_/, 'GENAI ')
     .replace(/^K8S_/, '')
     .replace(/^AWS_/, 'AWS ')
     .replace(/_/g, ' ')
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase())
     .replace(/^Aws /, 'AWS ')
+    .replace(/^Genai /, 'GenAI ')
 }
 
 export function titleCase(s: string) {

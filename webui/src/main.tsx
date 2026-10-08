@@ -18,6 +18,7 @@ import Problem from './pages/Problem'
 import Problems from './pages/Problems'
 import Pulse from './pages/Pulse'
 import Query from './pages/Query'
+import Ai from './pages/Ai'
 import Experience, { Session } from './pages/Rum'
 import Security from './pages/Security'
 import Services from './pages/Services'
@@ -40,6 +41,7 @@ function App() {
         <Route path="/traces/:id">{(p) => <Trace key={p.id} id={decodeURIComponent(p.id)} />}</Route>
         <Route path="/rum" component={Experience} />
         <Route path="/rum/sessions/:id">{(p) => <Session key={p.id} id={decodeURIComponent(p.id)} />}</Route>
+        <Route path="/ai" component={Ai} />
         <Route path="/changes" component={Changes} />
         <Route path="/security" component={Security} />
         <Route path="/query" component={Query} />

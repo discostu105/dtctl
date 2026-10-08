@@ -7,6 +7,7 @@ import { prefetchDql } from '../lib/api'
 import { detailQuery, typeOfId } from '../lib/dql'
 import { shortType } from '../lib/format'
 import { entityHref } from '../lib/links'
+import { useResolved } from '../lib/names'
 import { Tip } from './ui'
 
 export function typeIcon(type: string): LucideIcon {
@@ -38,15 +39,22 @@ export function EntityLink({
   type,
   className,
   showType,
+  showId,
 }: {
   id: string
   name?: string | null
   type?: string
   className?: string
   showType?: boolean
+  /** also show the raw ID (muted), e.g. in the record inspector */
+  showId?: boolean
 }) {
-  const t = type || typeOfId(id)
-  const label = (name && String(name).trim()) || id
+  const given = name && String(name).trim()
+  // Every ID resolves to a name on its own: callers rarely know it.
+  const resolved = useResolved(given ? null : id)
+  const t = type || resolved?.type || typeOfId(id)
+  const label = given || resolved?.name || id
+  const named = label !== id
   return (
     <Link
       href={entityHref(id, name ?? undefined)}
@@ -55,7 +63,10 @@ export function EntityLink({
       className={clsx('inline-flex min-w-0 items-center gap-1.5 rounded text-ink hover:text-accent-ink hover:underline decoration-accent/40 underline-offset-2', className)}
     >
       <TypeIcon type={t} />
-      <span className="truncate">{label}</span>
+      <span className={clsx('truncate', !named && resolved === undefined && 'font-mono text-xs')} title={id}>
+        {label}
+      </span>
+      {showId && named && <span className="shrink-0 truncate font-mono text-2xs text-ink-4">{id}</span>}
       {showType && <span className="shrink-0 text-2xs text-ink-3">{shortType(t)}</span>}
     </Link>
   )

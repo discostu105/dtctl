@@ -3,13 +3,14 @@ import * as Popover from '@radix-ui/react-popover'
 import clsx from 'clsx'
 import {
   Activity, AlertOctagon, Boxes, FileText, GitCommitVertical, Moon, Network, RefreshCw, ScrollText, Search, Server, Share2, ShieldAlert, Sun,
-  Terminal, Waypoints, Keyboard, Timer, MonitorSmartphone,
+  Terminal, Waypoints, Keyboard, Timer, MonitorSmartphone, Sparkles,
 } from 'lucide-react'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
 import { forceFresh, prefetchDql, useDql, useMeta, type DqlSpec } from '../lib/api'
 import { problemsQuery } from '../lib/dql'
 import { frontendsSpec } from '../pages/Rum'
+import { aiKpiSpec } from '../pages/Ai'
 import { activeProblemsSpec, changesSpec, servicesSpec, tfSpec, vulnsSpec } from '../lib/shared'
 import { autoRefreshStore, helpStore, paletteStore, tfPickerStore, titleStore, toggleTheme, useStore } from '../lib/store'
 import { floorTf, getTimeframe, syncUrl, useTimeframe } from '../lib/timeframe'
@@ -26,6 +27,7 @@ export const NAV: { href: string; label: string; icon: typeof Activity; key: str
   { href: '/logs', label: 'Logs', icon: ScrollText, key: 'l', group: 0 },
   { href: '/traces', label: 'Traces', icon: Waypoints, key: 't', group: 0 },
   { href: '/rum', label: 'Experience', icon: MonitorSmartphone, key: 'u', group: 0 },
+  { href: '/ai', label: 'AI', icon: Sparkles, key: 'a', group: 0 },
   { href: '/changes', label: 'Changes', icon: GitCommitVertical, key: 'c', group: 0 },
   { href: '/security', label: 'Security', icon: ShieldAlert, key: 'v', group: 0 },
   { href: '/query', label: 'Query', icon: Terminal, key: 'q', group: 2 },
@@ -38,7 +40,7 @@ function isActive(loc: string, href: string) {
   if (loc.startsWith('/e/')) {
     // Entity pages light up the section they belong to.
     const id = decodeURIComponent(loc.slice(3))
-    const section = id.startsWith('SERVICE-') ? '/services' : id.startsWith('K8S_') || id.startsWith('CONTAINER-') ? '/k8s' : id.startsWith('HOST-') ? '/hosts' : id.startsWith('FRONTEND-') ? '/rum' : '/smartscape'
+    const section = id.startsWith('SERVICE-') ? '/services' : id.startsWith('K8S_') || id.startsWith('CONTAINER-') ? '/k8s' : id.startsWith('HOST-') ? '/hosts' : id.startsWith('FRONTEND-') ? '/rum' : id.startsWith('GENAI_') ? '/ai' : '/smartscape'
     return href === section
   }
   return loc === href || loc.startsWith(href + '/')
@@ -53,6 +55,7 @@ function prefetchSection(href: string) {
     '/security': () => vulnsSpec(tf),
     '/changes': () => changesSpec(tf),
     '/rum': () => frontendsSpec(tf),
+    '/ai': () => aiKpiSpec(tf),
   }
   const spec = specs[href]?.()
   if (spec) prefetchDql(spec)
@@ -361,6 +364,7 @@ export function Help() {
         [['K'], 'Previous row'],
         [['↵'], 'Open'],
         [['⌘', 'click'], 'Open in new tab'],
+        [['M'], 'Maximize / restore detail panel'],
         [['Esc'], 'Close panel / clear filter'],
       ],
     ],
