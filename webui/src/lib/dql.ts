@@ -118,17 +118,21 @@ export function evidenceQuery(eventIds: string[]) {
 // ── services ────────────────────────────────────────────────────────────────
 
 /** `filter` narrows the series before aggregation and may use any dimension, primary tags included. */
+/** Services with traffic, failing first, then by volume. */
+export const SERVICES_RED_LIMIT = 500
+export const SERVICES_LIST_LIMIT = 1000
+
 export function servicesRedQuery(interval: string, filter = '') {
   return `timeseries { req = sum(dt.service.request.count, default:0), fail = sum(dt.service.request.failure_count, default:0), rt = avg(dt.service.request.response_time) }, by:{dt.smartscape.service}, interval:${interval}${filter ? `, filter:{ ${filter} }` : ''}
 | lookup [smartscapeNodes SERVICE | fields id, name, k8s.namespace.name, dt.service.sdv1_type], sourceField:dt.smartscape.service, lookupField:id, prefix:"s."
 | fieldsAdd total = arraySum(req), failed = arraySum(fail), latency = arrayAvg(rt)
 | fieldsAdd failure_rate = if(total > 0, 100.0 * failed / total, else: 0.0)
 | sort failed desc, total desc
-| limit 500`
+| limit ${SERVICES_RED_LIMIT}`
 }
 
 export function serviceListQuery() {
-  return `smartscapeNodes SERVICE | fields id, name, k8s.namespace.name, dt.service.sdv1_type, lifetime | sort name asc | limit 1000`
+  return `smartscapeNodes SERVICE | fields id, name, k8s.namespace.name, dt.service.sdv1_type, lifetime | sort name asc | limit ${SERVICES_LIST_LIMIT}`
 }
 
 // ── logs ────────────────────────────────────────────────────────────────────

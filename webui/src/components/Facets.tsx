@@ -643,7 +643,21 @@ export function FacetValues<T>({ fc, facetKey }: { fc: FacetCtl<T>; facetKey: st
  * server-side attribute filters alike), each reopening its values. Also hosts
  * the list's filter popup ('f').
  */
-export function FacetSummary<T>({ fc, noun, fetching, limit }: { fc: FacetCtl<T>; noun: string; fetching?: boolean; limit?: number }) {
+export function FacetSummary<T>({
+  fc,
+  noun,
+  fetching,
+  limit,
+  capped: cappedProp,
+}: {
+  fc: FacetCtl<T>
+  noun: string
+  fetching?: boolean
+  /** the query's record cap: reaching it marks the list capped */
+  limit?: number
+  /** for lists merged from several capped queries, where no single limit applies */
+  capped?: boolean
+}) {
   const groups = useMemo(() => {
     const m = new Map<string, FacetFilter[]>()
     for (const f of fc.filters) {
@@ -666,7 +680,7 @@ export function FacetSummary<T>({ fc, noun, fetching, limit }: { fc: FacetCtl<T>
   const popup = useStore(filterPopupStore)
 
   const shown = fc.rows?.length
-  const capped = limit != null && fc.total >= limit
+  const capped = cappedProp ?? (limit != null && fc.total >= limit)
   const nChips = groups.length + attrGroups.length
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -684,7 +698,7 @@ export function FacetSummary<T>({ fc, noun, fetching, limit }: { fc: FacetCtl<T>
         )}
         <span>{noun}</span>
         {capped && (
-          <Tip content={`Only the first ${fmtInt(limit!)} are loaded. Filter by attributes or tags (f) to narrow on the server.`}>
+          <Tip content={`${limit != null ? `Only the first ${fmtInt(limit)} are loaded.` : 'Not all of them are loaded.'} Filter by attributes or tags (f) to narrow on the server.`}>
             <button type="button" onClick={() => openFilterPopup(undefined, host)} className="rounded bg-warn-wash px-1.5 text-2xs font-normal text-warn hover:brightness-110">
               capped
             </button>

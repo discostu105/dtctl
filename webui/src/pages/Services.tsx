@@ -9,7 +9,7 @@ import { Spark } from '../components/Spark'
 import { Badge, Empty, ErrorBox, Segmented } from '../components/ui'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
 import { attrCondition, type AttrSource } from '../lib/attrs'
-import { detailQuery, serviceListQuery } from '../lib/dql'
+import { detailQuery, serviceListQuery, SERVICES_LIST_LIMIT, SERVICES_RED_LIMIT } from '../lib/dql'
 import { bucket, type Facet } from '../lib/facets'
 import { fmtCompact, fmtPct, fmtUs } from '../lib/format'
 import { entityHref } from '../lib/links'
@@ -77,6 +77,13 @@ export default function Services() {
     active: rows.filter((r) => r.total > 0).length,
     failing: rows.filter((r) => r.failed > 0).length,
     all: rows.length,
+  }
+  // The metric roster is capped failing-first: failing services are complete until the cap is all failing.
+  const redCapped = (red.data?.records.length ?? 0) >= SERVICES_RED_LIMIT
+  const capped = {
+    active: redCapped,
+    failing: redCapped && counts.failing >= SERVICES_RED_LIMIT,
+    all: redCapped || (list.data?.records.length ?? 0) >= SERVICES_LIST_LIMIT,
   }
   const lensRows = useMemo(
     () => (red.data || list.data ? rows.filter((r) => (lens === 'all' ? true : lens === 'failing' ? r.failed > 0 : r.total > 0)) : undefined),
@@ -156,16 +163,16 @@ export default function Services() {
               value={lens}
               onChange={setLens}
               options={[
-                { value: 'active', label: 'With traffic', count: counts.active },
-                { value: 'failing', label: 'Failing', count: counts.failing },
-                { value: 'all', label: 'All', count: counts.all },
+                { value: 'active', label: 'With traffic', count: counts.active, capped: capped.active },
+                { value: 'failing', label: 'Failing', count: counts.failing, capped: capped.failing },
+                { value: 'all', label: 'All', count: counts.all, capped: capped.all },
               ]}
             />
             <FacetSearch fc={fc} placeholder="Filter services…" className="w-72" />
           </>
         }
       />
-      <Panel spec={redSpec} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} />}>
+      <Panel spec={redSpec} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} capped={capped[lens]} />}>
         {red.error ? (
           <ErrorBox error={red.error} />
         ) : (

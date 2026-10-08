@@ -187,7 +187,7 @@ export function Segmented<T extends string>({
 }: {
   value: T
   onChange: (v: T) => void
-  options: { value: T; label: ReactNode; count?: number }[]
+  options: { value: T; label: ReactNode; count?: number; capped?: boolean }[]
   className?: string
 }) {
   return (
@@ -203,7 +203,7 @@ export function Segmented<T extends string>({
           )}
         >
           {o.label}
-          {o.count != null && <span className="tnum text-2xs text-ink-3">{fmtInt(o.count)}</span>}
+          {o.count != null && <span className="tnum text-2xs text-ink-3">{fmtInt(o.count)}{o.capped && '+'}</span>}
         </button>
       ))}
     </div>
