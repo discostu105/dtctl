@@ -264,10 +264,12 @@ nodes), Hosts, entity page (for any Smartscape type), Logs explorer, Traces with
 waterfall, Changes, Security (vulnerabilities), Query workbench, Smartscape
 browser, Documents, the ⌘K palette, the timeframe picker, and light and dark themes.
 
-Since then: Experience (RUM), AI observability, automatic ID → name resolution, maximizable panels.
+Since then: Experience (RUM), AI observability (conversations, LLM and tool calls, evals), automatic
+ID → name resolution, maximizable panels, facet filtering, discovered entity metrics, adaptive
+sampling for big tenants, query cancellation and the Activity view, and the in-app tenant switcher.
 
 Not built (yet): segments, writes of any kind, session replay playback, metric explorer,
-custom dashboards, multi-context switching in the UI (restart with `--context`).
+custom dashboards.
 
 ## 8. Measured (PoC, real tenant)
 
