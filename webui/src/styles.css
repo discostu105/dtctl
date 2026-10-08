@@ -317,3 +317,10 @@ textarea {
   font-weight: 600;
   color: var(--ink);
 }
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

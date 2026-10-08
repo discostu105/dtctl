@@ -1,12 +1,13 @@
 import clsx from 'clsx'
 import { Boxes } from 'lucide-react'
-import { useMemo, useState } from 'react'
 import { useLocation, useSearch } from 'wouter'
 import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
-import { Badge, ErrorBox, Segmented, TimeAgo, Tip } from '../components/ui'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { PageHeader, Panel } from '../components/Panel'
+import { Badge, ErrorBox, Segmented, TimeAgo } from '../components/ui'
 import { num, useDql, type Rec } from '../lib/api'
+import { parseFilters, serializeFilter, type Facet } from '../lib/facets'
 import { fmtInt, shortType } from '../lib/format'
 import { entityHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
@@ -39,13 +40,45 @@ const QUERIES: Record<View, string> = {
 | limit 1000`,
 }
 
+const nsFacet: Facet<Rec> = { key: 'ns', label: 'Namespace', value: (r) => r.namespace, aliases: ['namespace'] }
+const clusterFacet: Facet<Rec> = { key: 'cluster', label: 'Cluster', value: (r) => r.cluster }
+
+const FACETS: Record<View, Facet<Rec>[]> = {
+  workloads: [
+    nsFacet,
+    {
+      key: 'health',
+      label: 'Health',
+      value: (r) => (num(r.desired) === 0 ? 'Scaled to zero' : num(r.ready) < num(r.desired) ? 'Degraded' : 'Ready'),
+      order: ['Degraded', 'Ready', 'Scaled to zero'],
+    },
+    { key: 'kind', label: 'Kind', value: (r) => shortType(r.type) },
+    clusterFacet,
+  ],
+  pods: [
+    nsFacet,
+    { key: 'health', label: 'Health', value: podHealth, order: ['Failed', 'Pending', 'Not ready', 'Restarting', 'Healthy', 'Completed'] },
+    { key: 'phase', label: 'Phase', value: (r) => r.phase },
+    { key: 'workload', label: 'Workload', value: (r) => r.workload },
+    { key: 'kind', label: 'Owner kind', value: (r) => r.kind },
+    { key: 'node', label: 'Node', value: (r) => r.node },
+  ],
+  nodes: [
+    { key: 'instance', label: 'Instance type', value: (r) => r.instance, aliases: ['type'] },
+    { key: 'zone', label: 'Zone', value: (r) => r.zone, aliases: ['az'] },
+    { key: 'kubelet', label: 'Kubelet', value: (r) => r.kubelet, aliases: ['version'] },
+    { key: 'os', label: 'OS image', value: (r) => r.os },
+    clusterFacet,
+  ],
+  namespaces: [clusterFacet],
+}
+
 export default function Kubernetes() {
   useTitle('Kubernetes')
   const tf = useTimeframe()
   const search = new URLSearchParams(useSearch())
   const [, navigate] = useLocation()
   const view = (search.get('view') as View) || 'workloads'
-  const [filter, setFilter] = useState(search.get('ns') ?? '')
   const spec = tfSpec(tf, QUERIES[view], { ttl: 60 })
   const res = useDql(spec)
 
@@ -53,10 +86,18 @@ export default function Kubernetes() {
   useDql(tfSpec(tf, QUERIES.pods, { ttl: 60 }))
   useDql(tfSpec(tf, QUERIES.workloads, { ttl: 60 }))
 
-  const f = filter.toLowerCase()
-  const rows = useMemo(() => (res.data?.records ?? []).filter((r) => !f || Object.values(r).join(' ').toLowerCase().includes(f)), [res.data, f])
+  const fc = useFacets(res.data?.records, FACETS[view], { text: (r) => `${r.name} ${r.id}` })
+  const rows = fc.rows ?? []
 
-  const setView = (v: View) => navigate(`/k8s?view=${v}`, { replace: true })
+  // Filters that also exist in the target view (namespace, cluster…) come along.
+  const setView = (v: View) => {
+    const p = new URLSearchParams(window.location.search)
+    const keep = parseFilters(p).filter((f) => FACETS[v].some((x) => x.key === f.key))
+    p.delete('f')
+    keep.forEach((f) => p.append('f', serializeFilter(f)))
+    p.set('view', v)
+    navigate(`/k8s?${p}`, { replace: true })
+  }
 
   const unhealthyPods = view === 'pods' ? rows.filter(podUnhealthy).length : 0
   const degraded = view === 'workloads' ? rows.filter((r) => num(r.ready) < num(r.desired)).length : 0
@@ -68,9 +109,13 @@ export default function Kubernetes() {
         icon={<Boxes className="size-5" />}
         sub={
           view === 'pods' && unhealthyPods ? (
-            <span className="text-warn">{unhealthyPods} pods not ready or restarting</span>
+            <button type="button" onClick={() => fc.setKey('health', ['Failed', 'Pending', 'Not ready', 'Restarting'])} className="text-warn hover:underline">
+              {unhealthyPods} pods not ready or restarting
+            </button>
           ) : view === 'workloads' && degraded ? (
-            <span className="text-warn">{degraded} workloads below desired replicas</span>
+            <button type="button" onClick={() => fc.setKey('health', ['Degraded'])} className="text-warn hover:underline">
+              {degraded} workloads below desired replicas
+            </button>
           ) : (
             'Workloads, pods and nodes from Smartscape'
           )
@@ -87,19 +132,20 @@ export default function Kubernetes() {
                 { value: 'namespaces', label: 'Namespaces' },
               ]}
             />
-            <FilterInput value={filter} onChange={setFilter} placeholder={`Filter ${view}…`} className="w-64" />
+            <FacetSearch key={view} fc={fc} placeholder={`Filter ${view}…`} className="w-72" />
           </>
         }
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={`${rows.length} ${view}`}>
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={view} />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
           <DataTable
             key={view}
-            rows={res.data ? rows : undefined}
+            rows={fc.rows}
             loading={res.isLoading}
-            columns={COLUMNS[view](setFilter)}
+            columns={COLUMNS[view]}
+            facets={fc}
             rowKey={(r) => r.id}
             href={(r) => entityHref(r.id, r.name)}
             initialSort={view === 'pods' ? { key: 'health', dir: 'desc' } : view === 'workloads' ? { key: 'ready', dir: 'asc' } : undefined}
@@ -112,41 +158,38 @@ export default function Kubernetes() {
   )
 }
 
+function podHealth(r: Rec) {
+  if (r.phase === 'Failed' || r.phase === 'Unknown') return 'Failed'
+  if (r.phase === 'Pending') return 'Pending'
+  if (r.phase === 'Succeeded') return 'Completed'
+  if (r.phase === 'Running' && num(r.ready) < num(r.total)) return 'Not ready'
+  if (num(r.restarts) > 0) return 'Restarting'
+  return 'Healthy'
+}
+
 function podUnhealthy(r: Rec) {
   return (r.phase === 'Running' && num(r.ready) < num(r.total)) || num(r.restarts) > 0 || r.phase === 'Pending' || r.phase === 'Failed' || r.phase === 'Unknown'
 }
 
-const nsCell = (setFilter: (s: string) => void): Column => ({
+const nsCol: Column = {
   key: 'ns',
   header: 'Namespace',
   width: 'minmax(120px,1fr)',
-  render: (r) => (
-    <Tip content="Filter by this namespace">
-      <button
-        type="button"
-        className="truncate text-ink-2 hover:text-accent-ink"
-        onClick={(e) => {
-          e.preventDefault()
-          e.stopPropagation()
-          setFilter(r.namespace)
-        }}
-      >
-        {r.namespace}
-      </button>
-    </Tip>
-  ),
+  facet: 'ns',
+  render: (r) => <span className="text-ink-2">{r.namespace}</span>,
   sort: (r) => r.namespace,
-})
+}
 
-const COLUMNS: Record<View, (setFilter: (s: string) => void) => Column[]> = {
-  workloads: (sf) => [
+const COLUMNS: Record<View, Column[]> = {
+  workloads: [
     { key: 'name', header: 'Workload', width: 'minmax(220px,2fr)', render: (r) => <EntityLink id={r.id} name={r.name} type={r.type} />, sort: (r) => r.name },
-    nsCell(sf),
-    { key: 'kind', header: 'Kind', width: '110px', render: (r) => <Badge>{shortType(r.type)}</Badge>, sort: (r) => r.type },
+    nsCol,
+    { key: 'kind', header: 'Kind', width: '110px', facet: 'kind', render: (r) => <Badge>{shortType(r.type)}</Badge>, sort: (r) => r.type },
     {
       key: 'ready',
       header: 'Ready',
       width: '150px',
+      facet: 'health',
       align: 'right',
       render: (r) => {
         const ready = num(r.ready)
@@ -165,10 +208,10 @@ const COLUMNS: Record<View, (setFilter: (s: string) => void) => Column[]> = {
       },
       sort: (r) => (num(r.desired) ? num(r.ready) / num(r.desired) : 1),
     },
-    { key: 'cluster', header: 'Cluster', width: '120px', render: (r) => <span className="text-ink-3">{r.cluster}</span>, sort: (r) => r.cluster },
+    { key: 'cluster', header: 'Cluster', width: '120px', facet: 'cluster', render: (r) => <span className="text-ink-3">{r.cluster}</span>, sort: (r) => r.cluster },
     { key: 'age', header: 'Created', width: '96px', align: 'right', render: (r) => <TimeAgo value={r.created} className="text-ink-3" />, sort: (r) => r.created },
   ],
-  pods: (sf) => [
+  pods: [
     {
       key: 'health',
       header: '',
@@ -177,11 +220,12 @@ const COLUMNS: Record<View, (setFilter: (s: string) => void) => Column[]> = {
       sort: (r) => (podUnhealthy(r) ? 2 : r.phase === 'Running' ? 1 : 0),
     },
     { key: 'name', header: 'Pod', width: 'minmax(240px,2fr)', render: (r) => <EntityLink id={r.id} name={r.name} type="K8S_POD" />, sort: (r) => r.name },
-    nsCell(sf),
+    nsCol,
     {
       key: 'phase',
       header: 'Phase',
       width: '96px',
+      facet: 'phase',
       render: (r) => <Badge tone={r.phase === 'Running' ? 'ok' : r.phase === 'Succeeded' ? 'muted' : 'warn'}>{r.phase}</Badge>,
       sort: (r) => r.phase,
     },
@@ -201,22 +245,22 @@ const COLUMNS: Record<View, (setFilter: (s: string) => void) => Column[]> = {
       render: (r) => <span className={clsx(num(r.restarts) > 0 ? 'text-warn' : 'text-ink-3')}>{fmtInt(num(r.restarts))}</span>,
       sort: (r) => num(r.restarts),
     },
-    { key: 'workload', header: 'Workload', width: 'minmax(140px,1fr)', render: (r) => <span className="text-ink-2">{r.workload ?? '—'}</span>, sort: (r) => r.workload },
-    { key: 'node', header: 'Node', width: 'minmax(120px,1fr)', render: (r) => <span className="text-ink-3">{r.node}</span>, sort: (r) => r.node },
+    { key: 'workload', header: 'Workload', width: 'minmax(140px,1fr)', facet: 'workload', render: (r) => <span className="text-ink-2">{r.workload ?? '—'}</span>, sort: (r) => r.workload },
+    { key: 'node', header: 'Node', width: 'minmax(120px,1fr)', facet: 'node', render: (r) => <span className="text-ink-3">{r.node}</span>, sort: (r) => r.node },
     { key: 'age', header: 'Age', width: '80px', align: 'right', render: (r) => <TimeAgo value={r.created} className="text-ink-3" />, sort: (r) => r.created },
   ],
-  nodes: () => [
+  nodes: [
     { key: 'name', header: 'Node', width: 'minmax(220px,2fr)', render: (r) => <EntityLink id={r.id} name={r.name} type="K8S_NODE" />, sort: (r) => r.name },
-    { key: 'instance', header: 'Instance', width: '120px', render: (r) => (r.instance ? <Badge mono>{r.instance}</Badge> : null), sort: (r) => r.instance },
-    { key: 'zone', header: 'Zone', width: '110px', render: (r) => <span className="text-ink-2">{r.zone}</span>, sort: (r) => r.zone },
+    { key: 'instance', header: 'Instance', width: '120px', facet: 'instance', render: (r) => (r.instance ? <Badge mono>{r.instance}</Badge> : null), sort: (r) => r.instance },
+    { key: 'zone', header: 'Zone', width: '110px', facet: 'zone', render: (r) => <span className="text-ink-2">{r.zone}</span>, sort: (r) => r.zone },
     { key: 'cpu', header: 'CPUs', width: '60px', align: 'right', render: (r) => r.cpu, sort: (r) => num(r.cpu) },
-    { key: 'kubelet', header: 'Kubelet', width: '140px', render: (r) => <span className="font-mono text-xs text-ink-2">{r.kubelet}</span>, sort: (r) => r.kubelet },
-    { key: 'os', header: 'OS image', width: 'minmax(140px,1fr)', render: (r) => <span className="text-ink-3">{r.os}</span>, sort: (r) => r.os },
+    { key: 'kubelet', header: 'Kubelet', width: '140px', facet: 'kubelet', render: (r) => <span className="font-mono text-xs text-ink-2">{r.kubelet}</span>, sort: (r) => r.kubelet },
+    { key: 'os', header: 'OS image', width: 'minmax(140px,1fr)', facet: 'os', render: (r) => <span className="text-ink-3">{r.os}</span>, sort: (r) => r.os },
     { key: 'age', header: 'Age', width: '80px', align: 'right', render: (r) => <TimeAgo value={r.created} className="text-ink-3" />, sort: (r) => r.created },
   ],
-  namespaces: () => [
+  namespaces: [
     { key: 'name', header: 'Namespace', width: 'minmax(220px,2fr)', render: (r) => <EntityLink id={r.id} name={r.name} type="K8S_NAMESPACE" />, sort: (r) => r.name },
-    { key: 'cluster', header: 'Cluster', width: 'minmax(120px,1fr)', render: (r) => <span className="text-ink-2">{r.cluster}</span>, sort: (r) => r.cluster },
+    { key: 'cluster', header: 'Cluster', width: 'minmax(120px,1fr)', facet: 'cluster', render: (r) => <span className="text-ink-2">{r.cluster}</span>, sort: (r) => r.cluster },
     { key: 'seen', header: 'Last seen', width: '100px', align: 'right', render: (r) => <TimeAgo value={r.lifetime?.end} className="text-ink-3" />, sort: (r) => r.lifetime?.end },
   ],
 }

@@ -1,13 +1,15 @@
 import clsx from 'clsx'
 import { Server } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { PageHeader, Panel } from '../components/Panel'
 import { Meter, Spark } from '../components/Spark'
 import { Badge, ErrorBox, TimeAgo } from '../components/ui'
 import { arr, num, useDql, type Rec } from '../lib/api'
-import { fmtBytes } from '../lib/format'
+import { bucket, type Facet } from '../lib/facets'
+import { fmtBytes, titleCase } from '../lib/format'
 import { entityHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
@@ -17,6 +19,27 @@ const lastVal = (a: unknown) => {
   const v = arr(a).filter((x) => x != null)
   return v.length ? num(v[v.length - 1]) : NaN
 }
+
+const UTIL = ['≥ 90%', '75–90%', '50–75%', '< 50%']
+const utilFacet = (key: 'cpu' | 'mem' | 'disk', label: string): Facet<Rec> => ({
+  key,
+  label,
+  value: (r) => bucket(r[`${key}Now`], [[90, UTIL[0]], [75, UTIL[1]], [50, UTIL[2]]], UTIL[3]),
+  order: UTIL,
+})
+const osName = (r: Rec) => String(r['os.version'] ?? r['os.type'] ?? '').split('(')[0].trim() || null
+
+const FACETS: Facet<Rec>[] = [
+  utilFacet('cpu', 'CPU'),
+  utilFacet('mem', 'Memory'),
+  utilFacet('disk', 'Disk'),
+  { key: 'os', label: 'OS', value: osName },
+  { key: 'ostype', label: 'OS family', value: (r) => r['os.type'], display: (v) => titleCase(v) },
+  { key: 'instance', label: 'Instance type', value: (r) => r['host.type'], aliases: ['type'] },
+  { key: 'size', label: 'Size', value: (r) => (r.logical_cores ? `${r.logical_cores} vCPU` : null), aliases: ['cores'] },
+  { key: 'cloud', label: 'Cloud', value: (r) => r['cloud.provider'], display: (v) => v.toUpperCase() },
+  { key: 'group', label: 'Host group', value: (r) => r['dt.host_group.id'], aliases: ['hostgroup'] },
+]
 
 export default function Hosts() {
   useTitle('Hosts')
@@ -31,7 +54,6 @@ export default function Hosts() {
   )
   const list = useDql(listSpec)
   const metrics = useDql(metricSpec)
-  const [filter, setFilter] = useState('')
 
   const rows = useMemo(() => {
     const m = new Map((metrics.data?.records ?? []).map((r) => [r['dt.smartscape.host'], r]))
@@ -40,13 +62,13 @@ export default function Hosts() {
       return { ...h, cpu: mr?.cpu, mem: mr?.mem, disk: mr?.disk, cpuNow: lastVal(mr?.cpu), memNow: lastVal(mr?.mem), diskNow: lastVal(mr?.disk) } as Rec
     })
   }, [list.data, metrics.data])
-  const f = filter.toLowerCase()
-  const shown = rows.filter((r) => !f || JSON.stringify(r).toLowerCase().includes(f))
+  const fc = useFacets(list.data ? rows : undefined, FACETS, { text: (r) => `${r.name} ${r.id} ${arr(r.ip).join(' ')}` })
 
   const pctCol = (key: 'cpu' | 'mem' | 'disk', label: string, color: string): Column => ({
     key,
     header: label,
     width: '210px',
+    facet: key,
     align: 'right',
     render: (r) => {
       const now = r[`${key}Now`] as number
@@ -70,6 +92,7 @@ export default function Hosts() {
       key: 'spec',
       header: 'Size',
       width: '130px',
+      facet: 'size',
       align: 'right',
       render: (r) => (
         <span className="text-ink-2">
@@ -82,10 +105,11 @@ export default function Hosts() {
       key: 'os',
       header: 'OS',
       width: 'minmax(120px,1fr)',
-      render: (r) => <span className="text-ink-2" title={r['os.version']}>{String(r['os.version'] ?? r['os.type'] ?? '').split('(')[0]}</span>,
+      facet: 'os',
+      render: (r) => <span className="text-ink-2" title={r['os.version']}>{osName(r)}</span>,
       sort: (r) => r['os.version'],
     },
-    { key: 'type', header: 'Instance', width: '110px', render: (r) => (r['host.type'] ? <Badge mono>{r['host.type']}</Badge> : null), sort: (r) => r['host.type'] },
+    { key: 'type', header: 'Instance', width: '110px', facet: 'instance', render: (r) => (r['host.type'] ? <Badge mono>{r['host.type']}</Badge> : null), sort: (r) => r['host.type'] },
     { key: 'seen', header: 'Last seen', width: '90px', align: 'right', render: (r) => <TimeAgo value={r.lifetime?.end} className="text-ink-3" />, sort: (r) => r.lifetime?.end },
   ]
 
@@ -95,16 +119,17 @@ export default function Hosts() {
         title="Hosts"
         icon={<Server className="size-5" />}
         sub={`${rows.length || '…'} hosts · utilization over ${tf.label.toLowerCase()}`}
-        actions={<FilterInput value={filter} onChange={setFilter} placeholder="Filter hosts…" className="w-64" />}
+        actions={<FacetSearch fc={fc} placeholder="Filter hosts…" className="w-72" />}
       />
-      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={`${shown.length} hosts`}>
+      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" />}>
         {list.error ? (
           <ErrorBox error={list.error} />
         ) : (
           <DataTable
-            rows={list.data ? shown : undefined}
+            rows={fc.rows}
             loading={list.isLoading}
             columns={cols}
+            facets={fc}
             rowKey={(r) => r.id}
             href={(r) => entityHref(r.id, r.name)}
             initialSort={{ key: 'cpu', dir: 'desc' }}

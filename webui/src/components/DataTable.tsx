@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import type { Rec } from '../lib/api'
+import { CellFilter, ColumnFacetButton, type FacetCtl } from './Facets'
 import { Empty, SkeletonRows } from './ui'
 
 export interface Column<T = Rec> {
@@ -15,6 +16,8 @@ export interface Column<T = Rec> {
   render: (r: T) => ReactNode
   sort?: (r: T) => string | number | null | undefined
   className?: string
+  /** Facet key: adds a filter menu to the header and +/− on hovered cells. */
+  facet?: string
 }
 
 export function DataTable<T = Rec>({
@@ -33,6 +36,7 @@ export function DataTable<T = Rec>({
   selectedKey,
   rowClassName,
   autoFocus,
+  facets,
 }: {
   rows: T[] | undefined
   columns: Column<T>[]
@@ -49,6 +53,7 @@ export function DataTable<T = Rec>({
   selectedKey?: string | null
   rowClassName?: (r: T) => string | undefined
   autoFocus?: boolean
+  facets?: FacetCtl<T>
 }) {
   const [sort, setSort] = useState(initialSort)
   const [cursor, setCursor] = useState(-1)
@@ -119,18 +124,20 @@ export function DataTable<T = Rec>({
       style={{ gridTemplateColumns: template }}
     >
       {columns.map((c) => (
-        <button
-          key={c.key}
-          type="button"
-          disabled={!c.sort}
-          onClick={() =>
-            setSort((s) => (s?.key === c.key ? { key: c.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.align === 'right' ? 'desc' : 'asc' }))
-          }
-          className={clsx('flex min-w-0 items-center gap-1 truncate', c.align === 'right' && 'justify-end', c.sort && 'hover:text-ink-2')}
-        >
-          <span className="truncate">{c.header}</span>
-          {sort?.key === c.key && (sort.dir === 'asc' ? <ArrowUp className="size-3 shrink-0" /> : <ArrowDown className="size-3 shrink-0" />)}
-        </button>
+        <div key={c.key} className={clsx('group/h flex min-w-0 items-center gap-0.5', c.align === 'right' && 'justify-end')}>
+          <button
+            type="button"
+            disabled={!c.sort}
+            onClick={() =>
+              setSort((s) => (s?.key === c.key ? { key: c.key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key: c.key, dir: c.align === 'right' ? 'desc' : 'asc' }))
+            }
+            className={clsx('flex min-w-0 items-center gap-1 truncate', c.align === 'right' && 'justify-end', c.sort && 'hover:text-ink-2')}
+          >
+            <span className="truncate">{c.header}</span>
+            {sort?.key === c.key && (sort.dir === 'asc' ? <ArrowUp className="size-3 shrink-0" /> : <ArrowDown className="size-3 shrink-0" />)}
+          </button>
+          {facets && c.facet && <ColumnFacetButton fc={facets} facetKey={c.facet} />}
+        </div>
       ))}
     </div>
   )
@@ -148,7 +155,16 @@ export function DataTable<T = Rec>({
       {loading && !rows ? (
         <SkeletonRows rows={8} />
       ) : sorted.length === 0 ? (
-        (empty ?? <Empty title="No results" hint="Nothing matched in this timeframe." />)
+        facets?.active && facets.total > 0 ? (
+          <div className="flex flex-col items-center gap-2 py-10">
+            <Empty title="Nothing matches these filters" hint={`${facets.total} rows are hidden by the current filters.`} className="py-0" />
+            <button type="button" onClick={facets.clear} className="rounded-md bg-accent-wash px-2.5 py-1 text-xs font-medium text-accent-ink hover:brightness-110">
+              Clear filters
+            </button>
+          </div>
+        ) : (
+          (empty ?? <Empty title="No results" hint="Nothing matched in this timeframe." />)
+        )
       ) : (
         <div style={{ height: v.getTotalSize(), position: 'relative' }}>
           {v.getVirtualItems().map((vi) => {
@@ -175,8 +191,12 @@ export function DataTable<T = Rec>({
                 style={{ gridTemplateColumns: template, height: vi.size, transform: `translateY(${vi.start}px)` }}
               >
                 {columns.map((c) => (
-                  <div key={c.key} className={clsx('min-w-0 truncate', c.align === 'right' && 'tnum text-right', c.className)}>
+                  <div
+                    key={c.key}
+                    className={clsx('min-w-0 truncate', c.align === 'right' && 'tnum text-right', facets && c.facet && 'group/cell relative', c.className)}
+                  >
                     {c.render(r)}
+                    {facets && c.facet && <CellFilter fc={facets} facetKey={c.facet} row={r} />}
                   </div>
                 ))}
               </Tag>

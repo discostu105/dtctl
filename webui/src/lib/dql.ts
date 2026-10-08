@@ -328,7 +328,7 @@ export function vitalQuery(v: Vital, e: Entity, interval: string) {
 export function changesQuery(limit = 200, extra = '') {
   return `fetch events
 | filter event.kind == "SDLC_EVENT" or in(event.type, {"CUSTOM_DEPLOYMENT","CUSTOM_CONFIGURATION","CUSTOM_ANNOTATION","PROCESS_RESTART"}) or (event.type == "CUSTOM_INFO" and matchesPhrase(event.name, "deployment"))
-${extra ? `| filter ${extra}\n` : ''}| fieldsAdd what = coalesce(cicd.deployment.name, event.name, task.name, event.type), env = coalesce(deployment.environment.name, deployment.environment), outcome = coalesce(task.outcome, event.status), rev = coalesce(vcs.ref.base.revision, cicd.deployment.id), source = coalesce(event.provider, dt.openpipeline.source)
+${extra ? `| filter ${extra}\n` : ''}| fieldsAdd what = coalesce(cicd.deployment.name, event.name, task.name, event.type), env = coalesce(deployment.environment.name, deployment.environment), outcome = coalesce(task.outcome, event.status), rev = coalesce(vcs.ref.base.revision, cicd.deployment.id), source = coalesce(event.provider, dt.openpipeline.source), ns = k8s.namespace.name, workload = k8s.workload.name, cluster = k8s.cluster.name
 | sort timestamp desc
 | limit ${limit}`
 }

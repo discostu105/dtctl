@@ -2,16 +2,43 @@ import clsx from 'clsx'
 import { GitCommitVertical } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { PageHeader, Panel } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { Badge, CopyButton, ErrorBox, Segmented, TimeAgo } from '../components/ui'
 import { useDql, type Rec } from '../lib/api'
 import { fmtDateTime } from '../lib/format'
+import type { Facet } from '../lib/facets'
 import { changesSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
 import { useTimeframe } from '../lib/timeframe'
 
 const isDeploy = (r: Rec) => r['event.type'] === 'deployment' || /deploy/i.test(String(r.what ?? ''))
+
+/** What kind of change, in words a person would use. */
+function changeKind(r: Rec) {
+  const t = String(r['event.type'] ?? '')
+  if (t === 'deployment' || t === 'CUSTOM_DEPLOYMENT') return 'Deployment'
+  if (t === 'PROCESS_RESTART') return 'Process restart'
+  if (t === 'CUSTOM_CONFIGURATION') return 'Configuration'
+  if (t === 'CUSTOM_ANNOTATION') return 'Annotation'
+  if (r['event.provider'] === 'KUBERNETES_INFERRED_EVENT') return 'Kubernetes spec change'
+  return 'Other'
+}
+
+const SOURCES: Record<string, string> = { KUBERNETES_INFERRED_EVENT: 'Kubernetes', ONEAGENT: 'OneAgent' }
+const prettySource = (s: unknown) => (s == null ? s : (SOURCES[String(s)] ?? String(s)))
+const lower = (v: unknown) => (v == null ? v : String(v).toLowerCase())
+
+const FACETS: Facet<Rec>[] = [
+  { key: 'type', label: 'Type', value: changeKind, aliases: ['kind'] },
+  { key: 'env', label: 'Environment', value: (r) => r.env, aliases: ['stage'] },
+  { key: 'outcome', label: 'Outcome', value: (r) => lower(r.outcome) as string, aliases: ['status'] },
+  { key: 'ns', label: 'Namespace', value: (r) => r.ns, aliases: ['namespace'] },
+  { key: 'workload', label: 'Workload', value: (r) => r.workload, aliases: ['target'] },
+  { key: 'source', label: 'Source', value: (r) => prettySource(r.source) as string, aliases: ['provider'] },
+  { key: 'cluster', label: 'Cluster', value: (r) => r.cluster },
+]
 
 export default function Changes() {
   useTitle('Changes')
@@ -19,14 +46,10 @@ export default function Changes() {
   const spec = changesSpec(tf)
   const res = useDql(spec)
   const [lens, setLens] = useState<'deploy' | 'all'>('deploy')
-  const [filter, setFilter] = useState('')
   const [sel, setSel] = useState<Rec | null>(null)
   const all = res.data?.records
-  const f = filter.toLowerCase()
-  const rows = useMemo(
-    () => all?.filter((r) => lens === 'all' || isDeploy(r)).filter((r) => !f || JSON.stringify([r.what, r.env, r.outcome, r.rev, r.source]).toLowerCase().includes(f)),
-    [all, lens, f],
-  )
+  const lensRows = useMemo(() => all?.filter((r) => lens === 'all' || isDeploy(r)), [all, lens])
+  const fc = useFacets(lensRows, FACETS, { text: (r) => `${r.what} ${r.rev ?? ''}` })
 
   const cols: Column[] = [
     {
@@ -53,11 +76,26 @@ export default function Changes() {
       ),
       sort: (r) => r.what,
     },
-    { key: 'env', header: 'Environment', width: '120px', render: (r) => (r.env ? <Badge>{r.env}</Badge> : null), sort: (r) => r.env },
+    {
+      key: 'target',
+      header: 'Target',
+      width: 'minmax(160px,1.4fr)',
+      facet: 'workload',
+      render: (r) =>
+        r.workload ? (
+          <span className="truncate">
+            <span className="text-ink-2">{r.workload}</span>
+            {r.ns && <span className="text-ink-4"> · {r.ns}</span>}
+          </span>
+        ) : null,
+      sort: (r) => r.workload,
+    },
+    { key: 'env', header: 'Environment', width: '120px', facet: 'env', render: (r) => (r.env ? <Badge>{r.env}</Badge> : null), sort: (r) => r.env },
     {
       key: 'outcome',
       header: 'Outcome',
       width: '110px',
+      facet: 'outcome',
       render: (r) => {
         const o = String(r.outcome ?? '')
         return o ? <Badge tone={/fail|error/i.test(o) ? 'crit' : /succe|finished/i.test(o) ? 'ok' : 'info'}>{o.toLowerCase()}</Badge> : null
@@ -76,7 +114,14 @@ export default function Changes() {
           </span>
         ) : null,
     },
-    { key: 'src', header: 'Source', width: '120px', render: (r) => <span className="text-ink-3">{r.source}</span>, sort: (r) => r.source },
+    {
+      key: 'src',
+      header: 'Source',
+      width: '120px',
+      facet: 'source',
+      render: (r) => <span className="text-ink-3">{prettySource(r.source) as string}</span>,
+      sort: (r) => prettySource(r.source) as string,
+    },
   ]
 
   return (
@@ -96,18 +141,19 @@ export default function Changes() {
                   { value: 'all', label: 'All changes', count: all?.length },
                 ]}
               />
-              <FilterInput value={filter} onChange={setFilter} placeholder="Filter changes…" className="w-64" />
+              <FacetSearch fc={fc} placeholder="Filter changes…" className="w-72" />
             </>
           }
         />
-        <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={`${rows?.length ?? '…'} changes`}>
+        <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="changes" />}>
           {res.error ? (
             <ErrorBox error={res.error} />
           ) : (
             <DataTable
-              rows={rows}
+              rows={fc.rows}
               loading={res.isLoading}
               columns={cols}
+              facets={fc}
               rowKey={(r, i) => `${r['event.id'] ?? i}-${r.timestamp}`}
               onOpen={setSel}
               selectedKey={sel ? `${sel['event.id']}-${sel.timestamp}` : null}

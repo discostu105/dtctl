@@ -17,10 +17,12 @@ import { dtLinks } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { pushRecent, useTitle } from '../lib/store'
 import { absolute, intervalFor, setTimeframe, useTimeframe, type Timeframe } from '../lib/timeframe'
-import { useResolved } from '../lib/names'
+import { displayName, useResolved } from '../lib/names'
 import { EventList } from './Problem'
 import { ErrorsView, errorGroupsSpec, SessionsView, sessionsSpec } from './Rum'
 import { DataTabs } from '../components/DataTabs'
+import { EntityMetrics } from '../components/EntityMetrics'
+import { headlineVitals, metricDiscoveryQuery } from '../lib/metrics'
 
 // Tab query builders, shared by the page (counts, empty states, "show
 // query") and the tab bodies: identical specs share one cache entry.
@@ -38,7 +40,7 @@ const tracesSpec = (tf: Timeframe, e: Entity, lens: 'all' | 'errors') =>
 const eventsSpec = (tf: Timeframe, e: Entity) => tfSpec(tf, `fetch events\n| filter ${signalFilter(e)}\n| sort timestamp desc\n| limit 300`)
 const relatedSpec = (id: string): DqlSpec => ({ query: edgesQuery(id), ttl: 120 })
 
-type Tab = 'overview' | 'logs' | 'traces' | 'sessions' | 'rumerrors' | 'events' | 'problems' | 'related'
+type Tab = 'overview' | 'metrics' | 'logs' | 'traces' | 'sessions' | 'rumerrors' | 'events' | 'problems' | 'related'
 
 export default function EntityPage({ id }: { id: string }) {
   const type = typeOfId(id)
@@ -54,7 +56,7 @@ export default function EntityPage({ id }: { id: string }) {
   const detail = useDql(detailSpec)
   const rec = detail.data?.records[0]
   const resolved = useResolved(id)
-  const name: string = rec?.name || search.get('n') || resolved?.name || id
+  const name: string = (rec && displayName(rec) !== rec.id ? displayName(rec) : '') || search.get('n') || resolved?.name || id
   const entity: Entity = useMemo(() => ({ id, type, name: rec?.name || search.get('n') || undefined }), [id, type, rec?.name])
 
   useTitle(name)
@@ -72,7 +74,12 @@ export default function EntityPage({ id }: { id: string }) {
   const lastChange = useDql({ query: changesQuery(1, signalFilter(entity)), from: 'now-7d', ttl: 60 })
   const change = lastChange.data?.records[0]
 
-  const vitals = vitalsFor(type)
+  // Every metric carrying this entity's Smartscape dimension (cloud resources etc.).
+  const classic = resolved?.source === 'classic'
+  const metricsSpec = classic ? null : tfSpec(tf, metricDiscoveryQuery(entity), { ttl: 300 })
+  const metrics = useDql(metricsSpec)
+  const curated = vitalsFor(type)
+  const vitals = curated.length ? curated : headlineVitals((metrics.data?.records ?? []).map((r) => r['metric.key']))
   const canSpans = spanScopable(type)
   const isFrontend = type === 'FRONTEND'
 
@@ -178,6 +185,7 @@ export default function EntityPage({ id }: { id: string }) {
           onChange={setTab}
           tabs={[
             { value: 'overview', label: 'Overview', spec: detailSpec, result: detail, count: null },
+            { value: 'metrics', label: 'Metrics', hidden: classic, spec: metricsSpec, result: metrics, limit: 120 },
             { value: 'sessions', label: 'Sessions', hidden: !isFrontend, spec: tabSessionsSpec, result: tabs.sessions, limit: 500 },
             { value: 'rumerrors', label: 'Errors', hidden: !isFrontend, spec: tabErrorsSpec, result: tabs.rumerrors, limit: 300 },
             { value: 'logs', label: 'Logs', hidden: isFrontend, spec: tabLogsSpec, result: tabs.logs, limit: 500 },
@@ -189,6 +197,7 @@ export default function EntityPage({ id }: { id: string }) {
         />
         <div className="min-h-[420px]">
           {tab === 'overview' && <Overview rec={rec} loading={detail.isLoading} type={type} classic={resolved?.source === 'classic'} />}
+          {tab === 'metrics' && <EntityMetrics entity={entity} discovery={metrics} />}
           {tab === 'logs' && <EntityLogs entity={entity} />}
           {tab === 'sessions' && (
             <div className="flex h-[560px] flex-col">

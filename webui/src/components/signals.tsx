@@ -4,6 +4,7 @@ import { AlertOctagon, ChevronRight, Maximize2, Minimize2, X } from 'lucide-reac
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { num, type Rec } from '../lib/api'
+import type { FacetCtl } from './Facets'
 import { fmtNs, fmtTime, span, titleCase } from '../lib/format'
 import { problemHref, traceHref } from '../lib/links'
 import { DataTable, type Column } from './DataTable'
@@ -380,7 +381,7 @@ export function ProblemStatus({ status }: { status: string }) {
 
 export const problemColumns: Column[] = [
   { key: 'id', header: 'ID', width: '96px', render: (r) => <span className="font-mono text-xs text-ink-3">{r.display_id}</span>, sort: (r) => r.display_id },
-  { key: 'status', header: 'Status', width: '82px', render: (r) => <ProblemStatus status={r.status} />, sort: (r) => r.status },
+  { key: 'status', header: 'Status', width: '82px', facet: 'status', render: (r) => <ProblemStatus status={r.status} />, sort: (r) => r.status },
   {
     key: 'name',
     header: 'Problem',
@@ -393,11 +394,12 @@ export const problemColumns: Column[] = [
     ),
     sort: (r) => r.name,
   },
-  { key: 'cat', header: 'Category', width: '130px', render: (r) => <span className="text-ink-2">{titleCase(String(r.category ?? ''))}</span>, sort: (r) => r.category },
+  { key: 'cat', header: 'Category', width: '130px', facet: 'category', render: (r) => <span className="text-ink-2">{titleCase(String(r.category ?? ''))}</span>, sort: (r) => r.category },
   {
     key: 'affected',
     header: 'Affected',
     width: 'minmax(160px,1.2fr)',
+    facet: 'affected',
     render: (r) => {
       const names: string[] = Array.isArray(r.affected) ? r.affected : []
       return (
@@ -419,12 +421,23 @@ export const problemColumns: Column[] = [
   { key: 'start', header: 'Started', width: '84px', align: 'right', render: (r) => <TimeAgo value={r.start} className="text-ink-2" />, sort: (r) => r.start },
 ]
 
-export function ProblemsTable({ records, loading, maxHeight }: { records: Rec[] | undefined; loading?: boolean; maxHeight?: number | string }) {
+export function ProblemsTable({
+  records,
+  loading,
+  maxHeight,
+  facets,
+}: {
+  records: Rec[] | undefined
+  loading?: boolean
+  maxHeight?: number | string
+  facets?: FacetCtl<Rec>
+}) {
   return (
     <DataTable
       rows={records}
       loading={loading}
       columns={problemColumns}
+      facets={facets}
       rowKey={(r) => r.display_id}
       href={(r) => problemHref(r.display_id)}
       maxHeight={maxHeight}

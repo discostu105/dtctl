@@ -90,8 +90,11 @@ export function Panel({
   className,
   bodyClassName,
   hint,
+  head,
 }: {
   title?: ReactNode
+  /** Replaces the title with richer content (e.g. a count plus filter chips). */
+  head?: ReactNode
   icon?: ReactNode
   actions?: ReactNode
   spec?: DqlSpec | null
@@ -104,10 +107,10 @@ export function Panel({
   const stale = result?.isPlaceholderData
   return (
     <section className={clsx('flex min-w-0 flex-col rounded-xl border border-line bg-panel', className)}>
-      {(title || actions || spec) && (
+      {(title || head || actions || spec) && (
         <header className="flex h-10 shrink-0 items-center gap-2 border-b border-line pr-1.5 pl-3">
           {icon && <span className="text-ink-3">{icon}</span>}
-          <h2 className="truncate text-sm font-medium">{title}</h2>
+          {head ?? <h2 className="truncate text-sm font-medium">{title}</h2>}
           {hint && <span className="truncate text-xs text-ink-3">{hint}</span>}
           <div className="ml-auto flex items-center gap-1">
             {actions}

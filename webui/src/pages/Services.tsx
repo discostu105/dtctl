@@ -3,17 +3,42 @@ import { Share2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { PageHeader, Panel } from '../components/Panel'
 import { Spark } from '../components/Spark'
 import { Badge, ErrorBox, Segmented } from '../components/ui'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
 import { detailQuery, serviceListQuery } from '../lib/dql'
+import { bucket, type Facet } from '../lib/facets'
 import { fmtCompact, fmtPct } from '../lib/format'
 import { entityHref } from '../lib/links'
 import { servicesSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
 import { useTimeframe } from '../lib/timeframe'
 import { fmtLatencyUs } from './Pulse'
+
+const kindLabel = (k: unknown) => (k ? String(k).replace(/_SERVICE$/, '').replace(/_/g, ' ').toLowerCase() : null)
+
+const HEALTH = ['Failing ≥ 5%', 'Some failures', 'Healthy', 'No traffic']
+const LATENCY = ['≥ 1 s', '300 ms – 1 s', '100–300 ms', '< 100 ms']
+
+const FACETS: Facet<Rec>[] = [
+  {
+    key: 'health',
+    label: 'Health',
+    value: (r) => (!r.total ? 'No traffic' : r.rate >= 5 ? 'Failing ≥ 5%' : r.rate > 0 ? 'Some failures' : 'Healthy'),
+    order: HEALTH,
+  },
+  { key: 'ns', label: 'Namespace', value: (r) => r.ns, aliases: ['namespace'] },
+  { key: 'type', label: 'Type', value: (r) => kindLabel(r.kind), aliases: ['kind'] },
+  {
+    key: 'latency',
+    label: 'Latency',
+    value: (r) => bucket(r.total ? r.latency / 1000 : null, [[1000, LATENCY[0]], [300, LATENCY[1]], [100, LATENCY[2]]], LATENCY[3]),
+    order: LATENCY,
+    aliases: ['rt'],
+  },
+]
 
 export default function Services() {
   useTitle('Services')
@@ -22,7 +47,6 @@ export default function Services() {
   const listSpec = { query: serviceListQuery(), ttl: 120 }
   const list = useDql(listSpec)
   const [lens, setLens] = useState<'active' | 'failing' | 'all'>('active')
-  const [filter, setFilter] = useState('')
 
   const rows = useMemo(() => {
     const byId = new Map<string, Rec>()
@@ -48,10 +72,11 @@ export default function Services() {
     failing: rows.filter((r) => r.failed > 0).length,
     all: rows.length,
   }
-  const f = filter.toLowerCase()
-  const shown = rows
-    .filter((r) => (lens === 'all' ? true : lens === 'failing' ? r.failed > 0 : r.total > 0))
-    .filter((r) => !f || `${r.name} ${r.ns ?? ''} ${r.id}`.toLowerCase().includes(f))
+  const lensRows = useMemo(
+    () => (red.data || list.data ? rows.filter((r) => (lens === 'all' ? true : lens === 'failing' ? r.failed > 0 : r.total > 0)) : undefined),
+    [rows, lens, red.data, list.data],
+  )
+  const fc = useFacets(lensRows, FACETS, { text: (r) => `${r.name} ${r.id}` })
 
   const cols: Column[] = [
     {
@@ -61,7 +86,7 @@ export default function Services() {
       render: (r) => <EntityLink id={r.id} name={r.name} type="SERVICE" />,
       sort: (r) => String(r.name ?? '').toLowerCase(),
     },
-    { key: 'ns', header: 'Namespace', width: 'minmax(100px,1fr)', render: (r) => <span className="text-ink-2">{r.ns ?? '—'}</span>, sort: (r) => r.ns },
+    { key: 'ns', header: 'Namespace', width: 'minmax(100px,1fr)', facet: 'ns', render: (r) => <span className="text-ink-2">{r.ns ?? '—'}</span>, sort: (r) => r.ns },
     {
       key: 'req',
       header: 'Throughput',
@@ -79,6 +104,7 @@ export default function Services() {
       key: 'fail',
       header: 'Failure rate',
       width: '200px',
+      facet: 'health',
       align: 'right',
       render: (r) => (
         <span className="flex items-center justify-end gap-3">
@@ -92,6 +118,7 @@ export default function Services() {
       key: 'rt',
       header: 'Latency (avg)',
       width: '200px',
+      facet: 'latency',
       align: 'right',
       render: (r) => (
         <span className="flex items-center justify-end gap-3">
@@ -105,7 +132,8 @@ export default function Services() {
       key: 'kind',
       header: 'Type',
       width: '130px',
-      render: (r) => (r.kind ? <Badge>{String(r.kind).replace(/_SERVICE$/, '').replace(/_/g, ' ').toLowerCase()}</Badge> : null),
+      facet: 'type',
+      render: (r) => (r.kind ? <Badge>{kindLabel(r.kind)}</Badge> : null),
       sort: (r) => r.kind,
     },
   ]
@@ -127,18 +155,19 @@ export default function Services() {
                 { value: 'all', label: 'All', count: counts.all },
               ]}
             />
-            <FilterInput value={filter} onChange={setFilter} placeholder="Filter services…" className="w-64" />
+            <FacetSearch fc={fc} placeholder="Filter services…" className="w-72" />
           </>
         }
       />
-      <Panel spec={servicesSpec(tf)} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={`${shown.length} services`}>
+      <Panel spec={servicesSpec(tf)} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" />}>
         {red.error ? (
           <ErrorBox error={red.error} />
         ) : (
           <DataTable
-            rows={red.data || list.data ? shown : undefined}
+            rows={fc.rows}
             loading={red.isLoading && list.isLoading}
             columns={cols}
+            facets={fc}
             rowKey={(r) => r.id}
             href={(r) => entityHref(r.id, r.name)}
             onHover={(r) => prefetchDql({ query: detailQuery({ id: r.id, type: 'SERVICE' }) })}

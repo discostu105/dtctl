@@ -27,6 +27,16 @@ function notify() {
   listeners.forEach((l) => l())
 }
 
+/** Smartscape name, else what a person would call it: the AWS Name tag or the ARN's last part. */
+export function displayName(r: { id?: string; name?: string; [k: string]: any }): string {
+  if (r.name) return r.name
+  const tag = r['tags:aws']?.Name
+  if (tag) return String(tag)
+  const arn: string | undefined = r['aws.arn']
+  if (arn) return arn.split(/[:/]/).filter(Boolean).pop() || arn
+  return r.id ?? ''
+}
+
 /** Seed names we already know (list rows, query results) to skip lookups. */
 export function seedNames(entries: { id: string; name?: string | null; type?: string }[]) {
   let changed = false
@@ -64,14 +74,14 @@ async function resolveChunk(ids: string[]) {
   const found = new Set<string>()
   try {
     const res = await runDql({
-      query: `smartscapeNodes "*"\n| filter in(id, {${ids.map((i) => `toSmartscapeId(${lit(i)})`).join(', ')}})\n| fields id, name, type\n| limit ${ids.length + 10}`,
+      query: `smartscapeNodes "*"\n| filter in(id, {${ids.map((i) => `toSmartscapeId(${lit(i)})`).join(', ')}})\n| fields id, name, type, \`tags:aws\`, aws.arn\n| limit ${ids.length + 10}`,
       from: 'now-30d',
       ttl: 600,
     })
     for (const r of res.records) {
       if (!r.id) continue
       found.add(r.id)
-      cache.set(r.id, { name: r.name || r.id, type: r.type, source: 'smartscape' })
+      cache.set(r.id, { name: displayName(r), type: r.type, source: 'smartscape' })
     }
   } catch {
     /* fall through to classic */
