@@ -1,7 +1,7 @@
 import clsx from 'clsx'
 import { AlertTriangle, ArrowLeft, Bot, Brain, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, MessagesSquare, User, Wrench, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Link } from 'wouter'
+import { Link, useSearch } from 'wouter'
 import { parseMessages } from '../components/Conversation'
 import { EntityLink } from '../components/Entity'
 import { Markdown } from '../components/Markdown'
@@ -114,9 +114,16 @@ function finalAnswer(turns: Turn[]): { text: string; via?: string } | null {
 // ── page ──────────────────────────────────────────────────────────────────
 
 export default function AiConversation({ id }: { id: string }) {
-  const stepsSpec = { query: conversationStepsQuery(id), ttl: 120, maxRecords: 3000 }
+  // links carry the start time (?t=): read a narrow window, fall back to 7 days if it isn't there
+  const hint = new URLSearchParams(useSearch()).get('t')
+  const [wide, setWide] = useState(!hint)
+  const at = wide ? null : hint
+  const stepsSpec = { query: conversationStepsQuery(id, at), ttl: 120, maxRecords: 3000 }
   const res = useDql(stepsSpec)
-  const promptRes = useDql({ query: conversationPromptQuery(id), ttl: 600 })
+  useEffect(() => {
+    if (!wide && res.data && res.data.records.length === 0) setWide(true)
+  }, [wide, res.data])
+  const promptRes = useDql({ query: conversationPromptQuery(id, at), ttl: 600 })
   const steps = useMemo(() => (res.data?.records ?? []).filter((s) => ['chat', 'execute_tool', 'invoke_agent'].includes(s.op)), [res.data])
   const { turns, setup, llm, execs } = useMemo(() => buildTurns(steps), [steps])
   const [sel, setSel] = useState<{ kind: 'llm'; rec: Rec } | { kind: 'tool'; use: ToolUse; next?: Rec } | null>(null)

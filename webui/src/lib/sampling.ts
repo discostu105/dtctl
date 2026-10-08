@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { useDql, type DqlResult, type DqlSpec } from './api'
+import { absolute, parseRel, type Timeframe } from './timeframe'
 
 // Adaptive sampling for data-heavy charts (log histograms, facet counts, error
 // trends). Large tenants scan hundreds of GB per hour of logs, so an exact
@@ -104,4 +105,37 @@ export function useAdaptiveDql(table: SampledTable, spec: DqlSpec | null, scaleF
   }, [raw.data, ratio, fields])
   const res = useMemo(() => ({ ...raw, data }), [raw, data]) as typeof raw
   return { res, spec: sampled, ratio, sampling: s, waiting: s.ratio == null }
+}
+
+// ── scan windows: for record lists and per-record joins, sampling is wrong
+// (it drops records), so instead read the most recent slice of the timeframe
+// that fits the budget, say so, and let the user opt into the full range. ──
+
+const fullScan = new Set<string>()
+export function setFullScan(table: SampledTable, on: boolean) {
+  if (on) fullScan.add(table)
+  else fullScan.delete(table)
+  listeners.forEach((l) => l())
+}
+
+export interface ScanWindow {
+  /** timeframe to query (null while the volume probe runs) */
+  tf: Timeframe | null
+  narrowed: boolean
+  full: Timeframe
+  estBytes: number
+  forcedFull: boolean
+  table: SampledTable
+}
+
+export function useScanWindow(table: SampledTable, tf: Timeframe): ScanWindow {
+  const s = useSamplingRatio(table, { from: tf.from, to: tf.to })
+  const forced = useSyncExternalStore(subscribe, () => fullScan.has(table))
+  const base = { full: tf, estBytes: s.estBytes, forcedFull: forced, table }
+  if (s.ratio == null) return { ...base, tf: null, narrowed: false }
+  if (forced || !s.estBytes || s.estBytes <= SCAN_BUDGET) return { ...base, tf, narrowed: false }
+  const ms = Math.max(5 * 60e3, (tf.ms * SCAN_BUDGET) / s.estBytes)
+  const minutes = Math.max(5, Math.floor(ms / 60e3))
+  const narrowed = tf.to === 'now' ? parseRel(`${minutes}m`)! : absolute(new Date(Date.parse(tf.to) - minutes * 60e3), new Date(Date.parse(tf.to)))
+  return { ...base, tf: narrowed, narrowed: true }
 }

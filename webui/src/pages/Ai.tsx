@@ -13,13 +13,15 @@ import { Spark } from '../components/Spark'
 import { Badge, Empty, ErrorBox, Facts, Kbd, Segmented, Skeleton, SkeletonRows, TimeAgo, Tip } from '../components/ui'
 import { arr, num, useDql, type DqlSpec, type Rec } from '../lib/api'
 import {
-  agentsQuery, aiKpiQuery, callDetailQuery, callsByModelSeries, conversationsQuery, evalRunsQuery, evalsByQuestionQuery, evalSourceQuery, evalsQuery,
+  agentsQuery, aiKpiQuery, callDetailQuery, callsByModelMetricSeries, callsByModelSeries, GENAI_METRIC_PROBE, conversationsQuery, evalRunsQuery, evalsByQuestionQuery, evalSourceQuery, evalsQuery,
   fmtTokens, lastText, modelsQuery, userPrompt, recentCallsQuery, toolExecutionsQuery, toolsQuery, ttftSeries, type ConversationFilter,
 } from '../lib/ai'
 import { q } from '../lib/dql'
 import { fmtCompact, fmtDateTime, fmtMs, fmtPct } from '../lib/format'
 import { traceHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
+import { useScanWindow } from '../lib/sampling'
+import { ScanNotice } from '../components/Sampled'
 import { useTitle } from '../lib/store'
 import { absolute, floorTf, intervalFor, setTimeframe, useTimeframe, type Timeframe } from '../lib/timeframe'
 
@@ -37,7 +39,8 @@ const toolsSpec = (tf: Timeframe) => tfSpec(tf, toolsQuery(), { ttl: 30 })
 const evalsSpec = (tf: Timeframe) => tfSpec(evalTf(tf), evalsQuery(), { ttl: 60 })
 
 export const secs = (s: number) => (Number.isFinite(s) ? (s < 1 ? `${Math.round(s * 1000)} ms` : `${s.toFixed(s < 10 ? 2 : 1)} s`) : '—')
-export const convHref = (id: string) => `/ai/conversations/${encodeURIComponent(id)}`
+/** `t` (when the conversation started) lets the replay read a narrow window instead of 7 days. */
+export const convHref = (id: string, t?: unknown) => `/ai/conversations/${encodeURIComponent(id)}${t ? `?t=${encodeURIComponent(String(t))}` : ''}`
 
 export default function Ai() {
   useTitle('AI')
@@ -64,23 +67,34 @@ export default function Ai() {
       p.delete('tab')
     })
 
-  const kpi = useDql(aiKpiSpec(tf))
+  // GenAI spans are a sliver of all spans, but filtering them still scans every
+  // span in the timeframe. On big tenants the span panels read the most recent
+  // slice that fits the scan budget (stf); the call chart switches to the
+  // gen_ai.client metrics over the full range when the app emits them.
+  const sw = useScanWindow('spans', tf)
+  const stf = sw.tf
+  const hasMetrics = (useDql({ query: GENAI_METRIC_PROBE, ttl: 3600 }).data?.records.length ?? 0) > 0
+  const kpi = useDql(stf && aiKpiSpec(stf))
   const k = kpi.data?.records[0]
   const iv = intervalFor(tf.ms)
-  const callsSeriesSpec = tfSpec(tf, callsByModelSeries(iv))
+  const metricCalls = sw.narrowed && hasMetrics
+  const callsSeriesSpec = metricCalls ? tfSpec(tf, callsByModelMetricSeries(iv), { ttl: 60 }) : stf && tfSpec(stf, callsByModelSeries(intervalFor(stf.ms)))
   const callsSeries = useDql(callsSeriesSpec)
-  const ttftSpec = tfSpec(tf, ttftSeries(iv))
+  const ttftSpec = stf && tfSpec(stf, ttftSeries(intervalFor(stf.ms)))
   const ttft = useDql(ttftSpec)
 
   // Every tab's query runs up front: counts, empty states, instant switching.
   const filter: ConversationFilter = { search: qParam, agent, errorsOnly }
-  const convSpec = conversationsSpec(tf, filter)
+  const convSpec = stf && conversationsSpec(stf, filter)
   const conv = useDql(convSpec)
-  const cSpec = callsSpec(tf, model)
+  const cSpec = stf && callsSpec(stf, model)
   const calls = useDql(cSpec)
-  const models = useDql(modelsSpec(tf))
-  const agents = useDql(agentsSpec(tf))
-  const tools = useDql(toolsSpec(tf))
+  const mSpec = stf && modelsSpec(stf)
+  const aSpec = stf && agentsSpec(stf)
+  const tSpec = stf && toolsSpec(stf)
+  const models = useDql(mSpec)
+  const agents = useDql(aSpec)
+  const tools = useDql(tSpec)
   const evals = useDql(evalsSpec(tf))
 
   const callChart = useMemo(() => {
@@ -140,6 +154,7 @@ export default function Ai() {
         />
       ) : (
         <>
+          <ScanNotice sw={sw} what="the span-based numbers, charts and tables" />
           <div className="mb-4 grid grid-cols-6 gap-3 max-xl:grid-cols-3">
             <Kpi label="LLM calls" value={k && fmtCompact(num(k.chats))} sub={k && (num(k.chat_fail) ? <span className="text-crit">{num(k.chat_fail)} failed</span> : 'none failed')} />
             <Kpi label="Tokens" value={k && fmtTokens(num(k.input) + num(k.output))} sub={k && `${fmtTokens(num(k.input))} in · ${fmtTokens(num(k.output))} out`} />
@@ -160,7 +175,12 @@ export default function Ai() {
           </div>
 
           <div className="mb-4 grid grid-cols-2 gap-4 max-xl:grid-cols-1">
-            <Panel title="LLM calls by model" spec={callsSeriesSpec} result={callsSeries} hint="drag to zoom">
+            <Panel
+              title="LLM calls by model"
+              spec={callsSeriesSpec}
+              result={callsSeries}
+              hint={metricCalls ? `gen_ai.client metrics · ${tf.label.toLowerCase()}` : sw.narrowed ? stf?.label.toLowerCase() : 'drag to zoom'}
+            >
               {callsSeries.error ? (
                 <ErrorBox error={callsSeries.error} />
               ) : !callChart ? (
@@ -172,7 +192,7 @@ export default function Ai() {
                 </div>
               )}
             </Panel>
-            <Panel title="Time to first token" spec={ttftSpec} result={ttft} hint="server-reported">
+            <Panel title="Time to first token" spec={ttftSpec} result={ttft} hint={sw.narrowed ? `server-reported · ${stf?.label.toLowerCase()}` : 'server-reported'}>
               {ttft.error ? (
                 <ErrorBox error={ttft.error} />
               ) : !ttftChart ? (
@@ -193,9 +213,9 @@ export default function Ai() {
               tabs={[
                 { value: 'conversations', label: 'Conversations', spec: convSpec, result: conv, limit: 300 },
                 { value: 'calls', label: 'LLM calls', spec: cSpec, result: calls, limit: 300 },
-                { value: 'models', label: 'Models', spec: modelsSpec(tf), result: models },
-                { value: 'agents', label: 'Agents', spec: agentsSpec(tf), result: agents },
-                { value: 'tools', label: 'Tools', spec: toolsSpec(tf), result: tools },
+                { value: 'models', label: 'Models', spec: mSpec, result: models },
+                { value: 'agents', label: 'Agents', spec: aSpec, result: agents },
+                { value: 'tools', label: 'Tools', spec: tSpec, result: tools },
                 { value: 'evals', label: 'Evaluations', spec: evalsSpec(tf), result: evals, limit: 500 },
               ]}
               right={
@@ -233,7 +253,7 @@ export default function Ai() {
                     })
                   }
                 />}
-              {tab === 'tools' && <ToolsView tf={tf} result={tools} />}
+              {tab === 'tools' && <ToolsView tf={stf ?? tf} result={tools} />}
               {tab === 'evals' && <EvalsView tf={tf} result={evals} />}
             </div>
           </div>
@@ -387,7 +407,7 @@ function ConversationsView({ result, search, errorsOnly, onErrorsOnly }: { resul
           loading={result.isLoading}
           columns={cols}
           rowKey={(r) => r.conversation}
-          href={(r) => convHref(r.conversation)}
+          href={(r) => convHref(r.conversation, r.start)}
           initialSort={{ key: 'start', dir: 'desc' }}
           rowHeight={52}
           className="flex-1"
@@ -691,7 +711,7 @@ function ToolPanel({ tf, tool, onClose }: { tf: Timeframe; tool: Rec; onClose: (
                 <span className="min-w-0 flex-1 truncate font-mono text-ink-2">{String(r['span.name'] ?? '').replace(/^execute_tool\s+/, '')}</span>
                 <span className="tnum shrink-0 text-ink-3">{fmtMs(num(r.duration) / 1e6)}</span>
                 {r.conversation ? (
-                  <Link href={convHref(r.conversation)} onClick={(e) => e.stopPropagation()} className="shrink-0 text-accent-ink hover:underline">
+                  <Link href={convHref(r.conversation, r.start_time)} onClick={(e) => e.stopPropagation()} className="shrink-0 text-accent-ink hover:underline">
                     conversation →
                   </Link>
                 ) : (

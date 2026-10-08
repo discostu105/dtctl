@@ -234,7 +234,7 @@ export function Trace({ id }: { id: string }) {
                     <span className="inline-flex items-center gap-2 rounded-md bg-[var(--s7)]/10 px-2 py-0.5 text-xs text-[var(--s7)]">
                       ✦ {ai.llm} LLM calls · ⚙ {ai.tools} tool calls · {fmtTokens(ai.tokens)} tokens
                       {ai.convs.slice(0, 2).map((c) => (
-                        <Link key={c} href={`/ai/conversations/${c}`} className="font-medium underline-offset-2 hover:underline">
+                        <Link key={c} href={`/ai/conversations/${c}?t=${encodeURIComponent(String(root.rec.start_time))}`} className="font-medium underline-offset-2 hover:underline">
                           replay conversation →
                         </Link>
                       ))}

@@ -174,6 +174,31 @@ history, ⌘/ comments, ⌘F searches; brackets match and auto-close.
   when clicking them does something.
 * **Every detail panel is maximizable.** Use the button, double-click the header, or press `M`. The
   choice is remembered. `Esc` first restores the panel, then closes it.
+* **Lists filter by facets, without a facet sidebar.** Lists (services, hosts, Kubernetes, changes,
+  problems, vulnerabilities) have one filter field. Free text filters as you type, and the field also
+  suggests facet values with counts (`ns:` picks a facet, ⇧↵ excludes a value). Chosen values become
+  chips in the panel header. Facetable column headers have a value menu, and a hovered cell offers + or −.
+  Numbers are bucketed (CPU ≥ 90 %, failure rate, latency), and filters live in the URL.
+* **Entities show the metrics they have.** The Metrics tab lists every metric series that carries the
+  entity's `dt.smartscape.<type>` dimension, such as CloudWatch metrics for RDS, EC2, ELB and EKS, or OTel and
+  Kubernetes metrics. Types without curated vitals use the discovered metrics as headline charts.
+
+### Built for big tenants
+Grail scans are bounded: the default scan limit is 500 GB, and a big tenant writes hundreds of GB of
+logs per hour. Every heavy view is designed for that limit.
+* **Charts sample adaptively.** The log histogram, log facets and error-log trends first run a
+  1:10,000 sampled count (about 0.1 s). From it they estimate the bytes the real query would scan and pick the
+  smallest `samplingRatio` that stays under a 50 GB budget. Counts are scaled back up and marked ≈,
+  and a badge explains why. If a response still reports the scan limit, the ratio rises 10× automatically.
+  Small tenants run exact queries.
+* **Lists read a narrower window.** Record lists and per-conversation aggregates can't be sampled,
+  because sampling drops records. When the span volume is over budget, the AI page reads the most
+  recent slice of the timeframe that fits the budget. A banner says so and offers to scan the full range.
+  Where the app emits OTel GenAI metrics (`gen_ai.client.*`), the call chart reads them over the full range.
+* **Lookups by ID never scan a week.** Trace IDs aren't indexed. Traces are first located with a
+  cheap aggregate over progressively wider windows: around the time the link carries (`?t=`),
+  then the page timeframe, 24 hours and 7 days. Then they load from their own window. LLM-call and
+  conversation links carry their time too.
 
 ## 5. Visual design
 

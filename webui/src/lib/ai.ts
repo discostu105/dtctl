@@ -24,6 +24,17 @@ export function tokensSeries(interval: string) {
 | makeTimeseries { input = sum(gen_ai.usage.input_tokens), cached = sum(gen_ai.usage.cache_read.input_tokens), output = sum(gen_ai.usage.output_tokens) }, interval:${interval}`
 }
 
+/** Probe: does the app emit OTel GenAI client metrics? */
+export const GENAI_METRIC_PROBE = `metrics
+| filter metric.key == "gen_ai.client.operation.duration"
+| limit 1`
+
+/** Calls by model from gen_ai.client.operation.duration: scale-free, full range. */
+export function callsByModelMetricSeries(interval: string) {
+  return `timeseries calls = count(gen_ai.client.operation.duration), by:{gen_ai.response.model}, interval:${interval}
+| fieldsRename model = gen_ai.response.model`
+}
+
 export function ttftSeries(interval: string) {
   return `fetch spans
 | filter gen_ai.operation.name == "chat" and isNotNull(gen_ai.server.time_to_first_token)
@@ -128,9 +139,12 @@ ${search}| sort start_time asc
 | limit 300`
 }
 
+/** Narrow window around a known start time; without one, the last 7 days. */
+const convWindow = (at?: string | null) => (at ? `from: toTimestamp(${q(at)}) - 30m, to: toTimestamp(${q(at)}) + 12h` : 'from:now()-7d')
+
 /** Every step of one conversation; message payloads only for outputs (small). */
-export function conversationStepsQuery(id: string) {
-  return `fetch spans, from:now()-7d
+export function conversationStepsQuery(id: string, at?: string | null) {
+  return `fetch spans, ${convWindow(at)}
 | filter gen_ai.conversation.id == ${q(id)}
 | fields start_time, end_time, duration, trace.id, span.id, span.parent_id, span.name, span.status_code, op = gen_ai.operation.name, model = gen_ai.request.model, agent = gen_ai.agent.name, tool = gen_ai.tool.name, input = gen_ai.usage.input_tokens, output = gen_ai.usage.output_tokens, cached = gen_ai.usage.cache_read.input_tokens, ttft = gen_ai.server.time_to_first_token, finish = gen_ai.response.finish_reasons, out = gen_ai.output.messages, service = coalesce(dt.service.name, service.name), service_id = dt.smartscape.service
 | sort start_time asc
@@ -138,8 +152,8 @@ export function conversationStepsQuery(id: string) {
 }
 
 /** The opening prompt: the first LLM call's input messages. */
-export function conversationPromptQuery(id: string) {
-  return `fetch spans, from:now()-7d
+export function conversationPromptQuery(id: string, at?: string | null) {
+  return `fetch spans, ${convWindow(at)}
 | filter gen_ai.conversation.id == ${q(id)} and gen_ai.operation.name == "chat"
 | sort start_time asc
 | limit 1
