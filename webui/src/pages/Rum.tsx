@@ -195,7 +195,7 @@ export default function Experience() {
   }
 
   return (
-    <div className="mx-auto flex max-w-[1600px] flex-col p-5">
+    <div className="flex flex-col p-5">
       <PageHeader
         title="Experience"
         icon={<MonitorSmartphone className="size-5" />}

@@ -121,7 +121,7 @@ export default function Ai() {
   const noData = k && num(k.chats) + num(k.tools) + num(k.agents) === 0
 
   return (
-    <div className="mx-auto flex max-w-[1600px] flex-col p-5">
+    <div className="flex flex-col p-5">
       <PageHeader title="AI" icon={<Sparkles className="size-5" />} sub={`Conversations, LLM calls, agents, tools and evaluations · ${tf.label.toLowerCase()}`} />
 
       {/* search: the front door for "what did people ask / what happened with X" */}

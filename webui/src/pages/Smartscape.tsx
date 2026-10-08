@@ -44,7 +44,7 @@ function Census() {
   const total = (res.data?.records ?? []).reduce((a, r) => a + num(r.count), 0)
 
   return (
-    <div className="mx-auto max-w-[1600px] p-5">
+    <div className="p-5">
       <PageHeader
         title="Smartscape"
         icon={<Network className="size-5" />}

@@ -76,7 +76,7 @@ export default function Pulse() {
   const allClear = nActive === 0 && failing.length === 0
 
   return (
-    <div className="mx-auto max-w-[1600px] p-5">
+    <div className="p-5">
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">

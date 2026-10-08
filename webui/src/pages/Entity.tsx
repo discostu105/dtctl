@@ -224,7 +224,7 @@ export default function EntityPage({ id }: { id: string }) {
 }
 
 function EntityLayout({ children }: { children: React.ReactNode }) {
-  return <div className="mx-auto max-w-[1600px] p-5">{children}</div>
+  return <div className="p-5">{children}</div>
 }
 
 function BackLink() {
