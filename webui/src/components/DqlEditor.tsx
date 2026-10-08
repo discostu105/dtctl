@@ -45,7 +45,7 @@ const dql = StreamLanguage.define<{ stageStart: boolean }>({
       const wasStart = state.stageStart
       state.stageStart = false
       if (wasStart && COMMANDS.has(word)) return 'keyword'
-      if (stream.peek() === '(') return 'function'
+      if (stream.peek() === '(') return 'variableName.function'
       if (stream.peek() === ':') return 'attributeName'
       if (KEYWORDS.has(word)) return 'operatorKeyword'
       return 'propertyName'
