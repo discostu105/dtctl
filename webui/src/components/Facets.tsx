@@ -1,7 +1,7 @@
 import * as Popover from '@radix-ui/react-popover'
 import clsx from 'clsx'
-import { Ban, Check, ChevronRight, ListFilter, Minus, Plus, X } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Ban, Check, ChevronRight, ListFilter, Loader2, Minus, Plus, X } from 'lucide-react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation, useSearch } from 'wouter'
 import {
   NONE,
@@ -16,8 +16,11 @@ import {
   type FacetCount,
   type FacetFilter,
 } from '../lib/facets'
+import { describeField, parseAttrs, sameAttr, serializeAttr, UNSET, type AttrFilter, type AttrSource } from '../lib/attrs'
 import { fmtInt } from '../lib/format'
-import { Kbd } from './ui'
+import { closeFilterPopup, filterPopupStore, openFilterPopup, registerFilterHost, useStore } from '../lib/store'
+import { FilterPopup } from './FilterPopup'
+import { Kbd, Tip } from './ui'
 
 // ── controller ──────────────────────────────────────────────────────────────
 
@@ -40,6 +43,62 @@ export interface FacetCtl<T = any> {
   rows: T[] | undefined
   total: number
   active: boolean
+  /** Server-side attribute and tag filters, when the list supports them. */
+  attrs?: AttrCtl
+}
+
+// ── server-side attribute filters ───────────────────────────────────────────
+
+export interface AttrCtl {
+  source: AttrSource
+  filters: AttrFilter[]
+  toggle: (field: string, value: string, neg?: boolean) => void
+  only: (field: string, value: string, neg?: boolean) => void
+  remove: (f: AttrFilter | AttrFilter[]) => void
+  clearField: (field: string) => void
+  clear: () => void
+  /** URL param name (so callers can carry filters to another page). */
+  param: string
+}
+
+/**
+ * Attribute filters that narrow the list's DQL on the server (tags, labels,
+ * primary tags, any raw attribute). State lives in the URL (?a=field=value),
+ * so the caller builds its query from `filters` and the view stays shareable.
+ */
+export function useAttrs(source: AttrSource, opts: { param?: string } = {}): AttrCtl {
+  const name = opts.param ?? 'a'
+  const search = useSearch()
+  const [, navigate] = useLocation()
+  const filters = useMemo(() => parseAttrs(new URLSearchParams(search), name), [search, name])
+  const write = useCallback(
+    (next: AttrFilter[]) => {
+      const p = new URLSearchParams(window.location.search)
+      p.delete(name)
+      next.forEach((f) => p.append(name, serializeAttr(f)))
+      const qs = p.toString()
+      navigate(`${window.location.pathname}${qs ? `?${qs}` : ''}`, { replace: true })
+    },
+    [name, navigate],
+  )
+  return {
+    source,
+    filters,
+    param: name,
+    toggle: (field, value, neg) => {
+      const f = { field, value, neg: !!neg }
+      const has = filters.some((x) => sameAttr(x, f))
+      const rest = filters.filter((x) => !(x.field === field && x.value === value))
+      write(has ? rest : [...rest, f])
+    },
+    only: (field, value, neg) => write([...filters.filter((x) => x.field !== field), { field, value, neg: !!neg }]),
+    remove: (f) => {
+      const list = Array.isArray(f) ? f : [f]
+      write(filters.filter((x) => !list.some((y) => sameAttr(x, y))))
+    },
+    clearField: (field) => write(filters.filter((x) => x.field !== field)),
+    clear: () => write([]),
+  }
 }
 
 /**
@@ -49,7 +108,7 @@ export interface FacetCtl<T = any> {
 export function useFacets<T>(
   rows: T[] | undefined,
   facets: Facet<T>[],
-  opts: { text?: (r: T) => string; param?: string } = {},
+  opts: { text?: (r: T) => string; param?: string; attrs?: AttrCtl } = {},
 ): FacetCtl<T> {
   const fName = opts.param ?? 'f'
   const qName = opts.param ? `${opts.param}q` : 'q'
@@ -156,13 +215,15 @@ export function useFacets<T>(
     clear: () => {
       setTextState('')
       write([], '')
+      opts.attrs?.clear()
     },
     counts: (key) => (rows ? countFacet(rows, facets, filters, match, key) : []),
     facet: facetOf,
     display: (key, value) => displayValue(facetOf(key), value),
     rows: filtered,
     total: rows?.length ?? 0,
-    active: filters.length > 0 || !!matchText.trim(),
+    active: filters.length > 0 || !!matchText.trim() || !!opts.attrs?.filters.length,
+    attrs: opts.attrs,
   }
 }
 
@@ -382,6 +443,17 @@ export function FacetSearch<T>({ fc, placeholder = 'Filter…', className }: { f
             <span className="flex items-center gap-1">
               <Kbd>⌫</Kbd> remove last chip
             </span>
+            <button
+              type="button"
+              onClick={() => {
+                setOpen(false)
+                input.current?.blur()
+                openFilterPopup()
+              }}
+              className="ml-auto flex items-center gap-1 rounded px-1 text-ink-3 hover:bg-line hover:text-ink"
+            >
+              All attributes & tags <Kbd>F</Kbd>
+            </button>
           </div>
         </div>
       )}
@@ -566,8 +638,12 @@ export function FacetValues<T>({ fc, facetKey }: { fc: FacetCtl<T>; facetKey: st
 
 // ── chips + count, for the panel header ────────────────────────────────────
 
-/** "12 of 95 pods" plus one removable chip per facet, each reopening its value list. */
-export function FacetSummary<T>({ fc, noun }: { fc: FacetCtl<T>; noun: string }) {
+/**
+ * "12 of 95 pods" plus one removable chip per filter (client facets and
+ * server-side attribute filters alike), each reopening its values. Also hosts
+ * the list's filter popup ('f').
+ */
+export function FacetSummary<T>({ fc, noun, fetching, limit }: { fc: FacetCtl<T>; noun: string; fetching?: boolean; limit?: number }) {
   const groups = useMemo(() => {
     const m = new Map<string, FacetFilter[]>()
     for (const f of fc.filters) {
@@ -576,29 +652,69 @@ export function FacetSummary<T>({ fc, noun }: { fc: FacetCtl<T>; noun: string })
     }
     return [...m.values()]
   }, [fc.filters])
+  const attrGroups = useMemo(() => {
+    const m = new Map<string, AttrFilter[]>()
+    for (const f of fc.attrs?.filters ?? []) {
+      const k = `${f.neg ? '-' : ''}${f.field}`
+      m.set(k, [...(m.get(k) ?? []), f])
+    }
+    return [...m.values()]
+  }, [fc.attrs?.filters])
+
+  const host = useId()
+  useEffect(() => registerFilterHost(host), [host])
+  const popup = useStore(filterPopupStore)
+
   const shown = fc.rows?.length
+  const capped = limit != null && fc.total >= limit
+  const nChips = groups.length + attrGroups.length
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
-      <h2 className="shrink-0 text-sm font-medium">
+      <h2 className="flex shrink-0 items-center gap-1.5 text-sm font-medium">
         {shown == null ? '…' : fc.active ? (
-          <>
-            {fmtInt(shown)} <span className="font-normal text-ink-3">of {fmtInt(fc.total)}</span>
-          </>
+          <span>
+            {fmtInt(shown)} <span className="font-normal text-ink-3">of {fmtInt(fc.total)}{capped && '+'}</span>
+          </span>
         ) : (
-          fmtInt(shown)
-        )}{' '}
-        {noun}
+          <span>
+            {fmtInt(shown)}
+            {capped && '+'}
+          </span>
+        )}
+        <span>{noun}</span>
+        {capped && (
+          <Tip content={`Only the first ${fmtInt(limit!)} are loaded. Filter by attributes or tags (f) to narrow on the server.`}>
+            <button type="button" onClick={() => openFilterPopup(undefined, host)} className="rounded bg-warn-wash px-1.5 text-2xs font-normal text-warn hover:brightness-110">
+              capped
+            </button>
+          </Tip>
+        )}
+        {fetching && <Loader2 className="size-3 animate-spin text-ink-4" />}
       </h2>
       <div className="no-scrollbar flex min-w-0 items-center gap-1 overflow-x-auto">
         {groups.map((g) => (
           <FilterChip key={`${g[0].neg ? '-' : ''}${g[0].key}`} fc={fc} group={g} />
         ))}
-        {(groups.length > 1 || (groups.length > 0 && fc.text.trim())) && (
+        {attrGroups.map((g) => (
+          <AttrChip key={`a${g[0].neg ? '-' : ''}${g[0].field}`} fc={fc} group={g} onOpen={() => openFilterPopup(`a:${g[0].field}`, host)} />
+        ))}
+        <Tip content={<span className="flex items-center gap-1.5">Filter by any attribute, tag or label <Kbd>F</Kbd></span>}>
+          <button
+            type="button"
+            onClick={() => openFilterPopup(undefined, host)}
+            className="flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-xs text-ink-3 hover:bg-line hover:text-ink"
+          >
+            <Plus className="size-3" />
+            {nChips === 0 && 'Filter'}
+          </button>
+        </Tip>
+        {(nChips > 1 || (nChips > 0 && fc.text.trim())) && (
           <button type="button" onClick={fc.clear} className="shrink-0 rounded px-1.5 text-2xs text-ink-3 hover:bg-line hover:text-ink">
             Clear all
           </button>
         )}
       </div>
+      {popup.host === host && <FilterPopup fc={fc} noun={noun} initialField={popup.field} fetching={fetching} onClose={closeFilterPopup} />}
     </div>
   )
 }
@@ -636,6 +752,33 @@ function FilterChip<T>({ fc, group }: { fc: FacetCtl<T>; group: FacetFilter[] })
         </Popover.Portal>
       </Popover.Root>
       <button type="button" onClick={() => fc.remove(group)} className="grid h-full w-5 place-items-center hover:bg-black/10" aria-label="Remove filter">
+        <X className="size-3" />
+      </button>
+    </span>
+  )
+}
+
+function AttrChip<T>({ fc, group, onOpen }: { fc: FacetCtl<T>; group: AttrFilter[]; onOpen: () => void }) {
+  const neg = !!group[0].neg
+  const d = describeField(group[0].field)
+  const show = (v: string) => (v === UNSET ? <span className="italic">not set</span> : v)
+  return (
+    <span className={clsx('inline-flex h-6 shrink-0 items-center overflow-hidden rounded-md text-xs', neg ? 'bg-crit-wash text-crit' : 'bg-accent-wash text-accent-ink')}>
+      <button type="button" onClick={onOpen} title={group[0].field} className="flex h-full max-w-80 items-center gap-1 pr-1 pl-2 hover:brightness-110">
+        {d.kind && <span className="opacity-60">{d.kind}</span>}
+        <span className="opacity-75">{d.name}</span>
+        <span className="opacity-75">{neg ? '≠' : group.length > 1 ? 'in' : '='}</span>
+        <span className="truncate font-medium">
+          {group.slice(0, 2).map((f, i) => (
+            <span key={f.value}>
+              {i > 0 && ', '}
+              {show(f.value)}
+            </span>
+          ))}
+          {group.length > 2 && ` +${group.length - 2}`}
+        </span>
+      </button>
+      <button type="button" onClick={() => fc.attrs?.remove(group)} className="grid h-full w-5 place-items-center hover:bg-black/10" aria-label="Remove filter">
         <X className="size-3" />
       </button>
     </span>

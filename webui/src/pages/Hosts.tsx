@@ -3,11 +3,12 @@ import { Server } from 'lucide-react'
 import { useMemo } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
-import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { FacetSearch, FacetSummary, useAttrs, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
 import { Meter, Spark } from '../components/Spark'
 import { Badge, Empty, ErrorBox, TimeAgo } from '../components/ui'
 import { arr, num, useDql, type Rec } from '../lib/api'
+import { nodesSource, withAttrs } from '../lib/attrs'
 import { bucket, type Facet } from '../lib/facets'
 import { fmtBytes, fmtInt, fmtPct, titleCase } from '../lib/format'
 import { entityHref } from '../lib/links'
@@ -41,13 +42,23 @@ const FACETS: Facet<Rec>[] = [
   { key: 'group', label: 'Host group', value: (r) => r['dt.host_group.id'], aliases: ['hostgroup'] },
 ]
 
+const SOURCE = nodesSource('HOST')
+const LIMIT = 1000
+
 export default function Hosts() {
   useTitle('Hosts')
   const tf = useTimeframe()
-  const listSpec = tfSpec(tf, `smartscapeNodes HOST
+  const attrs = useAttrs(SOURCE)
+  const listSpec = tfSpec(
+    tf,
+    withAttrs(
+      `smartscapeNodes HOST
 | fields id, name, os.type, os.version, logical_cores, memory, ip, host.type, cloud.provider, lifetime, dt.host_group.id
 | sort name asc
-| limit 1000`)
+| limit ${LIMIT}`,
+      attrs.filters,
+    ),
+  )
   const metricSpec = tfSpec(
     tf,
     `timeseries { cpu = avg(dt.host.cpu.usage), mem = avg(dt.host.memory.usage), disk = max(dt.host.disk.used.percent) }, by:{dt.smartscape.host}, interval:${sparkInterval(tf.ms)}`,
@@ -62,7 +73,7 @@ export default function Hosts() {
       return { ...h, cpu: mr?.cpu, mem: mr?.mem, disk: mr?.disk, cpuNow: lastVal(mr?.cpu), memNow: lastVal(mr?.mem), diskNow: lastVal(mr?.disk) } as Rec
     })
   }, [list.data, metrics.data])
-  const fc = useFacets(list.data ? rows : undefined, FACETS, { text: (r) => `${r.name} ${r.id} ${arr(r.ip).join(' ')}` })
+  const fc = useFacets(list.data ? rows : undefined, FACETS, { text: (r) => `${r.name} ${r.id} ${arr(r.ip).join(' ')}`, attrs })
 
   const pctCol = (key: 'cpu' | 'mem' | 'disk', label: string, color: string): Column => ({
     key,
@@ -121,7 +132,7 @@ export default function Hosts() {
         sub={`${list.data ? fmtInt(rows.length) : '…'} hosts · utilization · ${tf.label.toLowerCase()}`}
         actions={<FacetSearch fc={fc} placeholder="Filter hosts…" className="w-72" />}
       />
-      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" />}>
+      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" fetching={list.isFetching} limit={LIMIT} />}>
         {list.error ? (
           <ErrorBox error={list.error} />
         ) : (

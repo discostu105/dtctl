@@ -10,7 +10,7 @@ export const recentProblemsSpec: DqlSpec = { query: problemsQuery({ status: 'CLO
 
 export const tfSpec = (tf: Timeframe, query: string, extra?: Partial<DqlSpec>): DqlSpec => ({ query, from: tf.from, to: tf.to, ...extra })
 
-export const servicesSpec = (tf: Timeframe) => tfSpec(tf, servicesRedQuery(sparkInterval(tf.ms)))
+export const servicesSpec = (tf: Timeframe, filter = '') => tfSpec(tf, servicesRedQuery(sparkInterval(tf.ms), filter))
 
 export const vulnsSpec = (tf: Timeframe, lens: 'open' | 'muted' | 'all' = 'open') => {
   const f = floorTf(tf, '24h')

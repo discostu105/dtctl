@@ -179,6 +179,12 @@ history, ⌘/ comments, ⌘F searches; brackets match and auto-close.
   suggests facet values with counts (`ns:` picks a facet, ⇧↵ excludes a value). Chosen values become
   chips in the panel header. Facetable column headers have a value menu, and a hovered cell offers + or −.
   Numbers are bucketed (CPU ≥ 90 %, failure rate, latency), and filters live in the URL.
+* **Every tag is a filter, one key away.** `F` opens a two-pane popup (as in dynatui): fields on the
+  left (curated facets, then primary tags, Kubernetes labels and annotations, AWS, Azure and GCP tags,
+  then raw attributes, ranked by how many records carry them), values with counts on the right.
+  These filters run in DQL, so they reach records beyond the loaded rows and beyond the row cap,
+  and "not set" finds what is missing a tag. Services filter on metric dimensions, so primary tags
+  work there too. On an entity page, every tag links to all entities of that type with the same tag.
 * **Entities show the metrics they have.** The Metrics tab lists every metric series that carries the
   entity's `dt.smartscape.<type>` dimension, such as CloudWatch metrics for RDS, EC2, ELB and EKS, or OTel and
   Kubernetes metrics. Types without curated vitals use the discovered metrics as headline charts.
@@ -265,7 +271,8 @@ waterfall, Changes, Security (vulnerabilities), Query workbench, Smartscape
 browser, Documents, the ⌘K palette, the timeframe picker, and light and dark themes.
 
 Since then: Experience (RUM), AI observability (conversations, LLM and tool calls, evals), automatic
-ID → name resolution, maximizable panels, facet filtering, discovered entity metrics, adaptive
+ID → name resolution, maximizable panels, facet filtering, the attribute and tag filter popup,
+discovered entity metrics, adaptive
 sampling for big tenants, query cancellation and the Activity view, and the in-app tenant switcher.
 
 Not built (yet): segments, writes of any kind, session replay playback, metric explorer,

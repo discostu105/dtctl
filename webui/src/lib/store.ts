@@ -37,6 +37,29 @@ export const paletteStore = createStore<{ open: boolean; initial?: string }>({ o
 export const helpStore = createStore(false)
 export const tfPickerStore = createStore(false)
 
+// ── filter popup ('f') ──────────────────────────────────────────────────────
+// Every filterable list registers as a host; 'f' opens the most recently
+// mounted one (the list the user is looking at), a chip opens its own host
+// straight at its field.
+export const filterPopupStore = createStore<{ host: string | null; field?: string }>({ host: null })
+const filterHosts: string[] = []
+export function registerFilterHost(id: string) {
+  filterHosts.push(id)
+  return () => {
+    const i = filterHosts.lastIndexOf(id)
+    if (i >= 0) filterHosts.splice(i, 1)
+    if (filterPopupStore.get().host === id) filterPopupStore.set({ host: null })
+  }
+}
+/** Open the filter popup of the current list; false when the page has none. */
+export function openFilterPopup(field?: string, host?: string) {
+  const h = host ?? filterHosts[filterHosts.length - 1]
+  if (!h) return false
+  filterPopupStore.set({ host: h, field })
+  return true
+}
+export const closeFilterPopup = () => filterPopupStore.set({ host: null })
+
 // ── recents (per browser; survives reloads) ─────────────────────────────────
 export interface Recent {
   href: string

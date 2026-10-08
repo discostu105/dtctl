@@ -6,11 +6,12 @@ import { Link, useSearch } from 'wouter'
 import { DataTable } from '../components/DataTable'
 import { EntityLink, TypeIcon } from '../components/Entity'
 import { FilterInput, PageHeader, Panel } from '../components/Panel'
-import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { FacetSearch, FacetSummary, useAttrs, useFacets } from '../components/Facets'
 import type { Facet } from '../lib/facets'
 import { Empty, ErrorBox, Skeleton, TimeAgo } from '../components/ui'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
-import { censusQuery, instancesQuery } from '../lib/dql'
+import { censusQuery, instancesQuery, INSTANCES_LIMIT } from '../lib/dql'
+import { nodesSource, withAttrs } from '../lib/attrs'
 import { fmtInt, shortType } from '../lib/format'
 import { entityHref } from '../lib/links'
 import { useTitle } from '../lib/store'
@@ -96,17 +97,23 @@ function Census() {
 const INSTANCE_FACETS: Facet<Rec>[] = [
   { key: 'ns', label: 'Namespace', value: (r) => r['k8s.namespace.name'], aliases: ['namespace'] },
   { key: 'cluster', label: 'Cluster', value: (r) => r['k8s.cluster.name'] },
-  { key: 'region', label: 'Region', value: (r) => r['aws.region'] },
-  { key: 'account', label: 'AWS account', value: (r) => r['aws.account.id'] },
+  { key: 'region', label: 'Region', value: (r) => r.region, aliases: ['location'] },
+  { key: 'account', label: 'Account', value: (r) => r.account, aliases: ['subscription', 'project'] },
 ]
+
+/** What the cloud calls the account a resource belongs to. */
+const accountWord = (type: string) => (type.startsWith('AZURE_') ? 'Subscription' : type.startsWith('GCP_') ? 'Project' : 'Account')
 
 function Instances({ type }: { type: string }) {
   useTitle(shortType(type))
-  const spec = { query: instancesQuery(type), ttl: 120 }
+  const source = useMemo(() => nodesSource(type), [type])
+  const attrs = useAttrs(source)
+  const spec = { query: withAttrs(instancesQuery(type), attrs.filters), ttl: 120 }
   const res = useDql(spec)
-  const fc = useFacets(res.data?.records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id}` })
+  const fc = useFacets(res.data?.records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id}`, attrs })
   const hasNs = res.data?.records.some((r) => r['k8s.namespace.name'])
-  const hasRegion = res.data?.records.some((r) => r['aws.region'])
+  const hasRegion = res.data?.records.some((r) => r.region)
+  const hasAccount = res.data?.records.some((r) => r.account)
   return (
     <div className="flex h-full flex-col p-5">
       <BackLink fallback="/smartscape" label="All types" />
@@ -116,7 +123,7 @@ function Instances({ type }: { type: string }) {
         sub={<span className="font-mono text-xs">{type}</span>}
         actions={<FacetSearch fc={fc} placeholder="Filter by name or ID…" className="w-72" />}
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="entities" />}>
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="entities" fetching={res.isFetching} limit={INSTANCES_LIMIT} />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
@@ -132,7 +139,10 @@ function Instances({ type }: { type: string }) {
             columns={[
               { key: 'name', header: 'Name', width: 'minmax(260px,2fr)', render: (r) => <EntityLink id={r.id} name={r.name} type={type} />, sort: (r) => String(r.name).toLowerCase() },
               ...(hasNs ? [{ key: 'ns', header: 'Namespace', width: 'minmax(120px,1fr)', facet: 'ns', render: (r: Rec) => <span className="text-ink-2">{r['k8s.namespace.name']}</span>, sort: (r: Rec) => r['k8s.namespace.name'] }] : []),
-              ...(hasRegion ? [{ key: 'region', header: 'Region', width: '120px', facet: 'region', render: (r: Rec) => <span className="text-ink-2">{r['aws.region']}</span>, sort: (r: Rec) => r['aws.region'] }] : []),
+              ...(hasRegion ? [{ key: 'region', header: 'Region', width: '130px', facet: 'region', render: (r: Rec) => <span className="text-ink-2">{r.region}</span>, sort: (r: Rec) => r.region }] : []),
+              ...(hasAccount
+                ? [{ key: 'account', header: accountWord(type), width: 'minmax(130px,1fr)', facet: 'account', render: (r: Rec) => <span className="truncate font-mono text-xs text-ink-3">{r.account}</span>, sort: (r: Rec) => r.account }]
+                : []),
               { key: 'id', header: 'ID', width: '220px', render: (r) => <span className={clsx('font-mono text-xs text-ink-3')}>{r.id}</span> },
               { key: 'seen', header: 'Last seen', width: '100px', align: 'right', render: (r) => <TimeAgo value={r.lifetime?.end} className="text-ink-3" />, sort: (r) => r.lifetime?.end },
             ]}

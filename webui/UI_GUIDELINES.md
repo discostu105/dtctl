@@ -22,6 +22,15 @@ Panel        head = <FacetSummary fc={fc} noun="services" />    actions = <Facet
 - Facets, not filter bars: declare `Facet<T>[]` next to the columns, call `useFacets(rows, FACETS)`,
   give filterable columns a `facet:` key. Filters live in the URL (`?f=key:value`, `?q=`); pages with
   several lists pass `{ param: 's' }` etc. so they don't collide.
+- Lists of Smartscape nodes or services also take attribute filters: `useAttrs(source)` with an
+  `AttrSource` from `lib/attrs.ts`, the list query wrapped in `withAttrs(query, attrs.filters)` (or
+  `attrCondition` inside a timeseries `filter:{}`), and `useFacets(rows, FACETS, { attrs })`. These
+  run on the server, reach every tag, label and field (`?a=field=value`, `-` excludes), and work past
+  the row cap. Curated facets stay for the few dimensions people use daily; everything else is in
+  the filter popup (`F`), which shows both kinds. Pass `fetching` and `limit` to `FacetSummary` so a
+  capped list says so.
+- Attribute filters that mean the same thing on another view (tags, primary tags, namespace,
+  cluster) carry across tabs; view-specific ones are dropped.
 - The primary list gets `autoFocus` so `j/k/Enter` work without a click (exception: pages whose
   primary control is a search box, e.g. AI conversations).
 - `sub` names the data, then the timeframe. Use `tfPhrase(tf, requested)` so a widened or narrowed
@@ -172,7 +181,8 @@ Sentence case everywhere ("Failure rate", not "Failure Rate"). Separate facts wi
 
 - `g` is the global go-to prefix (`g p`, `g t`, …). Never bind `g`/`G` inside a component.
 - Lists: `j`/`k` or arrows to move, `Home`/`End` for first/last, `Enter` to open.
-- `/` filters the current list, `T` opens the timeframe, `R` refreshes, `?` toggles help, `⌘K` opens the palette.
+- `/` filters the current list, `F` opens the filter popup (fields left, values right: `↵` picks,
+  `⇧↵` excludes, `⌘↵`/`Space` picks and stays open, `key=value↵` picks in one go), `T` opens the timeframe, `R` refreshes, `?` toggles help, `⌘K` opens the palette.
 - `M` maximizes or restores the detail panel; `⌘`-click opens a row in a new tab.
 - `Esc` steps back one level per press: clear the focused filter, then blur it, then close the side panel.
 - Trace view: `←`/`→` collapse or expand a span, `N`/`⇧N` next or previous search match, `E` next failed span,
@@ -231,6 +241,7 @@ The UI must work on very large tenants. These rules aren't optional.
 
 - [ ] Uses one of the three page shapes, `PageHeader` or `BackLink` + `DetailHeader`.
 - [ ] Lists use `useFacets` + `FacetSearch` + `FacetSummary`, columns have `facet:` keys, filters live in the URL.
+- [ ] Lists of entities support attribute filters (`useAttrs` + `withAttrs`), and tags on detail pages link back to them (`listHref`).
 - [ ] Primary list has `autoFocus`; every row opens something via `lib/links`.
 - [ ] Error, loading and empty states, in that order, with domain wording.
 - [ ] Numbers and times go through `lib/format`; time columns use `When`.

@@ -43,3 +43,26 @@ export const sessionHref = (id: string) => `/rum/sessions/${encodeURIComponent(i
 
 /** Security list with one vulnerability's panel open. */
 export const vulnHref = (vulnerabilityId: string) => `/security?v=${encodeURIComponent(vulnerabilityId)}`
+
+const K8S_VIEW: Record<string, string> = {
+  K8S_POD: 'pods',
+  K8S_DEPLOYMENT: 'workloads',
+  K8S_STATEFULSET: 'workloads',
+  K8S_DAEMONSET: 'workloads',
+  K8S_NODE: 'nodes',
+  K8S_NAMESPACE: 'namespaces',
+}
+
+/**
+ * The list of every entity of `type`, narrowed by one attribute filter
+ * (`?a=field=value`). Services filter on metric dimensions, which carry
+ * primary tags but not Smartscape tag maps, so those go to the generic
+ * instance list instead.
+ */
+export function listHref(type: string, field: string, value: string) {
+  const a = new URLSearchParams({ a: `${field}=${value}` }).toString()
+  if (type === 'HOST') return `/hosts?${a}`
+  if (K8S_VIEW[type]) return `/k8s?view=${K8S_VIEW[type]}&${a}`
+  if (type === 'SERVICE' && field.startsWith('primary_tags.')) return `/services?${a}`
+  return `/smartscape?type=${encodeURIComponent(type)}&${a}`
+}

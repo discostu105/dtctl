@@ -10,7 +10,7 @@ import { Link, useLocation } from 'wouter'
 import { forceFresh, prefetchDql, useDql, type DqlSpec } from '../lib/api'
 import { problemsQuery } from '../lib/dql'
 import { activeProblemsSpec, changesSpec, servicesSpec, tfSpec, vulnsSpec } from '../lib/shared'
-import { autoRefreshStore, helpStore, paletteStore, tfPickerStore, titleStore, toggleTheme, useStore } from '../lib/store'
+import { autoRefreshStore, helpStore, openFilterPopup, paletteStore, tfPickerStore, titleStore, toggleTheme, useStore } from '../lib/store'
 import { floorTf, getTimeframe, syncUrl, useTimeframe } from '../lib/timeframe'
 import { useThemeVersion } from './Chart'
 import { QueryActivity } from './Activity'
@@ -250,6 +250,9 @@ function useHotkeys() {
           e.preventDefault()
           tfPickerStore.set(true)
           break
+        case 'f':
+          if (openFilterPopup()) e.preventDefault()
+          break
         case 'r':
           refreshAll(qc)
           break
@@ -303,6 +306,7 @@ export function Help() {
       [
         [['⌘', 'K'], 'Search & jump'],
         [['/'], 'Filter the current list'],
+        [['F'], 'Filter by attribute, tag or label'],
         [['T'], 'Change timeframe'],
         [['R'], 'Refresh'],
         [['?'], 'Toggle this help'],

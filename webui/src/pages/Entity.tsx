@@ -13,7 +13,8 @@ import {
   typeOfId, vitalQuery, vitalsFor, type Entity, type Vital,
 } from '../lib/dql'
 import { fmtBytes, fmtDateTime, fmtUnit, shortType } from '../lib/format'
-import { dtLinks, entityHref } from '../lib/links'
+import { describeField, groupRank, mapField } from '../lib/attrs'
+import { dtLinks, entityHref, listHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { pushRecent, useTitle } from '../lib/store'
 import { absolute, intervalFor, setTimeframe, useTimeframe, type Timeframe } from '../lib/timeframe'
@@ -311,6 +312,7 @@ function Overview({ rec, loading, type, classic }: { rec: Rec | undefined; loadi
       <div>
         <div className="mb-2 text-2xs font-medium tracking-wide text-ink-3 uppercase">Key facts</div>
         <Facts items={facts} />
+        <EntityTags rec={rec} type={type} />
       </div>
       <div className="min-w-0">
         <div className="mb-2 text-2xs font-medium tracking-wide text-ink-3 uppercase">All properties</div>
@@ -322,6 +324,76 @@ function Overview({ rec, loading, type, classic }: { rec: Rec | undefined; loadi
           </details>
         )}
       </div>
+    </div>
+  )
+}
+
+// Groups whose values are mostly machine noise start collapsed.
+const QUIET_GROUPS = new Set(['Kubernetes annotations'])
+
+/**
+ * Tags, labels and primary tags, grouped by where they come from. Each one
+ * links to every entity of this type carrying the same tag — the "what else
+ * is tagged like this?" pivot.
+ */
+function EntityTags({ rec, type }: { rec: Rec; type: string }) {
+  const groups = useMemo(() => {
+    const tags: { field: string; group: string; name: string; value: string }[] = []
+    for (const [k, v] of Object.entries(rec)) {
+      if (k.startsWith('tags:') && v && typeof v === 'object' && !Array.isArray(v)) {
+        for (const [key, val] of Object.entries(v as Record<string, unknown>)) {
+          if (val == null || typeof val === 'object') continue
+          const field = mapField(k, key)
+          tags.push({ field, ...describeField(field), value: String(val) })
+        }
+      } else if (k.startsWith('primary_tags.') && v != null && v !== '' && typeof v !== 'object') {
+        tags.push({ field: k, ...describeField(k), value: String(v) })
+      }
+    }
+    const by = new Map<string, typeof tags>()
+    for (const t of tags) by.set(t.group, [...(by.get(t.group) ?? []), t])
+    return [...by]
+      .map(([group, items]) => ({ group, items: items.sort((a, b) => a.name.localeCompare(b.name)) }))
+      .sort((a, b) => groupRank(a.group) - groupRank(b.group) || a.group.localeCompare(b.group))
+  }, [rec])
+  if (!groups.length) return null
+  const noun = shortType(type)
+  return (
+    <div className="mt-5 space-y-3">
+      {groups.map(({ group, items }) => {
+        const chips = (
+          <div className="flex flex-wrap gap-1">
+            {items.map((t) => (
+              <Link
+                key={t.field}
+                href={listHref(type, t.field, t.value)}
+                title={`Every ${noun} with ${t.name} = ${t.value}`}
+                className="inline-flex max-w-full min-w-0 items-center rounded-md border border-line bg-sunken px-1.5 py-0.5 font-mono text-2xs hover:border-accent/60 hover:bg-accent-wash"
+              >
+                <span className="shrink-0 text-ink-3">{t.name}</span>
+                <span className="px-0.5 text-ink-4">=</span>
+                <span className="truncate text-ink-2">{t.value}</span>
+              </Link>
+            ))}
+          </div>
+        )
+        const head = (
+          <>
+            {group} <span className="text-ink-4">{items.length}</span>
+          </>
+        )
+        return QUIET_GROUPS.has(group) ? (
+          <details key={group}>
+            <summary className="mb-1.5 cursor-pointer text-2xs font-medium tracking-wide text-ink-3 uppercase hover:text-ink-2">{head}</summary>
+            {chips}
+          </details>
+        ) : (
+          <div key={group}>
+            <div className="mb-1.5 text-2xs font-medium tracking-wide text-ink-3 uppercase">{head}</div>
+            {chips}
+          </div>
+        )
+      })}
     </div>
   )
 }

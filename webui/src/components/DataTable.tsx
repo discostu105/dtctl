@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import type { Rec } from '../lib/api'
 import { CellFilter, ColumnFacetButton, type FacetCtl } from './Facets'
+import { openFilterPopup } from '../lib/store'
 import { Empty, SkeletonRows } from './ui'
 
 export interface Column<T = Rec> {
@@ -158,12 +159,21 @@ export function DataTable<T = Rec>({
       {loading && !rows ? (
         <SkeletonRows rows={8} />
       ) : sorted.length === 0 ? (
-        facets?.active && facets.total > 0 ? (
+        facets?.active && (facets.total > 0 || !!facets.attrs?.filters.length) ? (
           <div className="flex flex-col items-center gap-2 py-10">
-            <Empty title="Nothing matches these filters" hint={`${facets.total} rows are hidden by the current filters.`} className="py-0" />
-            <button type="button" onClick={facets.clear} className="rounded-md bg-accent-wash px-2.5 py-1 text-xs font-medium text-accent-ink hover:brightness-110">
-              Clear filters
-            </button>
+            <Empty
+              title="Nothing matches these filters"
+              hint={facets.total > 0 ? `${facets.total} rows are hidden by the current filters.` : 'No record matches the attribute filters.'}
+              className="py-0"
+            />
+            <div className="flex items-center gap-2">
+              <button type="button" onClick={() => openFilterPopup()} className="rounded-md px-2.5 py-1 text-xs text-ink-2 hover:bg-line hover:text-ink">
+                Edit filters
+              </button>
+              <button type="button" onClick={facets.clear} className="rounded-md bg-accent-wash px-2.5 py-1 text-xs font-medium text-accent-ink hover:brightness-110">
+                Clear filters
+              </button>
+            </div>
           </div>
         ) : (
           (empty ?? <Empty title="Nothing to show" />)

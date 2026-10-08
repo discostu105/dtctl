@@ -3,11 +3,12 @@ import { Share2 } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
-import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { FacetSearch, FacetSummary, useAttrs, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
 import { Spark } from '../components/Spark'
 import { Badge, Empty, ErrorBox, Segmented } from '../components/ui'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
+import { attrCondition, type AttrSource } from '../lib/attrs'
 import { detailQuery, serviceListQuery } from '../lib/dql'
 import { bucket, type Facet } from '../lib/facets'
 import { fmtCompact, fmtPct, fmtUs } from '../lib/format'
@@ -42,14 +43,20 @@ const FACETS: Facet<Rec>[] = [
 export default function Services() {
   useTitle('Services')
   const tf = useTimeframe()
-  const red = useDql(servicesSpec(tf))
-  const listSpec = { query: serviceListQuery(), ttl: 120 }
+  const source: AttrSource = useMemo(() => ({ kind: 'service-metrics', head: '', from: tf.from, to: tf.to }), [tf.from, tf.to])
+  const attrs = useAttrs(source)
+  const filtered = attrs.filters.length > 0
+  const redSpec = servicesSpec(tf, attrCondition(attrs.filters))
+  const red = useDql(redSpec)
+  // Attribute filters match metric dimensions that Smartscape service nodes
+  // don't carry, so a filtered list is the metric roster alone.
+  const listSpec = filtered ? null : { query: serviceListQuery(), ttl: 120 }
   const list = useDql(listSpec)
   const [lens, setLens] = useState<'active' | 'failing' | 'all'>('active')
 
   const rows = useMemo(() => {
     const byId = new Map<string, Rec>()
-    for (const s of list.data?.records ?? []) byId.set(s.id, { id: s.id, name: s.name, ns: s['k8s.namespace.name'], kind: s['dt.service.sdv1_type'] })
+    for (const s of (!filtered && list.data?.records) || []) byId.set(s.id, { id: s.id, name: s.name, ns: s['k8s.namespace.name'], kind: s['dt.service.sdv1_type'] })
     for (const r of red.data?.records ?? []) {
       const id = r['dt.smartscape.service']
       byId.set(id, {
@@ -64,7 +71,7 @@ export default function Services() {
       })
     }
     return [...byId.values()]
-  }, [list.data, red.data])
+  }, [list.data, red.data, filtered])
 
   const counts = {
     active: rows.filter((r) => r.total > 0).length,
@@ -75,7 +82,7 @@ export default function Services() {
     () => (red.data || list.data ? rows.filter((r) => (lens === 'all' ? true : lens === 'failing' ? r.failed > 0 : r.total > 0)) : undefined),
     [rows, lens, red.data, list.data],
   )
-  const fc = useFacets(lensRows, FACETS, { text: (r) => `${r.name} ${r.id}` })
+  const fc = useFacets(lensRows, FACETS, { text: (r) => `${r.name} ${r.id}`, attrs })
 
   const cols: Column[] = [
     {
@@ -158,13 +165,13 @@ export default function Services() {
           </>
         }
       />
-      <Panel spec={servicesSpec(tf)} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" />}>
+      <Panel spec={redSpec} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} />}>
         {red.error ? (
           <ErrorBox error={red.error} />
         ) : (
           <DataTable
             rows={fc.rows}
-            loading={red.isLoading && list.isLoading}
+            loading={red.isLoading && (filtered || list.isLoading)}
             columns={cols}
             facets={fc}
             empty={<Empty title="No services" hint="No service reported traffic or appeared in Smartscape in this timeframe." />}

@@ -117,8 +117,9 @@ export function evidenceQuery(eventIds: string[]) {
 
 // ── services ────────────────────────────────────────────────────────────────
 
-export function servicesRedQuery(interval: string) {
-  return `timeseries { req = sum(dt.service.request.count, default:0), fail = sum(dt.service.request.failure_count, default:0), rt = avg(dt.service.request.response_time) }, by:{dt.smartscape.service}, interval:${interval}
+/** `filter` narrows the series before aggregation and may use any dimension, primary tags included. */
+export function servicesRedQuery(interval: string, filter = '') {
+  return `timeseries { req = sum(dt.service.request.count, default:0), fail = sum(dt.service.request.failure_count, default:0), rt = avg(dt.service.request.response_time) }, by:{dt.smartscape.service}, interval:${interval}${filter ? `, filter:{ ${filter} }` : ''}
 | lookup [smartscapeNodes SERVICE | fields id, name, k8s.namespace.name, dt.service.sdv1_type], sourceField:dt.smartscape.service, lookupField:id, prefix:"s."
 | fieldsAdd total = arraySum(req), failed = arraySum(fail), latency = arrayAvg(rt)
 | fieldsAdd failure_rate = if(total > 0, 100.0 * failed / total, else: 0.0)
@@ -219,12 +220,15 @@ export function censusQuery() {
 | limit 300`
 }
 
+export const INSTANCES_LIMIT = 1000
+
+/** Any Smartscape type. Cloud resources often lack a name: fall back to their Name tag, resource name or ARN. */
 export function instancesQuery(type: string) {
   return `smartscapeNodes ${q(type)}
-| fieldsAdd display = coalesce(if(name != "", name), aws.arn, id)
-| fields id, name = display, type, k8s.namespace.name, k8s.cluster.name, aws.region, aws.account.id, lifetime
+| fieldsAdd display = coalesce(if(name != "", name), \`tags:aws\`[\`Name\`], azure.resource.name, aws.arn, azure.resource.id, id)
+| fields id, name = display, type, k8s.namespace.name, k8s.cluster.name, region = coalesce(aws.region, azure.location, gcp.region), account = coalesce(aws.account.id, azure.subscription, gcp.project.id), lifetime
 | sort name asc
-| limit 1000`
+| limit ${INSTANCES_LIMIT}`
 }
 
 /** Canned vital charts per entity type (dynatui MetricsFor). */

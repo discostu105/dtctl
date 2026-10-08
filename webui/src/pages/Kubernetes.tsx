@@ -3,10 +3,11 @@ import { Boxes } from 'lucide-react'
 import { useLocation, useSearch } from 'wouter'
 import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
-import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { FacetSearch, FacetSummary, useAttrs, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
 import { Badge, Empty, ErrorBox, Segmented, TimeAgo } from '../components/ui'
 import { num, useDql, type Rec } from '../lib/api'
+import { nodesSource, parseAttrs, serializeAttr, withAttrs, type AttrSource } from '../lib/attrs'
 import { parseFilters, serializeFilter, type Facet } from '../lib/facets'
 import { fmtInt, shortType } from '../lib/format'
 import { entityHref } from '../lib/links'
@@ -31,7 +32,7 @@ const QUERIES: Record<View, string> = {
 | limit 3000`,
   nodes: `smartscapeNodes "K8S_NODE"
 | parse k8s.object, "JSON:obj"
-| fields id, name, cluster = k8s.cluster.name, kubelet = obj[status][nodeInfo][kubeletVersion], os = obj[status][nodeInfo][osImage], cpu = obj[status][capacity][cpu], instance = obj[metadata][labels][\`node.kubernetes.io/instance-type\`], zone = obj[metadata][labels][\`topology.kubernetes.io/zone\`], created = toTimestamp(obj[metadata][creationTimestamp])
+| fields id, name, cluster = k8s.cluster.name, kubelet = obj[status][nodeInfo][kubeletVersion], os = obj[status][nodeInfo][osImage], cpu = obj[status][capacity][cpu], instance = \`tags:k8s.labels\`[\`node.kubernetes.io/instance-type\`], zone = \`tags:k8s.labels\`[\`topology.kubernetes.io/zone\`], created = toTimestamp(obj[metadata][creationTimestamp])
 | sort name asc
 | limit 1000`,
   namespaces: `smartscapeNodes "K8S_NAMESPACE"
@@ -39,6 +40,19 @@ const QUERIES: Record<View, string> = {
 | sort name asc
 | limit 1000`,
 }
+
+// The manifest (k8s.object) has labels stripped; they live in the tag maps.
+const SOURCES: Record<View, AttrSource> = {
+  workloads: nodesSource(['K8S_DEPLOYMENT', 'K8S_STATEFULSET', 'K8S_DAEMONSET']),
+  pods: nodesSource('K8S_POD'),
+  nodes: nodesSource('K8S_NODE'),
+  namespaces: nodesSource('K8S_NAMESPACE'),
+}
+
+const LIMITS: Record<View, number> = { workloads: 2000, pods: 3000, nodes: 1000, namespaces: 1000 }
+
+/** Attribute filters that mean the same on every Kubernetes view survive a view switch. */
+const portableAttr = (field: string) => field.startsWith('tags:') || field.startsWith('primary_tags.') || field === 'k8s.namespace.name' || field === 'k8s.cluster.name'
 
 const nsFacet: Facet<Rec> = { key: 'ns', label: 'Namespace', value: (r) => r.namespace, aliases: ['namespace'] }
 const clusterFacet: Facet<Rec> = { key: 'cluster', label: 'Cluster', value: (r) => r.cluster }
@@ -79,14 +93,16 @@ export default function Kubernetes() {
   const search = new URLSearchParams(useSearch())
   const [, navigate] = useLocation()
   const view = (search.get('view') as View) || 'workloads'
-  const spec = tfSpec(tf, QUERIES[view], { ttl: 60 })
+  const attrs = useAttrs(SOURCES[view])
+  const query = (v: View) => withAttrs(QUERIES[v], v === view ? attrs.filters : attrs.filters.filter((f) => portableAttr(f.field)))
+  const spec = tfSpec(tf, query(view), { ttl: 60 })
   const res = useDql(spec)
 
   // prefetch the sibling views so switching is instant
-  useDql(tfSpec(tf, QUERIES.pods, { ttl: 60 }))
-  useDql(tfSpec(tf, QUERIES.workloads, { ttl: 60 }))
+  useDql(tfSpec(tf, query('pods'), { ttl: 60 }))
+  useDql(tfSpec(tf, query('workloads'), { ttl: 60 }))
 
-  const fc = useFacets(res.data?.records, FACETS[view], { text: (r) => `${r.name} ${r.id}` })
+  const fc = useFacets(res.data?.records, FACETS[view], { text: (r) => `${r.name} ${r.id}`, attrs })
   const rows = fc.rows ?? []
 
   // Filters that also exist in the target view (namespace, cluster…) come along.
@@ -95,6 +111,9 @@ export default function Kubernetes() {
     const keep = parseFilters(p).filter((f) => FACETS[v].some((x) => x.key === f.key))
     p.delete('f')
     keep.forEach((f) => p.append('f', serializeFilter(f)))
+    const keepAttrs = parseAttrs(p).filter((f) => portableAttr(f.field))
+    p.delete('a')
+    keepAttrs.forEach((f) => p.append('a', serializeAttr(f)))
     p.set('view', v)
     navigate(`/k8s?${p}`, { replace: true })
   }
@@ -136,7 +155,7 @@ export default function Kubernetes() {
           </>
         }
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={view} />}>
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={view} fetching={res.isFetching} limit={LIMITS[view]} />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
