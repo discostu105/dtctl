@@ -14,9 +14,10 @@ describe('numbers', () => {
     expect(fmtCompact(3.14159)).toBe('3.14')
   })
 
-  // BUG: rounding crosses the unit boundary without promoting the unit.
-  it.fails('promotes to the next unit when rounding reaches 1000', () => {
-    expect(fmtCompact(999_960)).toBe('1M') // actual: "1,000K"
+  it('promotes to the next unit when rounding reaches 1000', () => {
+    expect(fmtCompact(999_960)).toBe('1M')
+    expect(fmtCompact(999_940)).toBe('999.9K')
+    expect(fmtCompact(999_960_000)).toBe('1B')
   })
 
   it('formats percentages', () => {
@@ -45,9 +46,11 @@ describe('durations', () => {
     expect(fmtMs(2 * 86_400_000 + 5 * 3_600_000)).toBe('2d 5h')
   })
 
-  // BUG: the remainder is rounded after the whole minutes are floored.
-  it.fails('never shows 60 in the minor unit', () => {
-    expect(fmtMs(119_700)).toBe('2m 0s') // actual: "1m 60s"
+  it('never shows 60 in the minor unit', () => {
+    expect(fmtMs(119_700)).toBe('2m 0s')
+    expect(fmtMs(59_999)).toBe('1m 0s')
+    expect(fmtMs(2 * 3_600_000 - 20_000)).toBe('2h 0m')
+    expect(fmtMs(86_400_000 - 20_000)).toBe('1d 0h')
   })
 
   it('measures spans and drops a zero minor unit', () => {

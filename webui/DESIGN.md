@@ -290,6 +290,7 @@ custom dashboards.
 
 ```bash
 make build-webui                  # npm ci + vite build → pkg/webui/dist (embedded via go:embed)
+make test-webui                   # vitest (lib/) + Playwright smoke suite against a mocked /api
 export DTCTL_DEVELOPMENT=serve    # `serve` is a development-tier feature (or `development: {serve: true}` in config)
 go build -o dtctl . && ./dtctl serve web
 

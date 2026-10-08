@@ -183,16 +183,25 @@ export function DataTable<T = Rec>({
           {v.getVirtualItems().map((vi) => {
             const r = sorted[vi.index]
             const key = rowKey(r, vi.index)
-            const Tag = href ? 'a' : 'div'
             return (
-              <Tag
+              <div
                 key={key}
-                href={href ? href(r) : undefined}
                 onClick={(e: React.MouseEvent) => {
-                  if (!clickable || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                  if (!clickable || e.button !== 0) return
+                  // links and buttons inside a cell (entity links, cell filters) do their own thing
+                  const hit = (e.target as HTMLElement).closest('a, button')
+                  if (hit && !hit.hasAttribute('data-row-link')) return
+                  if (e.metaKey || e.ctrlKey || e.shiftKey) {
+                    // the row link handles its own modified clicks; cells that sit above it open the tab here
+                    if (!hit && href) window.open(href(r), '_blank')
+                    return
+                  }
                   e.preventDefault()
                   setCursor(vi.index)
                   open(r)
+                }}
+                onAuxClick={(e: React.MouseEvent) => {
+                  if (e.button === 1 && href && !(e.target as HTMLElement).closest('a, button')) window.open(href(r), '_blank')
                 }}
                 onMouseEnter={onHover ? () => onHover(r) : undefined}
                 className={clsx(
@@ -203,16 +212,26 @@ export function DataTable<T = Rec>({
                 )}
                 style={{ gridTemplateColumns: template, height: vi.size, transform: `translateY(${vi.start}px)` }}
               >
+                {/* A stretched link rather than an <a> row: cells may hold links of their own, and <a> can't nest.
+                    It keeps the row's link behavior: open in a new tab, copy link address. */}
+                {href && <a data-row-link href={href(r)} tabIndex={-1} aria-hidden className="absolute inset-0" />}
                 {columns.map((c) => (
                   <div
                     key={c.key}
-                    className={clsx('min-w-0 truncate', c.align === 'right' && 'tnum text-right', facets && c.facet && 'group/cell relative', c.className)}
+                    className={clsx(
+                      'min-w-0 truncate',
+                      c.align === 'right' && 'tnum text-right',
+                      facets && c.facet && 'group/cell relative',
+                      // a cell's own links and buttons sit above the row link
+                      href && '[&_a]:relative [&_button]:relative',
+                      c.className,
+                    )}
                   >
                     {c.render(r)}
                     {facets && c.facet && <CellFilter fc={facets} facetKey={c.facet} row={r} />}
                   </div>
                 ))}
-              </Tag>
+              </div>
             )
           })}
         </div>

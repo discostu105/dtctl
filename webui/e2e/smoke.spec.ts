@@ -25,7 +25,7 @@ const ROUTES: Case[] = [
   { path: '/k8s?view=nodes', title: 'Kubernetes', h1: 'Kubernetes' },
   { path: '/k8s?view=namespaces', title: 'Kubernetes', h1: 'Kubernetes' },
   { path: '/hosts', title: 'Hosts', h1: 'Hosts' },
-  { path: '/logs', title: 'Logs', text: 'Facets' },
+  { path: '/logs', title: 'Logs', text: 'Errors only' },
   { path: '/traces', title: 'Traces', h1: 'Traces' },
   { path: '/traces/0123456789abcdef0123456789abcdef', title: 'Trace', text: 'Trace not found' },
   { path: '/rum', title: 'Experience', h1: 'Experience' },
@@ -41,17 +41,11 @@ const ROUTES: Case[] = [
   { path: '/docs', title: 'Documents', h1: 'Documents' },
 ]
 
-// Known bug, asserted separately below so every other error still fails the
-// smoke tests: DataTable rows with `href` render as <a>, and cells holding an
-// EntityLink nest another <a> inside (invalid HTML; React warns).
-const KNOWN = [/cannot be a descendant of <%s>[\s\S]*<a>/, /<%s> cannot contain a nested %s[\s\S]*\ba <a>/]
-
 /** Collect console errors and page errors for the whole test. */
-function watchErrors(page: Page, { includeKnown = false } = {}) {
+function watchErrors(page: Page) {
   const errors: string[] = []
   page.on('console', (m) => {
     if (m.type() !== 'error') return
-    if (!includeKnown && KNOWN.some((re) => re.test(m.text()))) return
     errors.push(`console: ${m.text()}`)
   })
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`))
@@ -74,10 +68,9 @@ for (const c of ROUTES) {
   })
 }
 
-// BUG: components/DataTable.tsx renders an href row as <a>; the Hosts name
-// column renders EntityLink (another <a>) inside it. Remove `.fail` once fixed.
-test.fail('hosts table has no nested links', async ({ page }) => {
-  const errors = watchErrors(page, { includeKnown: true })
+// DataTable rows link through a stretched <a>, so cells can hold links of their own.
+test('hosts table has no nested links', async ({ page }) => {
+  const errors = watchErrors(page)
   await mockApi(page)
   await page.goto('/hosts')
   await expect(page.getByText('host-1.example.invalid')).toBeVisible()

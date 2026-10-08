@@ -11,8 +11,9 @@ export function fmtCompact(n: number) {
   if (!Number.isFinite(n)) return '—'
   const a = Math.abs(n)
   if (a < 10_000) return a < 10 && a % 1 !== 0 ? nf2.format(n) : nf0.format(n)
-  if (a < 1e6) return nf1.format(n / 1e3) + 'K'
-  if (a < 1e9) return nf1.format(n / 1e6) + 'M'
+  // thresholds sit where one decimal rounds up to the next unit: 999,960 is 1M, not 1,000K
+  if (a < 999_950) return nf1.format(n / 1e3) + 'K'
+  if (a < 999_950_000) return nf1.format(n / 1e6) + 'M'
   return nf1.format(n / 1e9) + 'B'
 }
 
@@ -41,10 +42,15 @@ export function fmtMs(ms: number) {
   const a = Math.abs(ms)
   if (a < 1) return nf2.format(ms * 1000) + ' µs'
   if (a < 1000) return (a < 10 ? nf1 : nf0).format(ms) + ' ms'
-  if (a < 60_000) return nf2.format(ms / 1000) + ' s'
-  if (a < 3_600_000) return `${Math.floor(ms / 60_000)}m ${Math.round((ms % 60_000) / 1000)}s`
-  if (a < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ${Math.round((ms % 3_600_000) / 60_000)}m`
-  return `${Math.floor(ms / 86_400_000)}d ${Math.round((ms % 86_400_000) / 3_600_000)}h`
+  if (a < 59_995) return nf2.format(ms / 1000) + ' s'
+  // round to the smaller unit first, then split: 119.7 s is 2m 0s, never 1m 60s
+  const sign = ms < 0 ? '-' : ''
+  const s = Math.round(a / 1000)
+  if (s < 3600) return `${sign}${Math.floor(s / 60)}m ${s % 60}s`
+  const m = Math.round(a / 60_000)
+  if (m < 1440) return `${sign}${Math.floor(m / 60)}h ${m % 60}m`
+  const h = Math.round(a / 3_600_000)
+  return `${sign}${Math.floor(h / 24)}d ${h % 24}h`
 }
 
 export function fmtBytes(b: number) {
