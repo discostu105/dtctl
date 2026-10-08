@@ -127,6 +127,9 @@ var ResourceScopes = map[string]AccessScopes{
 	// same Grail read surface as `query`, no managed resource of its own.
 	"arrivals": {Read: QueryScopes},
 
+	// `dtctl serve web`: the read-only web UI runs DQL and lists documents.
+	"web": {Read: append(append([]string{}, QueryScopes...), "document:documents:read")},
+
 	// Grail storage. Buckets are managed via the bucket data scopes (delete
 	// folds into write); lookups and segments are stored as files / filter
 	// segments respectively.

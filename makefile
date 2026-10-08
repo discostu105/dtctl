@@ -250,3 +250,7 @@ sdk-check-imports:
 # Run all SDK checks
 sdk-check: test-sdk vet-sdk sdk-check-deps sdk-check-imports
 
+# dtctl web UI (proof of concept): rebuild the embedded SPA into pkg/webui/dist.
+.PHONY: build-webui
+build-webui:
+	cd webui && npm ci && npm run build
