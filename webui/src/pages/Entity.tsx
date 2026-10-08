@@ -18,8 +18,9 @@ import { tfSpec } from '../lib/shared'
 import { pushRecent, useTitle } from '../lib/store'
 import { absolute, intervalFor, setTimeframe, useTimeframe } from '../lib/timeframe'
 import { EventList } from './Problem'
+import { ErrorsView, SessionsView } from './Rum'
 
-type Tab = 'overview' | 'logs' | 'traces' | 'events' | 'problems' | 'related'
+type Tab = 'overview' | 'logs' | 'traces' | 'sessions' | 'rumerrors' | 'events' | 'problems' | 'related'
 
 export default function EntityPage({ id }: { id: string }) {
   const type = typeOfId(id)
@@ -54,6 +55,7 @@ export default function EntityPage({ id }: { id: string }) {
 
   const vitals = vitalsFor(type)
   const canSpans = spanScopable(type)
+  const isFrontend = type === 'FRONTEND'
 
   if (detail.error) return <ErrorBox error={detail.error} />
 
@@ -142,7 +144,9 @@ export default function EntityPage({ id }: { id: string }) {
           onChange={setTab}
           tabs={[
             { value: 'overview', label: 'Overview' },
-            { value: 'logs', label: 'Logs' },
+            { value: 'sessions', label: 'Sessions', hidden: !isFrontend },
+            { value: 'rumerrors', label: 'Errors', hidden: !isFrontend },
+            { value: 'logs', label: 'Logs', hidden: isFrontend },
             { value: 'traces', label: 'Traces', hidden: !canSpans },
             { value: 'events', label: 'Events' },
             { value: 'problems', label: 'Problems', count: problems.data?.records.length || null },
@@ -152,6 +156,16 @@ export default function EntityPage({ id }: { id: string }) {
         <div className="min-h-[420px]">
           {tab === 'overview' && <Overview rec={rec} loading={detail.isLoading} type={type} />}
           {tab === 'logs' && <EntityLogs entity={entity} />}
+          {tab === 'sessions' && (
+            <div className="flex h-[560px] flex-col">
+              <SessionsView tf={tf} realOnly frontend={id} />
+            </div>
+          )}
+          {tab === 'rumerrors' && (
+            <div className="flex h-[560px] flex-col">
+              <ErrorsView tf={tf} realOnly frontend={id} />
+            </div>
+          )}
           {tab === 'traces' && <EntityTraces entity={entity} />}
           {tab === 'events' && <EntityEvents entity={entity} />}
           {tab === 'problems' && (

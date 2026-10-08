@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { AlertOctagon, ArrowUpRight, CheckCircle2, GitCommitVertical, ScrollText, Share2, ShieldAlert } from 'lucide-react'
+import { AlertOctagon, ArrowUpRight, CheckCircle2, GitCommitVertical, MonitorSmartphone, ScrollText, Share2, ShieldAlert } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { TimeChart, tsAxis } from '../components/Chart'
@@ -13,6 +13,7 @@ import { fmtCompact, fmtInt, fmtPct, span } from '../lib/format'
 import { problemHref } from '../lib/links'
 import { activeProblemsSpec, changesSpec, recentProblemsSpec, ERROR_LEVELS, servicesSpec, tfSpec, vulnsSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
+import { FrontendsTable, frontendsSpec, VitalsLegend } from './Rum'
 import { absolute, intervalFor, setTimeframe, sparkInterval, useTimeframe } from '../lib/timeframe'
 
 function greeting() {
@@ -283,6 +284,22 @@ export default function Pulse() {
               ))}
             </ul>
           )}
+        </Panel>
+
+        <Panel
+          className="col-span-3 max-xl:col-span-1"
+          title="User experience"
+          hint="real users · p75 Core Web Vitals"
+          icon={<MonitorSmartphone className="size-4" />}
+          spec={frontendsSpec(tf)}
+          actions={
+            <>
+              <VitalsLegend />
+              <HeaderLink href="/rum">Experience</HeaderLink>
+            </>
+          }
+        >
+          <FrontendsTable tf={tf} realOnly compact maxHeight={300} />
         </Panel>
       </div>
     </div>
