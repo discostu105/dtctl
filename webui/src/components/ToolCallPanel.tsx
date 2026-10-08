@@ -71,7 +71,7 @@ export function ToolCallPanel({ use, next, onClose }: { use: ToolUse; next?: Rec
   const traceId = x?.['trace.id'] ?? next?.['trace.id']
 
   // the result: the next model call's input carries it, keyed by the call id
-  const nextSpec = use.callId && next ? { query: callDetailQuery(next['trace.id'], next['span.id']), ttl: 600 } : null
+  const nextSpec = use.callId && next ? { query: callDetailQuery(next['trace.id'], next['span.id'], next.start_time), ttl: 600 } : null
   const nextRes = useDql(nextSpec)
   const result = useMemo(() => {
     const rec = nextRes.data?.records[0]
@@ -92,7 +92,7 @@ export function ToolCallPanel({ use, next, onClose }: { use: ToolUse; next?: Rec
       onClose={onClose}
       actions={
         traceId && (
-          <Link href={traceHref(traceId) + (x ? `?span=${x['span.id']}` : '')} className="rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
+          <Link href={traceHref(traceId, x?.start_time ?? next?.start_time, x?.['span.id'])} className="rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
             Trace →
           </Link>
         )

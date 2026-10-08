@@ -271,7 +271,7 @@ export function LogDetail({ rec }: { rec: Rec }) {
         <span className="tnum text-xs text-ink-2">{fmtTime(rec.timestamp)}</span>
         <TimeAgo value={rec.timestamp} className="text-xs text-ink-3" />
         {traceId && (
-          <Link href={traceHref(String(traceId))} className="ml-auto text-xs text-accent-ink hover:underline">
+          <Link href={traceHref(String(traceId), rec.timestamp, rec.span_id ? String(rec.span_id) : undefined)} className="ml-auto text-xs text-accent-ink hover:underline">
             Open trace →
           </Link>
         )}
@@ -359,7 +359,7 @@ export function SpanTable({ records, loading, maxHeight, className }: { records:
       loading={loading}
       columns={spanColumns}
       rowKey={(r, i) => `${r['span.id']}-${i}`}
-      href={(r) => traceHref(r['trace.id'])}
+      href={(r) => traceHref(r['trace.id'], r.start_time ?? r.timestamp, r['span.id'])}
       maxHeight={maxHeight}
       className={className}
       empty={<Empty title="No spans" hint="No traces matched in this timeframe." />}

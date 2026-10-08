@@ -14,6 +14,7 @@ import { evidenceQuery, logsQuery, problemDetailQuery, signalFilterAll, spanFilt
 import { fmtCompact, fmtDateTime, span, titleCase } from '../lib/format'
 import { dtLinks } from '../lib/links'
 import { ERROR_LEVELS } from '../lib/shared'
+import { useAdaptiveDql } from '../lib/sampling'
 import { useNames } from '../lib/names'
 import { pushRecent, useTitle } from '../lib/store'
 import { intervalFor } from '../lib/timeframe'
@@ -76,7 +77,7 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
         to: win.to,
       }
     : null
-  const errs = useDql(errSpec)
+  const errs = useAdaptiveDql('logs', errSpec, ['count']).res
   const fails = useDql(failSpec)
 
   const chart = useMemo(() => {

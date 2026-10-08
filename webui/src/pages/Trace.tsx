@@ -28,7 +28,9 @@ import { num, useDql, useMeta, type Rec } from '../lib/api'
 import { q } from '../lib/dql'
 import { fmtCompact, fmtInt, fmtMs } from '../lib/format'
 import { dtLinks } from '../lib/links'
+import { hitScanLimit } from '../lib/sampling'
 import { pushRecent, useTitle } from '../lib/store'
+import { useTimeframe } from '../lib/timeframe'
 import {
   TRACE_LIMIT,
   buildTrace,
@@ -37,10 +39,13 @@ import {
   revealed,
   serviceColor,
   serviceSlot,
+  locateWindows,
   spanDetailQuery,
   spanLogsQuery,
   tickStep,
+  traceLocateQuery,
   traceSkeletonQuery,
+  traceWindow,
   visibleRows,
   type OpStat,
   type TNode,
@@ -65,8 +70,24 @@ export function Trace({ id }: { id: string }) {
   const { data: meta } = useMeta()
   const search = new URLSearchParams(useSearch())
   const [, navigate] = useLocation()
-  const spec = { query: traceSkeletonQuery(id), ttl: 300, maxRecords: TRACE_LIMIT }
+  // locate first (cheap, progressively wider windows), then load from the trace's exact window
+  const tfNow = useTimeframe()
+  const [windows] = useState(() => locateWindows(search.get('t'), tfNow))
+  const [wi, setWi] = useState(0)
+  const loc = useDql({ query: traceLocateQuery(id), from: windows[wi].from, to: windows[wi].to, ttl: 300 })
+  const hit = loc.data?.records[0]
+  const found = hit && num(hit.n) > 0 ? hit : null
+  const [limitedAt, setLimitedAt] = useState<string[]>([])
+  useEffect(() => {
+    if (!loc.data || found) return
+    if (hitScanLimit(loc.data)) setLimitedAt((l) => [...l, windows[wi].label])
+    if (wi < windows.length - 1) setWi(wi + 1)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loc.data])
+  const tw = found ? traceWindow(found.s, found.e) : null
+  const spec = tw ? { query: traceSkeletonQuery(id), from: tw.from, to: tw.to, ttl: 300, maxRecords: TRACE_LIMIT } : null
   const res = useDql(spec)
+  const locating = !found && !loc.error && !(loc.data && wi === windows.length - 1)
   const m = useMemo(() => buildTrace(res.data?.records ?? []), [res.data])
   const truncated = (res.data?.records.length ?? 0) >= TRACE_LIMIT
 
@@ -151,7 +172,7 @@ export function Trace({ id }: { id: string }) {
     return mm
   }, [m])
 
-  const logsSpec = { query: `fetch logs, from:now()-7d\n| filter trace_id == ${q(id)}\n| sort timestamp asc\n| limit 500`, ttl: 120 }
+  const logsSpec = tw ? { query: `fetch logs\n| filter trace_id == ${q(id)}\n| sort timestamp asc\n| limit 500`, from: tw.from, to: tw.to, ttl: 120 } : null
   const logs = useDql(logsSpec)
   const total = m.t1 - m.t0
 
@@ -161,15 +182,26 @@ export function Trace({ id }: { id: string }) {
         <Link href="/traces" className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
           <ArrowLeft className="size-3.5" /> Traces
         </Link>
-        {res.error ? (
-          <ErrorBox error={res.error} />
-        ) : res.isLoading ? (
+        {res.error || loc.error ? (
+          <ErrorBox error={res.error ?? loc.error} />
+        ) : locating || res.isLoading ? (
           <>
+            <div className="mb-2 flex items-center gap-2 text-xs text-ink-3">
+              <span className="size-1.5 animate-pulse rounded-full bg-accent" />
+              {locating ? `Locating trace · ${windows[wi].label}…` : `Loading ${found ? fmtInt(num(found.n)) : ''} spans…`}
+            </div>
             <Skeleton className="mb-3 h-7 w-96" />
             <Skeleton className="h-96" />
           </>
         ) : !m.nodes.length ? (
-          <Empty title="Trace not found" hint="No spans with this trace ID in the last 7 days." />
+          <Empty
+            title="Trace not found"
+            hint={
+              limitedAt.length
+                ? `Searched ${windows.map((w) => w.label).join(', ')}. The ${limitedAt[limitedAt.length - 1]} search stopped at Grail's scan limit before it found this trace. Open it from a list, log or span (those links carry its time), or set the timeframe to when it ran.`
+                : `No spans with this trace ID in ${windows.map((w) => w.label).join(', ')}.`
+            }
+          />
         ) : (
           <>
             {/* ── header ── */}
@@ -301,9 +333,9 @@ export function Trace({ id }: { id: string }) {
         )}
       </div>
       {sel && sel.rec['gen_ai.operation.name'] === 'chat' ? (
-        <LlmCallPanel traceId={id} spanId={sel.id} onClose={() => select(null)} />
+        <LlmCallPanel traceId={id} spanId={sel.id} at={sel.rec.start_time} onClose={() => select(null)} />
       ) : (
-        sel && <SpanPanel m={m} n={sel} traceId={id} onClose={() => select(null)} onSelect={focus} onZoom={() => zoomTo(sel)} />
+        sel && tw && <SpanPanel m={m} n={sel} traceId={id} win={tw} onClose={() => select(null)} onSelect={focus} onZoom={() => zoomTo(sel)} />
       )}
     </div>
   )
@@ -1046,6 +1078,7 @@ function SpanPanel({
   m,
   n,
   traceId,
+  win,
   onClose,
   onSelect,
   onZoom,
@@ -1053,12 +1086,13 @@ function SpanPanel({
   m: TraceModel
   n: TNode
   traceId: string
+  win: { from: string; to: string }
   onClose: () => void
   onSelect: (i: number) => void
   onZoom: () => void
 }) {
-  const detail = useDql({ query: spanDetailQuery(traceId, n.id), ttl: 600 })
-  const logs = useDql({ query: spanLogsQuery(traceId, n.id), ttl: 120 })
+  const detail = useDql({ query: spanDetailQuery(traceId, n.id), ...win, ttl: 600 })
+  const logs = useDql({ query: spanLogsQuery(traceId, n.id), ...win, ttl: 120 })
   const rec: Rec = detail.data?.records[0] ?? n.rec
   const total = m.t1 - m.t0 || 1
   const chain: TNode[] = []

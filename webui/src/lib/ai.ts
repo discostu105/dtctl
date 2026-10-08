@@ -62,8 +62,10 @@ ${filter ? `| filter ${filter}\n` : ''}| fields start_time, duration, trace.id, 
 | limit 300`
 }
 
-export function callDetailQuery(traceId: string, spanId: string) {
-  return `fetch spans, from:now()-7d
+/** One span; `at` (its start time) keeps the scan to a narrow window instead of 7 days. */
+export function callDetailQuery(traceId: string, spanId: string, at?: unknown) {
+  const win = at ? `from: toTimestamp(${q(String(at))}) - 15m, to: toTimestamp(${q(String(at))}) + 60m` : 'from:now()-7d'
+  return `fetch spans, ${win}
 | filter trace.id == toUid(${q(traceId)}) and span.id == toUid(${q(spanId)})
 | limit 1`
 }

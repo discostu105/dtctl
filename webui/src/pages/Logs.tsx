@@ -10,6 +10,8 @@ import { num, useDql } from '../lib/api'
 import { facetQuery, logHistogramQuery, logsQuery, q, searchFilter } from '../lib/dql'
 import { fmtCompact, fmtInt } from '../lib/format'
 import { ERROR_LEVELS, tfSpec } from '../lib/shared'
+import { useAdaptiveDql } from '../lib/sampling'
+import { SampledBadge } from '../components/Sampled'
 import { useTitle } from '../lib/store'
 import { absolute, intervalFor, setTimeframe, useTimeframe } from '../lib/timeframe'
 
@@ -71,7 +73,9 @@ export default function Logs() {
   const streamSpec = tfSpec(tf, logsQuery(filters, 1000), { maxRecords: 1000 })
   const histSpec = tfSpec(tf, logHistogramQuery(filters, iv))
   const stream = useDql(streamSpec)
-  const hist = useDql(histSpec)
+  // the histogram counts every record in the timeframe: adaptive sampling keeps it under the scan limit
+  const histA = useAdaptiveDql('logs', histSpec, ['count'])
+  const hist = histA.res
 
   const histData = useMemo(() => {
     const recs = hist.data?.records ?? []
@@ -187,18 +191,25 @@ export default function Logs() {
             {histData ? (
               <>
                 <span className="tnum">
-                  <b className="font-semibold text-ink">{fmtInt(histData.total)}</b> records
+                  <b className="font-semibold text-ink">
+                    {histA.ratio > 1 ? `≈${fmtCompact(histData.total)}` : fmtInt(histData.total)}
+                  </b>{' '}
+                  records
                 </span>
                 <span className="tnum">
-                  <b className={clsx('font-semibold', histData.errors ? 'text-crit' : 'text-ink')}>{fmtInt(histData.errors)}</b> errors
+                  <b className={clsx('font-semibold', histData.errors ? 'text-crit' : 'text-ink')}>
+                    {histA.ratio > 1 ? `≈${fmtCompact(histData.errors)}` : fmtInt(histData.errors)}
+                  </b>{' '}
+                  errors
                 </span>
+                <SampledBadge ratio={histA.ratio} sampling={histA.sampling} />
                 <span>{tf.label.toLowerCase()} · click a bar to zoom</span>
               </>
             ) : (
               <Skeleton className="h-4 w-48" />
             )}
             <span className="ml-auto" />
-            <QueryInfo spec={histSpec} result={hist} />
+            <QueryInfo spec={histA.spec ?? histSpec} result={hist} />
           </div>
           {hist.error ? (
             <ErrorBox error={hist.error} />
@@ -243,16 +254,23 @@ export default function Logs() {
 }
 
 function Facet({ label, spec, selected, onToggle }: { label: string; spec: any; selected: string[]; onToggle: (v: string) => void }) {
-  const res = useDql(spec)
+  const { res, ratio, waiting } = useAdaptiveDql('logs', spec, ['count'])
   const rows = (res.data?.records ?? []).filter((r) => r.v != null)
   const max = Math.max(1, ...rows.map((r) => num(r.count)))
   return (
     <div className="mb-4">
       <div className="mb-1 flex items-center justify-between text-2xs font-medium tracking-wide text-ink-3 uppercase">
-        {label}
+        <span>
+          {label}
+          {ratio > 1 && (
+            <span className="ml-1 font-normal tracking-normal normal-case text-warn" title={`Counts extrapolated from a 1:${ratio} sample`}>
+              ≈
+            </span>
+          )}
+        </span>
         {res.isFetching && <span className="size-1.5 animate-pulse rounded-full bg-accent" />}
       </div>
-      {res.isLoading ? (
+      {res.isLoading || waiting ? (
         <div className="flex flex-col gap-1.5">
           {[0, 1, 2].map((i) => (
             <Skeleton key={i} className="h-5" />
@@ -278,7 +296,10 @@ function Facet({ label, spec, selected, onToggle }: { label: string; spec: any; 
               <span className="relative min-w-0 flex-1 truncate" title={v}>
                 {v}
               </span>
-              <span className="tnum relative text-ink-3">{fmtCompact(num(r.count))}</span>
+              <span className="tnum relative text-ink-3">
+                {ratio > 1 ? '≈' : ''}
+                {fmtCompact(num(r.count))}
+              </span>
             </button>
           )
         })

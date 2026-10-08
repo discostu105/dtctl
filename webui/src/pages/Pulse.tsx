@@ -12,6 +12,7 @@ import { num, useDql, useMeta, type Rec } from '../lib/api'
 import { fmtCompact, fmtInt, fmtPct, span } from '../lib/format'
 import { problemHref } from '../lib/links'
 import { activeProblemsSpec, changesSpec, recentProblemsSpec, ERROR_LEVELS, servicesSpec, tfSpec, vulnsSpec } from '../lib/shared'
+import { useAdaptiveDql } from '../lib/sampling'
 import { useTitle } from '../lib/store'
 import { FrontendsTable, frontendsSpec, VitalsLegend } from './Rum'
 import { absolute, intervalFor, setTimeframe, sparkInterval, useTimeframe } from '../lib/timeframe'
@@ -33,10 +34,12 @@ export default function Pulse() {
   const changes = useDql(changesSpec(tf))
   const iv = intervalFor(tf.ms)
   const errSpec = tfSpec(tf, `fetch logs\n| filter in(loglevel, ${ERROR_LEVELS})\n| makeTimeseries count = count(), interval:${iv}`)
-  const errLogs = useDql(errSpec)
+  // error-log trends count every log record: adaptively sampled on big tenants
+  const errA = useAdaptiveDql('logs', errSpec, ['count'])
+  const errLogs = errA.res
   const failSpec = tfSpec(tf, `timeseries failed = sum(dt.service.request.failure_count, default:0), interval:${iv}`)
   const failed = useDql(failSpec)
-  const errSpark = useDql(tfSpec(tf, `fetch logs\n| filter in(loglevel, ${ERROR_LEVELS})\n| makeTimeseries count = count(), interval:${sparkInterval(tf.ms)}`))
+  const errSpark = useAdaptiveDql('logs', tfSpec(tf, `fetch logs\n| filter in(loglevel, ${ERROR_LEVELS})\n| makeTimeseries count = count(), interval:${sparkInterval(tf.ms)}`), ['count']).res
 
   const svcRows = services.data?.records ?? []
   const failing = svcRows.filter((r) => num(r.failed) > 0)
@@ -198,7 +201,7 @@ export default function Pulse() {
           title="Errors & deployments"
           hint="drag to zoom · ◆ = deployment"
           icon={<ScrollText className="size-4" />}
-          spec={errSpec}
+          spec={errA.spec ?? errSpec}
           result={errLogs}
           actions={
             chart && (

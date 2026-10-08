@@ -456,14 +456,14 @@ function CallsView({ result }: { result: Result }) {
           />
         )}
       </div>
-      {sel && <LlmCallPanel traceId={sel['trace.id']} spanId={sel['span.id']} title={sel.model} onClose={() => setSel(null)} />}
+      {sel && <LlmCallPanel traceId={sel['trace.id']} spanId={sel['span.id']} title={sel.model} at={sel.start_time} onClose={() => setSel(null)} />}
     </div>
   )
 }
 
 /** Full LLM call: facts + conversation view (shared by AI, conversations and the trace waterfall). */
-export function LlmCallPanel({ traceId, spanId, title, onClose }: { traceId: string; spanId: string; title?: string; onClose: () => void }) {
-  const res = useDql({ query: callDetailQuery(traceId, spanId), ttl: 600 })
+export function LlmCallPanel({ traceId, spanId, title, at, onClose }: { traceId: string; spanId: string; title?: string; at?: unknown; onClose: () => void }) {
+  const res = useDql({ query: callDetailQuery(traceId, spanId, at), ttl: 600 })
   const d = res.data?.records[0]
   return (
     <SidePanel
@@ -471,7 +471,7 @@ export function LlmCallPanel({ traceId, spanId, title, onClose }: { traceId: str
       onClose={onClose}
       width="w-[min(680px,50vw)]"
       actions={
-        <Link href={traceHref(traceId)} className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
+        <Link href={traceHref(traceId, at, spanId)} className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
           Trace <ExternalLink className="size-3" />
         </Link>
       }
@@ -695,7 +695,7 @@ function ToolPanel({ tf, tool, onClose }: { tf: Timeframe; tool: Rec; onClose: (
                     conversation →
                   </Link>
                 ) : (
-                  <Link href={traceHref(r['trace.id'])} onClick={(e) => e.stopPropagation()} className="shrink-0 text-accent-ink hover:underline">
+                  <Link href={traceHref(r['trace.id'], r.start_time, r['span.id'])} onClick={(e) => e.stopPropagation()} className="shrink-0 text-accent-ink hover:underline">
                     trace →
                   </Link>
                 )}

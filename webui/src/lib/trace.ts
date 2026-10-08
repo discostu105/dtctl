@@ -8,7 +8,7 @@ import { q } from './dql'
 
 /** Lean skeleton for every span (full attributes are fetched per span on demand). */
 export function traceSkeletonQuery(traceId: string, limit = TRACE_LIMIT) {
-  return `fetch spans, from:now()-7d
+  return `fetch spans
 | filter trace.id == toUid(${q(traceId)})
 | fields trace.id, span.id, span.parent_id, span.name = substring(span.name, from:0, to:240), span.kind, start_time, duration, span.status_code, request.is_failed, service.name, dt.service.name, dt.smartscape.service, endpoint.name, db.system, db.system.name, http.response.status_code, gen_ai.operation.name, gen_ai.request.model, gen_ai.usage.input_tokens, gen_ai.usage.output_tokens, gen_ai.tool.name, gen_ai.agent.name, gen_ai.conversation.id
 | limit ${limit}`
@@ -16,14 +16,47 @@ export function traceSkeletonQuery(traceId: string, limit = TRACE_LIMIT) {
 
 export const TRACE_LIMIT = 30000
 
+// Finding a trace: trace ids aren't indexed, so "trace.id == X over 7 days"
+// scans every span in the week and, on a big tenant, stops at the scan limit
+// before it finds anything. Instead, locate the trace with a cheap aggregate
+// over progressively wider windows (starting at the time the link carries),
+// then load it from its exact window.
+
+export function traceLocateQuery(traceId: string) {
+  return `fetch spans
+| filter trace.id == toUid(${q(traceId)})
+| summarize { n = count(), s = min(start_time), e = max(end_time) }`
+}
+
+export interface SearchWindow {
+  from: string
+  to?: string
+  label: string
+}
+
+export function locateWindows(hint: string | null, tf: { from: string; to?: string; label: string }): SearchWindow[] {
+  const out: SearchWindow[] = []
+  const h = hint ? Date.parse(hint) : NaN
+  if (Number.isFinite(h)) out.push({ from: new Date(h - 30 * 60e3).toISOString(), to: new Date(h + 90 * 60e3).toISOString(), label: 'around the linked time' })
+  out.push({ from: tf.from, to: tf.to, label: tf.label.toLowerCase() })
+  if (tf.from !== 'now-24h') out.push({ from: 'now-24h', label: 'last 24 hours' })
+  out.push({ from: 'now-7d', label: 'last 7 days' })
+  return out
+}
+
+/** The trace's own window with a little margin, for every follow-up query. */
+export function traceWindow(s: string, e: string) {
+  return { from: new Date(Date.parse(s) - 60e3).toISOString(), to: new Date(Date.parse(e) + 60e3).toISOString() }
+}
+
 export function spanDetailQuery(traceId: string, spanId: string) {
-  return `fetch spans, from:now()-7d
+  return `fetch spans
 | filter trace.id == toUid(${q(traceId)}) and span.id == toUid(${q(spanId)})
 | limit 1`
 }
 
 export function spanLogsQuery(traceId: string, spanId: string) {
-  return `fetch logs, from:now()-7d
+  return `fetch logs
 | filter trace_id == ${q(traceId)} and span_id == ${q(spanId)}
 | sort timestamp asc
 | limit 200`

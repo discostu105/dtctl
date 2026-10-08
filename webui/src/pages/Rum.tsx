@@ -778,7 +778,7 @@ export function Session({ id }: { id: string }) {
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="min-w-0 truncate">{eventLabel(e)}</span>
                       {e['trace.id'] && (
-                        <Link href={traceHref(e['trace.id'])} onClick={(ev) => ev.stopPropagation()} className="shrink-0 text-xs text-accent-ink hover:underline">
+                        <Link href={traceHref(e['trace.id'], e.start_time ?? e.timestamp)} onClick={(ev) => ev.stopPropagation()} className="shrink-0 text-xs text-accent-ink hover:underline">
                           trace →
                         </Link>
                       )}
@@ -801,7 +801,7 @@ export function Session({ id }: { id: string }) {
       {sel && (
         <SidePanel title={<span className="flex items-center gap-2">{KIND[sel['characteristics.classifier']]?.label ?? sel['characteristics.classifier']} · {fmtTime(sel.start_time)}</span>} onClose={() => setSel(null)}>
           {sel['trace.id'] && (
-            <Link href={traceHref(sel['trace.id'])} className="mb-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-wash px-3 py-2 text-sm text-accent-ink hover:brightness-110">
+            <Link href={traceHref(sel['trace.id'], sel.start_time ?? sel.timestamp)} className="mb-3 flex items-center gap-2 rounded-lg border border-accent/30 bg-accent-wash px-3 py-2 text-sm text-accent-ink hover:brightness-110">
               Follow this request into the backend trace →
             </Link>
           )}

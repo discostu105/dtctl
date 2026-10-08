@@ -199,7 +199,7 @@ export default function AiConversation({ id }: { id: string }) {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {traces.slice(0, 3).map((tr, i) => (
-              <Link key={tr} href={traceHref(tr)} className="inline-flex h-8 items-center rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink">
+              <Link key={tr} href={traceHref(tr, steps.find((x) => x['trace.id'] === tr)?.start_time)} className="inline-flex h-8 items-center rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink">
                 {traces.length > 1 ? `Trace ${i + 1}` : 'Open trace'} →
               </Link>
             ))}
@@ -280,7 +280,7 @@ export default function AiConversation({ id }: { id: string }) {
         </div>
       </div>
 
-      {sel?.kind === 'llm' && <LlmCallPanel traceId={sel.rec['trace.id']} spanId={sel.rec['span.id']} title={sel.rec.model} onClose={() => setSel(null)} />}
+      {sel?.kind === 'llm' && <LlmCallPanel traceId={sel.rec['trace.id']} spanId={sel.rec['span.id']} title={sel.rec.model} at={sel.rec.start_time} onClose={() => setSel(null)} />}
       {sel?.kind === 'tool' && <ToolCallPanel key={`${sel.use.callId}-${sel.use.exec?.['span.id']}`} use={sel.use} next={sel.next} onClose={() => setSel(null)} />}
     </div>
   )

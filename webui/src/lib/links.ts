@@ -27,4 +27,11 @@ export const dtLinks = {
 
 export const entityHref = (id: string, name?: string) => `/e/${encodeURIComponent(id)}${name ? `?n=${encodeURIComponent(name)}` : ''}`
 export const problemHref = (displayId: string) => `/problems/${encodeURIComponent(displayId)}`
-export const traceHref = (traceId: string) => `/traces/${encodeURIComponent(traceId)}`
+/** Trace link; `t` (any timestamp inside the trace) lets the page find it without a 7-day scan. */
+export const traceHref = (traceId: string, t?: unknown, spanId?: string) => {
+  const p = new URLSearchParams()
+  if (t) p.set('t', String(t))
+  if (spanId) p.set('span', spanId)
+  const qs = p.toString()
+  return `/traces/${encodeURIComponent(traceId)}${qs ? `?${qs}` : ''}`
+}
