@@ -39,7 +39,7 @@ export function logSource(r: Rec): string {
 const ENTITY_ID = /^[A-Z][A-Z0-9_]+-[0-9A-F]{16}$/
 const TRACE_FIELDS = new Set(['trace_id', 'trace.id', 'dt.trace_id'])
 
-function Value({ k, v }: { k: string; v: unknown }): ReactNode {
+export function Value({ k, v }: { k: string; v: unknown }): ReactNode {
   if (v == null) return <span className="text-ink-4">null</span>
   if (Array.isArray(v)) {
     if (v.length === 0) return <span className="text-ink-4">[]</span>

@@ -24,7 +24,8 @@ import Experience, { Session } from './pages/Rum'
 import Security from './pages/Security'
 import Services from './pages/Services'
 import Smartscape from './pages/Smartscape'
-import Traces, { Trace } from './pages/Traces'
+import { Trace } from './pages/Trace'
+import Traces from './pages/Traces'
 import './styles.css'
 
 function App() {

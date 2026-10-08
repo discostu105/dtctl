@@ -180,13 +180,6 @@ export function spansQuery(lens: string, extra: string[], limit = 300) {
     .join('\n')
 }
 
-export function traceQuery(traceId: string) {
-  return `fetch spans, from:now()-7d
-| filter trace.id == toUid(${q(traceId)})
-| sort start_time asc
-| limit 1000`
-}
-
 // ── topology ────────────────────────────────────────────────────────────────
 
 export function detailQuery(e: { id: string; type: string }) {

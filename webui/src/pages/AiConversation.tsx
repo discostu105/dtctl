@@ -7,7 +7,6 @@ import { EntityLink } from '../components/Entity'
 import { Markdown } from '../components/Markdown'
 import { QueryInfo } from '../components/Panel'
 import { Spark } from '../components/Spark'
-import { Inspector, SidePanel } from '../components/signals'
 import { Badge, CopyButton, Empty, ErrorBox, Skeleton, Tip } from '../components/ui'
 import { num, useDql, type Rec } from '../lib/api'
 import { conversationPromptQuery, conversationStepsQuery, fmtTokens } from '../lib/ai'
@@ -15,6 +14,7 @@ import { fmtDateTime, fmtMs, fmtPct } from '../lib/format'
 import { traceHref } from '../lib/links'
 import { pushRecent, useTitle } from '../lib/store'
 import { LlmCallPanel, secs } from './Ai'
+import { argsText, ToolCallPanel, type ToolUse } from '../components/ToolCallPanel'
 
 // ── model ─────────────────────────────────────────────────────────────────
 // A conversation is a sequence of TURNS. Each turn is one LLM call: what the
@@ -28,12 +28,6 @@ interface Part {
   name?: string
   id?: string
   arguments?: unknown
-}
-
-interface ToolUse {
-  name: string
-  args?: unknown
-  exec?: Rec // the execute_tool span that ran it, if one was recorded
 }
 
 interface Turn {
@@ -61,26 +55,6 @@ function tidy(s: string) {
     .trim()
 }
 
-/** Human-readable tool arguments: `dtctl query "fetch …"` rather than raw JSON. */
-function argsText(a: unknown): string {
-  let v: any = a
-  if (typeof a === 'string') {
-    try {
-      v = JSON.parse(a)
-    } catch {
-      return a
-    }
-  }
-  if (v && typeof v === 'object' && !Array.isArray(v)) {
-    if (typeof v.command === 'string' && Array.isArray(v.args))
-      return [v.command, ...v.args.map((x: unknown) => (typeof x === 'string' && /\s/.test(x) ? JSON.stringify(x) : String(x)))].join(' ')
-    const vals = Object.entries(v)
-    if (vals.length <= 3 && vals.every(([, x]) => typeof x !== 'object'))
-      return vals.map(([k, x]) => `${k}: ${typeof x === 'string' ? x : JSON.stringify(x)}`).join(' · ')
-  }
-  return JSON.stringify(v)
-}
-
 function buildTurns(steps: Rec[]) {
   const llm = steps.filter((s) => s.op === 'chat' && (s.model || s.input != null))
   const execs = steps.filter((s) => s.op === 'execute_tool')
@@ -96,7 +70,7 @@ function buildTurns(steps: Rec[]) {
       .map((p) => {
         const exec = window.find((x) => !used.has(x) && (x.tool === p.name || String(x['span.name'] ?? '').includes(` ${p.name}`)))
         if (exec) used.add(exec)
-        return { name: p.name ?? 'tool', args: p.arguments, exec }
+        return { name: p.name ?? 'tool', args: p.arguments, callId: p.id, exec }
       })
     for (const x of window) if (!used.has(x)) (used.add(x), tools.push({ name: x.tool ?? 'tool', exec: x }))
     return {
@@ -145,7 +119,7 @@ export default function AiConversation({ id }: { id: string }) {
   const promptRes = useDql({ query: conversationPromptQuery(id), ttl: 600 })
   const steps = useMemo(() => (res.data?.records ?? []).filter((s) => ['chat', 'execute_tool', 'invoke_agent'].includes(s.op)), [res.data])
   const { turns, setup, llm, execs } = useMemo(() => buildTurns(steps), [steps])
-  const [sel, setSel] = useState<{ kind: 'llm' | 'tool'; rec: Rec } | null>(null)
+  const [sel, setSel] = useState<{ kind: 'llm'; rec: Rec } | { kind: 'tool'; use: ToolUse; next?: Rec } | null>(null)
   const [focus, setFocus] = useState<number | null>(null)
 
   const prompt = useMemo(() => {
@@ -288,7 +262,7 @@ export default function AiConversation({ id }: { id: string }) {
             <div className="flex flex-wrap items-center gap-2 rounded-xl border border-dashed border-line px-3 py-2 text-xs text-ink-3">
               Setup
               {setup.map((x) => (
-                <ToolRow key={x['span.id']} use={{ name: x.tool ?? 'tool', exec: x }} compact onOpen={() => setSel({ kind: 'tool', rec: x })} />
+                <ToolRow key={x['span.id']} use={{ name: x.tool ?? 'tool', exec: x }} compact onOpen={() => setSel({ kind: 'tool', use: { name: x.tool ?? 'tool', exec: x } })} />
               ))}
             </div>
           )}
@@ -300,26 +274,14 @@ export default function AiConversation({ id }: { id: string }) {
               total={turns.length}
               focused={focus === turn.n}
               onOpenCall={() => setSel({ kind: 'llm', rec: turn.call })}
-              onOpenTool={(x) => setSel({ kind: 'tool', rec: x })}
+              onOpenTool={(use) => setSel({ kind: 'tool', use, next: turns[turn.n]?.call })}
             />
           ))}
         </div>
       </div>
 
       {sel?.kind === 'llm' && <LlmCallPanel traceId={sel.rec['trace.id']} spanId={sel.rec['span.id']} title={sel.rec.model} onClose={() => setSel(null)} />}
-      {sel?.kind === 'tool' && (
-        <SidePanel
-          title={<span className="font-mono text-xs">{String(sel.rec['span.name'] ?? sel.rec.tool).replace(/^execute_tool\s+/, '')}</span>}
-          onClose={() => setSel(null)}
-          actions={
-            <Link href={traceHref(sel.rec['trace.id'])} className="rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
-              Trace →
-            </Link>
-          }
-        >
-          <Inspector rec={sel.rec} />
-        </SidePanel>
-      )}
+      {sel?.kind === 'tool' && <ToolCallPanel key={`${sel.use.callId}-${sel.use.exec?.['span.id']}`} use={sel.use} next={sel.next} onClose={() => setSel(null)} />}
     </div>
   )
 }
@@ -416,7 +378,7 @@ function Gantt({ turns, setup, t0, total, focus, onPick }: { turns: Turn[]; setu
   )
 }
 
-function TurnCard({ turn, t0, total, focused, onOpenCall, onOpenTool }: { turn: Turn; t0: number; total: number; focused: boolean; onOpenCall: () => void; onOpenTool: (x: Rec) => void }) {
+function TurnCard({ turn, t0, total, focused, onOpenCall, onOpenTool }: { turn: Turn; t0: number; total: number; focused: boolean; onOpenCall: () => void; onOpenTool: (u: ToolUse) => void }) {
   const [thoughts, setThoughts] = useState(false)
   const c = turn.call
   const inTok = num(c.input)
@@ -460,9 +422,9 @@ function TurnCard({ turn, t0, total, focused, onOpenCall, onOpenTool }: { turn: 
           <div className="flex flex-col gap-0.5">
             {groupTools(turn.tools).map((g, i) =>
               g.length > 1 ? (
-                <ToolGroup key={i} uses={g} />
+                <ToolGroup key={i} uses={g} onOpen={onOpenTool} />
               ) : (
-                <ToolRow key={i} use={g[0]} onOpen={() => g[0].exec && onOpenTool(g[0].exec)} />
+                <ToolRow key={i} use={g[0]} onOpen={() => onOpenTool(g[0])} />
               ),
             )}
           </div>
@@ -484,20 +446,30 @@ function groupTools(tools: ToolUse[]): ToolUse[][] {
   return out
 }
 
-function ToolGroup({ uses }: { uses: ToolUse[] }) {
+function ToolGroup({ uses, onOpen }: { uses: ToolUse[]; onOpen: (u: ToolUse) => void }) {
+  const [open, setOpen] = useState(false)
   return (
-    <div className="flex items-center gap-2 rounded-md px-2 py-1 text-xs">
-      <Tip content="Requested by the model; no execution spans were recorded (handled in-process)">
-        <CircleDashed className="size-3.5 shrink-0 text-ink-4" />
-      </Tip>
-      <Wrench className="size-3 shrink-0 text-[var(--s3)]" />
-      <span className="shrink-0 font-mono font-medium text-ink">
-        {uses[0].name} <span className="text-ink-3">×{uses.length}</span>
-      </span>
-      <span className="min-w-0 flex-1 truncate font-mono text-ink-3" title={uses.map((u) => argsText(u.args)).join('\n')}>
-        {uses.map((u) => argsText(u.args).replace(/^title: /, '')).join(' · ')}
-      </span>
-      <span className="shrink-0 text-2xs text-ink-4">no span</span>
+    <div>
+      <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-panel-hover">
+        <Tip content="Requested by the model; no execution spans were recorded (handled in-process)">
+          <CircleDashed className="size-3.5 shrink-0 text-ink-4" />
+        </Tip>
+        <Wrench className="size-3 shrink-0 text-[var(--s3)]" />
+        <span className="shrink-0 font-mono font-medium text-ink">
+          {uses[0].name} <span className="text-ink-3">×{uses.length}</span>
+        </span>
+        <span className="min-w-0 flex-1 truncate font-mono text-ink-3" title={uses.map((u) => argsText(u.args)).join('\n')}>
+          {uses.map((u) => argsText(u.args).replace(/^title: /, '')).join(' · ')}
+        </span>
+        {open ? <ChevronDown className="size-3.5 shrink-0 text-ink-4" /> : <ChevronRight className="size-3.5 shrink-0 text-ink-4" />}
+      </button>
+      {open && (
+        <div className="ml-5 border-l border-line pl-1">
+          {uses.map((u, i) => (
+            <ToolRow key={i} use={u} onOpen={() => onOpen(u)} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -527,8 +499,7 @@ function ToolRow({ use, onOpen, compact }: { use: ToolUse; onOpen: () => void; c
     <button
       type="button"
       onClick={onOpen}
-      disabled={!x}
-      className={clsx('group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs', x ? 'hover:bg-panel-hover' : 'cursor-default', failed(x) && 'bg-crit-wash/50')}
+      className={clsx('group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-panel-hover', failed(x) && 'bg-crit-wash/50')}
     >
       {icon}
       <Wrench className="size-3 shrink-0 text-[var(--s3)]" />
