@@ -104,6 +104,17 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 			}
 			return out, nil
 		},
+		QueryAssist: func(ctx context.Context, op string, body []byte) ([]byte, int, error) {
+			resp, err := c.HTTP().R().
+				SetContext(ctx).
+				SetHeader("Content-Type", "application/json").
+				SetBody(body).
+				Post("/platform/storage/query/v1/query:" + op)
+			if err != nil {
+				return nil, 0, err
+			}
+			return resp.Body(), resp.StatusCode(), nil
+		},
 		Meta: func() webui.Meta {
 			m := webui.Meta{
 				Context:     cfg.CurrentContext,

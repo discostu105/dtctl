@@ -1,7 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { BarChart3, Clock, ExternalLink, Play, Table2, Terminal, Trash2 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { AlertTriangle, BarChart3, CheckCircle2, Clock, ExternalLink, Play, Table2, Terminal, Trash2 } from 'lucide-react'
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearch } from 'wouter'
 import { TimeChart, tsAxis, SERIES } from '../components/Chart'
 import { DataTable, type Column } from '../components/DataTable'
@@ -15,6 +15,25 @@ import { dtLinks } from '../lib/links'
 import { useTitle } from '../lib/store'
 import { useTimeframe } from '../lib/timeframe'
 import { EntityLink } from '../components/Entity'
+
+const DqlEditor = lazy(() => import('../components/DqlEditor'))
+
+function VerifyStatus({ v }: { v: { valid: boolean; messages: string[] } | null }) {
+  if (!v) return null
+  if (v.valid && !v.messages.length)
+    return (
+      <span className="inline-flex items-center gap-1 text-xs text-ok">
+        <CheckCircle2 className="size-3.5" /> valid
+      </span>
+    )
+  return (
+    <Tip content={v.messages.join(' · ')}>
+      <span className={clsx('inline-flex max-w-96 items-center gap-1 truncate text-xs', v.valid ? 'text-warn' : 'text-crit')}>
+        <AlertTriangle className="size-3.5 shrink-0" /> <span className="truncate">{v.messages[0] ?? 'invalid'}</span>
+      </span>
+    </Tip>
+  )
+}
 
 const HIST_KEY = 'dtctl-web:query-history'
 const EXAMPLES = [
@@ -45,8 +64,7 @@ export default function Query() {
   const tf = useTimeframe()
   const { data: meta } = useMeta()
   const qc = useQueryClient()
-  const ta = useRef<HTMLTextAreaElement>(null)
-  const pre = useRef<HTMLPreElement>(null)
+  const [verify, setVerify] = useState<{ valid: boolean; messages: string[] } | null>(null)
 
   useEffect(() => {
     const d = params.get('dql')
@@ -81,26 +99,12 @@ export default function Query() {
   const ts = useMemo(() => detectTimeseries(records), [records])
   const effective = view === 'auto' ? (ts ? 'chart' : 'table') : view
 
-  const onKey = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault()
-      run()
-    } else if ((e.metaKey || e.ctrlKey) && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
-      e.preventDefault()
-      const n = Math.max(-1, Math.min(history.length - 1, hIdx + (e.key === 'ArrowUp' ? 1 : -1)))
-      setHIdx(n)
-      if (n >= 0) setText(history[n])
-    } else if (e.key === 'Tab') {
-      e.preventDefault()
-      const el = e.currentTarget
-      const { selectionStart: a, selectionEnd: b } = el
-      const next = text.slice(0, a) + '  ' + text.slice(b)
-      setText(next)
-      requestAnimationFrame(() => el.setSelectionRange(a + 2, a + 2))
-    }
+  // ⌘↑ / ⌘↓ walk the query history (newest first).
+  const walkHistory = (dir: 1 | -1) => {
+    const n = Math.max(-1, Math.min(history.length - 1, hIdx + dir))
+    setHIdx(n)
+    return n >= 0 ? history[n] : null
   }
-
-  const lines = text.split('\n').length
 
   return (
     <div className="flex h-full">
@@ -111,29 +115,11 @@ export default function Query() {
           <span className="text-sm text-ink-3">DQL workbench · default timeframe: {tf.label.toLowerCase()}</span>
         </div>
 
-        {/* editor: a transparent textarea over a highlighted <pre> */}
         <div className="rounded-xl border border-line bg-panel focus-within:border-accent/50">
-          <div className="relative flex max-h-[40vh] min-h-[120px] overflow-auto font-mono text-[13px] leading-[21px]">
-            <div className="sticky left-0 shrink-0 bg-panel py-3 pr-3 pl-3 text-right text-ink-4 select-none">
-              {Array.from({ length: lines }, (_, i) => (
-                <div key={i}>{i + 1}</div>
-              ))}
-            </div>
-            <div className="relative min-w-0 flex-1">
-              <pre ref={pre} aria-hidden className="pointer-events-none m-0 py-3 pr-3 break-words whitespace-pre-wrap text-ink">
-                {highlightDql(text)}
-                {'\n'}
-              </pre>
-              <textarea
-                ref={ta}
-                value={text}
-                autoFocus
-                spellCheck={false}
-                onChange={(e) => setText(e.target.value)}
-                onKeyDown={onKey}
-                className="absolute inset-0 resize-none overflow-hidden bg-transparent py-3 pr-3 break-words whitespace-pre-wrap text-transparent caret-ink outline-none"
-              />
-            </div>
+          <div className="max-h-[42vh] overflow-auto">
+            <Suspense fallback={<pre className="m-0 min-h-[120px] p-3 pl-12 font-mono text-[13px] leading-[21px] whitespace-pre-wrap text-ink">{highlightDql(text)}</pre>}>
+              <DqlEditor value={text} onChange={setText} onRun={(doc) => run(doc)} onHistory={walkHistory} onVerify={setVerify} timeframe={{ from: tf.from, to: tf.to }} autoFocus />
+            </Suspense>
           </div>
           <div className="flex items-center gap-2 border-t border-line px-2 py-1.5">
             <button
@@ -144,8 +130,9 @@ export default function Query() {
               <Play className="size-3.5 fill-current" /> Run
               <span className="ml-1 text-2xs opacity-70">⌘↵</span>
             </button>
-            <span className="text-xs text-ink-3">
-              <Kbd>⌘</Kbd> <Kbd>↑</Kbd> history
+            <VerifyStatus v={verify} />
+            <span className="hidden text-xs text-ink-3 xl:inline">
+              <Kbd>⌘</Kbd> <Kbd>Space</Kbd> complete · <Kbd>⌘</Kbd> <Kbd>↑</Kbd> history · <Kbd>⌘</Kbd> <Kbd>/</Kbd> comment
             </span>
             <span className="ml-auto" />
             <CopyButton value={`dtctl query '${text.replace(/'/g, "'\\''")}'`} label="dtctl command" />

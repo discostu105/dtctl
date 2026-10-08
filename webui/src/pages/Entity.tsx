@@ -6,7 +6,7 @@ import { TimeChart, tsAxis } from '../components/Chart'
 import { EntityLink, TypeIcon } from '../components/Entity'
 import { Panel } from '../components/Panel'
 import { Inspector, LogDetail, LogStream, ProblemsTable, SidePanel, SpanTable } from '../components/signals'
-import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, Tabs, TimeAgo } from '../components/ui'
+import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo } from '../components/ui'
 import { arr, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
 import {
   changesQuery, detailQuery, edgesQuery, logsQuery, namesQuery, problemsQuery, signalFilter, signalFilterAll, spanFilter, spanScopable, spansQuery,
@@ -16,10 +16,27 @@ import { fmtBytes, fmtCompact, fmtDateTime, fmtMs, fmtUs, shortType } from '../l
 import { dtLinks } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { pushRecent, useTitle } from '../lib/store'
-import { absolute, intervalFor, setTimeframe, useTimeframe } from '../lib/timeframe'
+import { absolute, intervalFor, setTimeframe, useTimeframe, type Timeframe } from '../lib/timeframe'
 import { useResolved } from '../lib/names'
 import { EventList } from './Problem'
-import { ErrorsView, SessionsView } from './Rum'
+import { ErrorsView, errorGroupsSpec, SessionsView, sessionsSpec } from './Rum'
+import { DataTabs } from '../components/DataTabs'
+
+// Tab query builders, shared by the page (counts, empty states, "show
+// query") and the tab bodies: identical specs share one cache entry.
+const hopSpec = (e: Entity): DqlSpec | null =>
+  e.type === 'SERVICE'
+    ? {
+        query: `smartscapeEdges "*"\n| filter source_id == toSmartscapeId("${e.id}") and type == "runs_on"\n| fieldsAdd target_type\n| filter in(target_type, {"PROCESS", "CONTAINER"})\n| fields target_id, target_type\n| limit 50`,
+        ttl: 120,
+      }
+    : null
+const logEntities = (e: Entity, hop?: Rec[]): Entity[] => [e, ...(hop ?? []).map((r) => ({ id: r.target_id, type: r.target_type }))]
+const logsSpec = (tf: Timeframe, ents: Entity[]) => tfSpec(tf, logsQuery([signalFilterAll(ents)], 500))
+const tracesSpec = (tf: Timeframe, e: Entity, lens: 'all' | 'errors') =>
+  tfSpec(tf, spansQuery(lens === 'errors' ? 'errors' : e.type === 'SERVICE' ? 'roots' : 'all', [spanFilter(e)], 300))
+const eventsSpec = (tf: Timeframe, e: Entity) => tfSpec(tf, `fetch events\n| filter ${signalFilter(e)}\n| sort timestamp desc\n| limit 300`)
+const relatedSpec = (id: string): DqlSpec => ({ query: edgesQuery(id), ttl: 120 })
 
 type Tab = 'overview' | 'logs' | 'traces' | 'sessions' | 'rumerrors' | 'events' | 'problems' | 'related'
 
@@ -58,6 +75,22 @@ export default function EntityPage({ id }: { id: string }) {
   const vitals = vitalsFor(type)
   const canSpans = spanScopable(type)
   const isFrontend = type === 'FRONTEND'
+
+  // Every tab's query runs now (one streamed batch): counts + empty states.
+  const hop = useDql(isFrontend ? null : hopSpec(entity))
+  const tabLogsSpec = isFrontend || (type === 'SERVICE' && !hop.data && !hop.error) ? null : logsSpec(tf, logEntities(entity, hop.data?.records))
+  const tabTracesSpec = canSpans ? tracesSpec(tf, entity, 'all') : null
+  const tabEventsSpec = eventsSpec(tf, entity)
+  const tabSessionsSpec = isFrontend ? sessionsSpec(tf, true, id, 'all') : null
+  const tabErrorsSpec = isFrontend ? errorGroupsSpec(tf, true, id) : null
+  const tabs = {
+    logs: useDql(tabLogsSpec),
+    traces: useDql(tabTracesSpec),
+    events: useDql(tabEventsSpec),
+    related: useDql(relatedSpec(id)),
+    sessions: useDql(tabSessionsSpec),
+    rumerrors: useDql(tabErrorsSpec),
+  }
 
   if (detail.error) return <ErrorBox error={detail.error} />
 
@@ -140,19 +173,18 @@ export default function EntityPage({ id }: { id: string }) {
       )}
 
       <div className="rounded-xl border border-line bg-panel">
-        <Tabs
-          className="px-2"
+        <DataTabs
           value={tab}
           onChange={setTab}
           tabs={[
-            { value: 'overview', label: 'Overview' },
-            { value: 'sessions', label: 'Sessions', hidden: !isFrontend },
-            { value: 'rumerrors', label: 'Errors', hidden: !isFrontend },
-            { value: 'logs', label: 'Logs', hidden: isFrontend },
-            { value: 'traces', label: 'Traces', hidden: !canSpans },
-            { value: 'events', label: 'Events' },
-            { value: 'problems', label: 'Problems', count: problems.data?.records.length || null },
-            { value: 'related', label: 'Related' },
+            { value: 'overview', label: 'Overview', spec: detailSpec, result: detail, count: null },
+            { value: 'sessions', label: 'Sessions', hidden: !isFrontend, spec: tabSessionsSpec, result: tabs.sessions, limit: 500 },
+            { value: 'rumerrors', label: 'Errors', hidden: !isFrontend, spec: tabErrorsSpec, result: tabs.rumerrors, limit: 300 },
+            { value: 'logs', label: 'Logs', hidden: isFrontend, spec: tabLogsSpec, result: tabs.logs, limit: 500 },
+            { value: 'traces', label: 'Traces', hidden: !canSpans, spec: tabTracesSpec, result: tabs.traces, limit: 300 },
+            { value: 'events', label: 'Events', spec: tabEventsSpec, result: tabs.events, limit: 300 },
+            { value: 'problems', label: 'Problems', spec: probSpec, result: problems },
+            { value: 'related', label: 'Related', spec: relatedSpec(id), result: tabs.related },
           ]}
         />
         <div className="min-h-[420px]">
@@ -335,17 +367,10 @@ function EntityLogs({ entity }: { entity: Entity }) {
   const tf = useTimeframe()
   // Logs are emitted by processes/containers, not services: hop over runs_on
   // edges to widen a service's scope (dynatui LogHopQuery).
-  const hop = useDql(
-    entity.type === 'SERVICE'
-      ? {
-          query: `smartscapeEdges "*"\n| filter source_id == toSmartscapeId("${entity.id}") and type == "runs_on"\n| fieldsAdd target_type\n| filter in(target_type, {"PROCESS", "CONTAINER"})\n| fields target_id, target_type\n| limit 50`,
-          ttl: 120,
-        }
-      : null,
-  )
+  const hop = useDql(hopSpec(entity))
   const ready = entity.type !== 'SERVICE' || hop.data || hop.error
-  const ents: Entity[] = [entity, ...(hop.data?.records ?? []).map((r) => ({ id: r.target_id, type: r.target_type }))]
-  const spec = ready ? tfSpec(tf, logsQuery([signalFilterAll(ents)], 500)) : null
+  const ents = logEntities(entity, hop.data?.records)
+  const spec = ready ? logsSpec(tf, ents) : null
   const res = useDql(spec)
   const [sel, setSel] = useState<Rec | null>(null)
   return (
@@ -375,7 +400,7 @@ function EntityLogs({ entity }: { entity: Entity }) {
 function EntityTraces({ entity }: { entity: Entity }) {
   const tf = useTimeframe()
   const [lens, setLens] = useState<'all' | 'errors'>('all')
-  const spec = tfSpec(tf, spansQuery(lens === 'errors' ? 'errors' : entity.type === 'SERVICE' ? 'roots' : 'all', [spanFilter(entity)], 300))
+  const spec = tracesSpec(tf, entity, lens)
   const res = useDql(spec)
   return (
     <div className="flex h-[520px] flex-col">
@@ -393,7 +418,7 @@ function EntityTraces({ entity }: { entity: Entity }) {
 
 function EntityEvents({ entity }: { entity: Entity }) {
   const tf = useTimeframe()
-  const res = useDql(tfSpec(tf, `fetch events\n| filter ${signalFilter(entity)}\n| sort timestamp desc\n| limit 300`))
+  const res = useDql(eventsSpec(tf, entity))
   const [sel, setSel] = useState<Rec | null>(null)
   return (
     <div className="flex h-[520px]">
@@ -431,7 +456,7 @@ function verbLabel(verb: string, dir: 'out' | 'in') {
 }
 
 function Related({ id }: { id: string }) {
-  const edges = useDql({ query: edgesQuery(id), ttl: 120 })
+  const edges = useDql(relatedSpec(id))
   const others = useMemo(() => {
     const s = new Set<string>()
     for (const e of edges.data?.records ?? []) s.add(e.source_id === id ? e.target_id : e.source_id)

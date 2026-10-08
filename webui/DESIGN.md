@@ -119,18 +119,58 @@ actions, errors) on the session's own time axis. Requests that carry a trace ID 
 **Love:** real users only by default, because synthetic monitors also emit RUM. RUM data is
 sparse, so the window is floored at 24h and the page says so. Flags, device icons and replay markers are shown.
 
-### J9 — "What are my agents and LLMs doing, and are they any good?" (AI engineering)
-AI: LLM calls, tokens, prompt-cache hit rate, time to first token, tool failure rate
-and eval pass rate. Below that are tables of models, agents (each one links to its GenAI entity and spans) and tools.
-Any LLM call opens a **conversation view**: role-tagged turns, with reasoning, tool calls and tool
-results shown as collapsible blocks, and system instructions collapsed. LLM-as-judge evaluations
-show each criterion as met or not, with the judge's reason. All of this comes from the OpenTelemetry GenAI conventions.
+### J9 — AI observability, built around how AI engineers actually work
+There are four questions, each with its own entry point. Everything comes from the OpenTelemetry GenAI
+conventions (`gen_ai.*` spans) plus LLM-as-judge results.
+
+1. **"What are people asking my agents, and how did it go?"** *Conversations* is the default view.
+   It is a list of conversations (`gen_ai.conversation.id`), and each row reads like an inbox: the user's
+   opening prompt, the agent's final answer, the agent and service, the steps (LLM and tool calls,
+   tool failures), the tokens and how much of them was cached, the duration, and the status. A big search box searches
+   *content*: prompts, answers, tool commands, and conversation or trace IDs. A DQL join first
+   selects the matching conversations and then aggregates all of their spans, so the counts stay
+   complete. The search box is also reachable from ⌘K ("Search AI conversations for …"), and pasting a
+   conversation UUID opens it directly.
+2. **"Why did this run go wrong?"** The *conversation replay* tells the run as a story. It starts
+   with the user's prompt. Then each LLM call shows its model, latency, TTFT and tokens (cached
+   vs. fresh), with the model's reasoning, its text and the tool calls it requested (name and arguments).
+   Each tool execution follows the call that asked for it, with its outcome. The story ends with the final answer.
+   A *context per call* chart shows how the context grows with each call, which is where cost and latency come
+   from; click a bar to jump to that step. Any step opens in a maximizable panel: the
+   full message exchange for LLM calls, all attributes for tools. Every trace that contains GenAI
+   spans shows an "✦ N LLM calls · replay conversation →" summary, and its LLM spans open the same
+   message view. Wrapper spans that carry no model and no tokens are left out.
+3. **"Is it fast, reliable and affordable?"** The headline numbers (calls, tokens, cache-hit rate, TTFT, tool
+   failure rate, eval pass rate) and the charts stay on top. Each table drills into the next step:
+   a *model* opens its LLM calls, an *agent* opens its conversations, and a *tool* opens its executions
+   (failures first), each linked to its conversation or trace.
+4. **"Is quality getting better or worse?"** *Evaluations* starts with a provenance banner that
+   explains where the numbers come from: the event type, who emitted them, the OpenPipeline route,
+   and the time range. There are four views of the results:
+   * *By question* lists the questions the agent keeps failing, with a score trend for each.
+   * *By run* lists evaluation batches and their pass rates, to spot regressions.
+   * *Failing criteria* lists the expectations that answers miss most.
+   * *Results* shows every verdict with its per-criterion reasons.
+
+### J10 — "Write the query" (power user)
+The DQL editor uses Grail's own language services:
+- **Completion** from `query:autocomplete`: commands, functions with their synopsis and docs, data objects, and field names that exist in *your* data.
+- **Value completion** that Grail doesn't offer: after `field ==`, the editor runs your query's own prefix and lists the field's top values with record counts.
+- **Live diagnostics** from `query:verify`, underlined at the exact character range.
+
+The editor is CodeMirror 6, loaded only on the Query page. Keys: ⌘↵ runs, ⌘Space completes, ⌘↑/↓ walks
+history, ⌘/ comments, ⌘F searches; brackets match and auto-close.
 
 ### Cross-cutting details
 * **Every ID resolves to a name automatically.** All entity IDs rendered anywhere (inspector, query
   results, evidence, chips) go through one resolver that batches lookups per tick into a single
   Smartscape lookup. IDs Smartscape doesn't know fall back to their classic `dt.entity.*`
   table, so `PROCESS_GROUP-…` reads as "Linux System".
+* **Tabs show their data before you click them.** Every tab's query runs up front in the same
+  streamed batch. Tabs show their record counts, empty tabs are dimmed and struck through (with "No data
+  in this timeframe" on hover), and switching tabs is instant. The active tab's DQL is one click away.
+* **Only interactive rows look interactive.** Table rows show a pointer and hover state only
+  when clicking them does something.
 * **Every detail panel is maximizable.** Use the button, double-click the header, or press `M`. The
   choice is remembered. `Esc` first restores the panel, then closes it.
 

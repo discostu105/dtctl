@@ -3,11 +3,12 @@ import { AlertTriangle, ArrowLeft, Clapperboard, ExternalLink, Laptop, MonitorSm
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearch } from 'wouter'
 import { DataTable, type Column } from '../components/DataTable'
+import { DataTabs } from '../components/DataTabs'
 import { EntityLink } from '../components/Entity'
 import { FilterInput, PageHeader, Panel } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { Spark } from '../components/Spark'
-import { Badge, CopyButton, Empty, ErrorBox, Segmented, Skeleton, SkeletonRows, Tabs, TimeAgo, Tip, type Tone } from '../components/ui'
+import { Badge, CopyButton, Empty, ErrorBox, Segmented, Skeleton, SkeletonRows, TimeAgo, Tip, type Tone } from '../components/ui'
 import { arr, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
 import { fmtCompact, fmtDateTime, fmtInt, fmtMs, fmtTime } from '../lib/format'
 import { dtLinks, traceHref } from '../lib/links'
@@ -25,6 +26,11 @@ import { floorTf, sparkInterval, useTimeframe, type Timeframe } from '../lib/tim
 const rumTf = (tf: Timeframe) => floorTf(tf, '24h')
 
 export const frontendsSpec = (tf: Timeframe, realOnly = true): DqlSpec => tfSpec(rumTf(tf), frontendsQuery(realOnly), { ttl: 60 })
+
+export const sessionsSpec = (tf: Timeframe, realOnly: boolean, frontend: string | null | undefined, lens: SessionLens) =>
+  tfSpec(rumTf(tf), sessionsQuery({ realOnly, frontend, lens }), { ttl: 30 })
+export const errorGroupsSpec = (tf: Timeframe, realOnly: boolean, frontend?: string | null) => tfSpec(rumTf(tf), errorGroupsQuery({ realOnly, frontend }), { ttl: 30 })
+export const pagesSpec = (tf: Timeframe, realOnly: boolean, frontend?: string | null) => tfSpec(rumTf(tf), pagesQuery({ realOnly, frontend }), { ttl: 60 })
 
 const sessionHref = (id: string) => `/rum/sessions/${encodeURIComponent(id)}`
 
@@ -174,6 +180,12 @@ export default function Experience() {
   const app = params.get('app')
   const tab = (params.get('tab') as Tab) || 'sessions'
   const names = useNames(app ? [app] : [])
+  const sSpec = sessionsSpec(raw, realOnly, app, 'all')
+  const eSpec = errorGroupsSpec(raw, realOnly, app)
+  const pSpec = pagesSpec(raw, realOnly, app)
+  const sRes = useDql(sSpec)
+  const eRes = useDql(eSpec)
+  const pRes = useDql(pSpec)
 
   const set = (k: string, v: string | null) => {
     const p = new URLSearchParams(location.search)
@@ -212,26 +224,28 @@ export default function Experience() {
 
       <div className="flex min-h-[560px] flex-col rounded-xl border border-line bg-panel">
         <div className="flex items-center border-b border-line pr-3">
-          <Tabs
-            className="border-b-0 px-2"
+          <DataTabs
+            className="flex-1 border-b-0"
             value={tab}
             onChange={(t) => set('tab', t === 'sessions' ? null : t)}
             tabs={[
-              { value: 'sessions', label: 'Sessions' },
-              { value: 'errors', label: 'Errors' },
-              { value: 'pages', label: 'Pages' },
+              { value: 'sessions', label: 'Sessions', spec: sSpec, result: sRes, limit: 500 },
+              { value: 'errors', label: 'Errors', spec: eSpec, result: eRes, limit: 300 },
+              { value: 'pages', label: 'Pages', spec: pSpec, result: pRes, limit: 300 },
             ]}
+            right={
+              app && (
+                <button
+                  type="button"
+                  onClick={() => set('app', null)}
+                  className="inline-flex h-6 max-w-80 items-center gap-1 rounded-md bg-accent-wash px-2 text-xs text-accent-ink hover:brightness-110"
+                >
+                  <span className="truncate">{names.get(app) ?? app}</span>
+                  <X className="size-3" />
+                </button>
+              )
+            }
           />
-          {app && (
-            <button
-              type="button"
-              onClick={() => set('app', null)}
-              className="ml-auto inline-flex h-6 max-w-80 items-center gap-1 rounded-md bg-accent-wash px-2 text-xs text-accent-ink hover:brightness-110"
-            >
-              <span className="truncate">{names.get(app) ?? app}</span>
-              <X className="size-3" />
-            </button>
-          )}
         </div>
         <div className="flex min-h-0 flex-1 flex-col">
           {tab === 'sessions' && <SessionsView tf={raw} realOnly={realOnly} frontend={app} />}
@@ -254,7 +268,7 @@ function DeviceIcon({ type }: { type: unknown }) {
 export function SessionsView({ tf, realOnly, frontend, height }: { tf: Timeframe; realOnly: boolean; frontend?: string | null; height?: number }) {
   const [lens, setLens] = useState<SessionLens>('all')
   const [filter, setFilter] = useState('')
-  const spec = tfSpec(rumTf(tf), sessionsQuery({ realOnly, frontend, lens }), { ttl: 30 })
+  const spec = sessionsSpec(tf, realOnly, frontend, lens)
   const res = useDql(spec)
   const f = filter.toLowerCase()
   const rows = useMemo(
@@ -384,7 +398,7 @@ export function SessionsView({ tf, realOnly, frontend, height }: { tf: Timeframe
 // ── errors ───────────────────────────────────────────────────────────────
 
 export function ErrorsView({ tf, realOnly, frontend, height }: { tf: Timeframe; realOnly: boolean; frontend?: string | null; height?: number }) {
-  const spec = tfSpec(rumTf(tf), errorGroupsQuery({ realOnly, frontend }), { ttl: 30 })
+  const spec = errorGroupsSpec(tf, realOnly, frontend)
   const res = useDql(spec)
   const [sel, setSel] = useState<Rec | null>(null)
   const [filter, setFilter] = useState('')
@@ -492,7 +506,7 @@ function ErrorPanel({ group, tf, realOnly, frontend, onClose }: { group: Rec; tf
 // ── pages ────────────────────────────────────────────────────────────────
 
 function PagesView({ tf, realOnly, frontend }: { tf: Timeframe; realOnly: boolean; frontend?: string | null }) {
-  const res = useDql(tfSpec(rumTf(tf), pagesQuery({ realOnly, frontend }), { ttl: 60 }))
+  const res = useDql(pagesSpec(tf, realOnly, frontend))
   const [filter, setFilter] = useState('')
   const f = filter.toLowerCase()
   const rows = useMemo(() => res.data?.records.filter((r) => !f || String(r.page).toLowerCase().includes(f)), [res.data, f])

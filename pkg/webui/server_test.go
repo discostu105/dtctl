@@ -247,3 +247,29 @@ func TestStaticSPAFallback(t *testing.T) {
 		t.Errorf("unknown api route should 404, got %d", rec.Code)
 	}
 }
+
+func TestQueryAssistProxy(t *testing.T) {
+	var gotOp, gotBody string
+	s, err := New(Options{
+		Query: func(context.Context, string, string, string, int64) (*sdkquery.Response, error) {
+			return okResponse(), nil
+		},
+		QueryAssist: func(_ context.Context, op string, body []byte) ([]byte, int, error) {
+			gotOp, gotBody = op, string(body)
+			return []byte(`{"suggestions":[]}`), http.StatusOK, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := do(s, "POST", "/api/dql/autocomplete", `{"query":"fetch lo","cursorPosition":8}`, nil)
+	if rec.Code != http.StatusOK || gotOp != "autocomplete" || !strings.Contains(gotBody, "fetch lo") {
+		t.Fatalf("autocomplete: %d op=%q body=%q", rec.Code, gotOp, gotBody)
+	}
+	if rec := do(s, "POST", "/api/dql/execute", `{}`, nil); rec.Code != http.StatusNotFound {
+		t.Errorf("only autocomplete/verify may be proxied, got %d", rec.Code)
+	}
+	if rec := do(s, "POST", "/api/dql/verify", `not json`, nil); rec.Code != http.StatusBadRequest {
+		t.Errorf("invalid body: %d", rec.Code)
+	}
+}

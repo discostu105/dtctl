@@ -2,10 +2,13 @@ import clsx from 'clsx'
 import { AlertTriangle, ArrowLeft, ExternalLink, Waypoints } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useSearch } from 'wouter'
+import { DataTabs } from '../components/DataTabs'
+import { fmtTokens } from '../lib/ai'
+import { LlmCallPanel } from './Ai'
 import { FilterInput, PageHeader, Panel } from '../components/Panel'
 import { EntityLink } from '../components/Entity'
 import { Inspector, LogStream, SidePanel, SpanTable, spanFailed } from '../components/signals'
-import { Badge, CopyButton, Empty, ErrorBox, Segmented, Skeleton, Tabs, TimeAgo } from '../components/ui'
+import { Badge, CopyButton, Empty, ErrorBox, Segmented, Skeleton, TimeAgo } from '../components/ui'
 import { num, useDql, useMeta, type Rec } from '../lib/api'
 import { q, SPAN_LENSES, spansQuery, traceQuery } from '../lib/dql'
 import { fmtMs, fmtNs } from '../lib/format'
@@ -115,6 +118,14 @@ export function Trace({ id }: { id: string }) {
   const t1 = nodes.length ? Math.max(...nodes.map((n) => n.end)) : 1
   const total = Math.max(1, t1 - t0)
   const nFailed = nodes.filter((n) => n.failed).length
+  // GenAI traces: summarize the AI work and link to its conversation(s).
+  const ai = useMemo(() => {
+    const llm = spans.filter((s) => s['gen_ai.operation.name'] === 'chat' && (s['gen_ai.request.model'] || s['gen_ai.usage.input_tokens'] != null))
+    const tools = spans.filter((s) => s['gen_ai.operation.name'] === 'execute_tool')
+    const convs = [...new Set(spans.map((s) => s['gen_ai.conversation.id']).filter(Boolean))] as string[]
+    const tokens = llm.reduce((a, s) => a + num(s['gen_ai.usage.input_tokens']) + num(s['gen_ai.usage.output_tokens']), 0)
+    return { llm: llm.length, tools: tools.length, convs, tokens }
+  }, [spans])
   const services = useMemo(() => {
     const m = new Map<string, string>()
     for (const s of spans) if (s['dt.smartscape.service']) m.set(s['dt.smartscape.service'], s['dt.service.name'] ?? s['service.name'])
@@ -122,7 +133,7 @@ export function Trace({ id }: { id: string }) {
   }, [spans])
 
   const logsSpec = { query: `fetch logs, from:now()-7d\n| filter trace_id == ${q(id)}\n| sort timestamp asc\n| limit 500`, ttl: 120 }
-  const logs = useDql(tab === 'logs' ? logsSpec : null)
+  const logs = useDql(logsSpec)
 
   return (
     <div className="flex h-full">
@@ -160,6 +171,16 @@ export function Trace({ id }: { id: string }) {
                     </span>
                   )}
                   <TimeAgo value={root.start_time} />
+                  {ai.llm + ai.tools > 0 && (
+                    <span className="inline-flex items-center gap-2 rounded-md bg-[var(--s7)]/10 px-2 py-0.5 text-xs text-[var(--s7)]">
+                      ✦ {ai.llm} LLM calls · ⚙ {ai.tools} tool calls · {fmtTokens(ai.tokens)} tokens
+                      {ai.convs.slice(0, 2).map((c) => (
+                        <Link key={c} href={`/ai/conversations/${c}`} className="font-medium underline-offset-2 hover:underline">
+                          replay conversation →
+                        </Link>
+                      ))}
+                    </span>
+                  )}
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   {services.map(([sid, name]) => (
@@ -180,18 +201,16 @@ export function Trace({ id }: { id: string }) {
             </div>
 
             <div className="flex min-h-0 flex-1 flex-col rounded-xl border border-line bg-panel">
-              <div className="flex items-center border-b border-line pr-3">
-                <Tabs
-                  className="border-b-0 px-2"
-                  value={tab}
-                  onChange={setTab}
-                  tabs={[
-                    { value: 'waterfall', label: 'Waterfall', count: nodes.length },
-                    { value: 'logs', label: 'Logs', count: logs.data?.records.length },
-                  ]}
-                />
-                {tab === 'waterfall' && (
-                  <div className="ml-auto flex items-center gap-3 text-xs text-ink-3">
+              <DataTabs
+                value={tab}
+                onChange={setTab}
+                tabs={[
+                  { value: 'waterfall', label: 'Waterfall', spec, result: res, count: nodes.length, limit: 1000 },
+                  { value: 'logs', label: 'Logs', spec: logsSpec, result: logs, limit: 500 },
+                ]}
+                right={
+                  tab === 'waterfall' && (
+                  <div className="flex items-center gap-3 text-xs text-ink-3">
                     {[
                       ['server / internal', 'var(--s1)'],
                       ['client', 'var(--s7)'],
@@ -204,8 +223,9 @@ export function Trace({ id }: { id: string }) {
                       </span>
                     ))}
                   </div>
-                )}
-              </div>
+                  )
+                }
+              />
               {tab === 'waterfall' ? (
                 <div className="min-h-0 flex-1 overflow-auto">
                   <div className="sticky top-0 z-[1] grid grid-cols-[minmax(280px,38%)_1fr_80px] gap-3 border-b border-line bg-panel px-3 py-1.5 text-2xs font-medium tracking-wide text-ink-3 uppercase">
@@ -234,6 +254,7 @@ export function Trace({ id }: { id: string }) {
                         <span className="flex min-w-0 items-center gap-1.5" style={{ paddingLeft: n.depth * 14 }}>
                           {n.failed ? <span className="size-2 shrink-0 rounded-full bg-crit" /> : <span className="size-2 shrink-0 rounded-full bg-ink-4" />}
                           <span className="truncate">{n.rec['span.name']}</span>
+                          <GenAiBadge r={n.rec} />
                           <span className="shrink-0 truncate text-2xs text-ink-3">{n.rec['dt.service.name'] ?? n.rec['service.name']}</span>
                         </span>
                         <span className="relative h-5">
@@ -256,7 +277,9 @@ export function Trace({ id }: { id: string }) {
           </>
         )}
       </div>
-      {sel && (
+      {sel && sel['gen_ai.operation.name'] === 'chat' ? (
+        <LlmCallPanel traceId={sel['trace.id']} spanId={sel['span.id']} onClose={() => setSel(null)} />
+      ) : sel && (
         <SidePanel
           title={sel['span.name']}
           onClose={() => setSel(null)}
@@ -274,9 +297,25 @@ export function Trace({ id }: { id: string }) {
   )
 }
 
+/** GenAI-aware waterfall: LLM calls show their tokens, tools and agents are labelled. */
+function GenAiBadge({ r }: { r: Rec }) {
+  const op = r['gen_ai.operation.name']
+  if (!op) return null
+  if (op === 'chat')
+    return (
+      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[var(--s7)]/15 px-1 text-2xs text-[var(--s7)]">
+        ✦ LLM {fmtTokens(num(r['gen_ai.usage.input_tokens']))}→{fmtTokens(num(r['gen_ai.usage.output_tokens']))}
+      </span>
+    )
+  if (op === 'execute_tool') return <span className="shrink-0 rounded bg-[var(--s3)]/15 px-1 text-2xs text-[var(--s3)]">⚙ {r['gen_ai.tool.name'] ?? 'tool'}</span>
+  if (op === 'invoke_agent') return <span className="shrink-0 rounded bg-accent-wash px-1 text-2xs text-accent-ink">◈ {r['gen_ai.agent.name'] ?? 'agent'}</span>
+  return <span className="shrink-0 rounded bg-line px-1 text-2xs text-ink-3">{op}</span>
+}
+
 function spanColor(r: Rec) {
   if (r['db.system.name'] || r['db.system']) return 'bg-[var(--s3)]'
   if (r['span.kind'] === 'client') return 'bg-[var(--s7)]'
+  if (r['gen_ai.operation.name'] === 'chat') return 'bg-[var(--s7)]'
   if (r['gen_ai.operation.name']) return 'bg-[var(--s5)]'
   return 'bg-[var(--s1)]'
 }

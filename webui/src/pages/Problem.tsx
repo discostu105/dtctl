@@ -5,9 +5,10 @@ import { Link } from 'wouter'
 import { TimeChart, tsAxis } from '../components/Chart'
 import { EntityChip } from '../components/Entity'
 import { Markdown } from '../components/Markdown'
+import { DataTabs } from '../components/DataTabs'
 import { Panel } from '../components/Panel'
 import { Inspector, LogDetail, LogStream, ProblemStatus, SidePanel, SpanTable } from '../components/signals'
-import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, Tabs, TimeAgo, useNow } from '../components/ui'
+import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo, useNow } from '../components/ui'
 import { arr, num, useDql, useMeta, type Rec } from '../lib/api'
 import { evidenceQuery, logsQuery, problemDetailQuery, signalFilterAll, spanFilter, spanScopable, spansQuery, type Entity } from '../lib/dql'
 import { fmtCompact, fmtDateTime, span, titleCase } from '../lib/format'
@@ -101,9 +102,10 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
   const eventsSpec = sigFilter
     ? { query: `fetch events\n| filter ${sigFilter}\n| sort timestamp desc\n| limit 200`, from: win.from, to: win.to }
     : null
-  const logs = useDql(tab === 'logs' ? logsSpec : null)
-  const spans = useDql(tab === 'traces' ? spansSpec : null)
-  const events = useDql(tab === 'events' ? eventsSpec : null)
+  // All tab queries run up front: counts, empty states, instant switching.
+  const logs = useDql(logsSpec)
+  const spans = useDql(spansSpec)
+  const events = useDql(eventsSpec)
   const [sel, setSel] = useState<Rec | null>(null)
 
   const tags: string[] = arr(p.entity_tags)
@@ -205,17 +207,16 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
             </Panel>
 
             <div className="rounded-xl border border-line bg-panel">
-              <Tabs
-                className="px-2"
+              <DataTabs
                 value={tab}
                 onChange={(t) => {
                   setTab(t)
                   setSel(null)
                 }}
                 tabs={[
-                  { value: 'logs', label: 'Logs', count: logs.data?.records.length },
-                  { value: 'traces', label: 'Traces', count: spans.data?.records.length, hidden: !spansSpec },
-                  { value: 'events', label: 'Events', count: events.data?.records.length },
+                  { value: 'logs', label: 'Logs', spec: logsSpec, result: logs, limit: 500 },
+                  { value: 'traces', label: 'Traces', hidden: !spansSpec, spec: spansSpec, result: spans, limit: 300 },
+                  { value: 'events', label: 'Events', spec: eventsSpec, result: events, limit: 200 },
                   { value: 'raw', label: 'Raw record' },
                 ]}
               />

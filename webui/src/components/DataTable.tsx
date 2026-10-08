@@ -87,6 +87,9 @@ export function DataTable<T = Rec>({
 
   const template = columns.map((c) => c.width ?? 'minmax(0,1fr)').join(' ')
 
+  // Rows only look interactive when they are.
+  const clickable = !!(onOpen || href)
+
   const open = (r: T) => {
     if (onOpen) onOpen(r)
     else if (href) navigate(href(r))
@@ -157,14 +160,15 @@ export function DataTable<T = Rec>({
                 key={key}
                 href={href ? href(r) : undefined}
                 onClick={(e: React.MouseEvent) => {
-                  if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
+                  if (!clickable || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return
                   e.preventDefault()
                   setCursor(vi.index)
                   open(r)
                 }}
                 onMouseEnter={onHover ? () => onHover(r) : undefined}
                 className={clsx(
-                  'absolute inset-x-0 grid cursor-pointer items-center gap-3 border-b border-line px-3 text-sm transition-colors hover:bg-panel-hover',
+                  'absolute inset-x-0 grid items-center gap-3 border-b border-line px-3 text-sm transition-colors',
+                  clickable && 'cursor-pointer hover:bg-panel-hover',
                   (vi.index === cursor || (selectedKey != null && selectedKey === key)) && 'bg-accent-wash! shadow-[inset_2px_0_0_var(--accent)]',
                   rowClassName?.(r),
                 )}

@@ -68,6 +68,9 @@ type Options struct {
 	Documents DocumentsFunc
 	// Meta is resolved lazily on first request (it may call the user API).
 	Meta func() Meta
+	// QueryAssist forwards a DQL editor request (op is "autocomplete" or
+	// "verify") to Grail and returns the raw JSON response and status.
+	QueryAssist func(ctx context.Context, op string, body []byte) ([]byte, int, error)
 	// MaxConcurrent bounds concurrent DQL executions against the tenant.
 	MaxConcurrent int
 	// Now is injectable for tests.
@@ -117,6 +120,7 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("GET /api/meta", s.handleMeta)
 	s.mux.HandleFunc("POST /api/batch", s.handleBatch)
 	s.mux.HandleFunc("GET /api/documents", s.handleDocuments)
+	s.mux.HandleFunc("POST /api/dql/{op}", s.handleQueryAssist)
 	s.mux.HandleFunc("/", s.handleStatic)
 	return s, nil
 }
@@ -162,6 +166,42 @@ func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
 		}
 	})
 	writeJSON(w, http.StatusOK, s.meta)
+}
+
+// handleQueryAssist proxies the DQL editor's read-only helpers (autocomplete,
+// verify). Both are idempotent analysis calls: nothing is executed.
+func (s *Server) handleQueryAssist(w http.ResponseWriter, r *http.Request) {
+	op := r.PathValue("op")
+	if op != "autocomplete" && op != "verify" {
+		http.NotFound(w, r)
+		return
+	}
+	if s.opts.QueryAssist == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "query assist not available"})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 256<<10))
+	if err != nil || !json.Valid(body) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
+		return
+	}
+	key := "assist:" + op + ":" + string(body)
+	if v, ok := s.cache.get(key, 5*time.Minute); ok {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(v.([]byte))
+		return
+	}
+	out, status, err := s.opts.QueryAssist(r.Context(), op, body)
+	if err != nil {
+		writeJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		return
+	}
+	if status == http.StatusOK {
+		s.cache.put(key, out)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_, _ = w.Write(out)
 }
 
 func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {

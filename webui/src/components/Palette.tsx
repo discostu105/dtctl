@@ -1,5 +1,5 @@
 import { Command } from 'cmdk'
-import { AlertOctagon, ArrowRight, Clock, Link2, Moon, ScrollText, Terminal, Timer, Waypoints } from 'lucide-react'
+import { AlertOctagon, ArrowRight, MessagesSquare, Clock, Link2, Moon, ScrollText, Terminal, Timer, Waypoints } from 'lucide-react'
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'wouter'
 import { useDql } from '../lib/api'
@@ -28,8 +28,9 @@ export function Palette() {
   const isDql = DQL_START.test(deferred)
   const problemId = /^p-\d+$/i.test(deferred) ? deferred.toUpperCase() : null
   const traceId = /^[0-9a-f]{32}$/i.test(deferred) ? deferred.toLowerCase() : null
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(deferred) ? deferred.toLowerCase() : null
   const entityId = /^[A-Z][A-Z0-9_]+-[0-9A-F]{16}$/.test(deferred) ? deferred : null
-  const wantEntities = open && deferred.length >= 2 && !isDql && !traceId && !entityId && !problemId
+  const wantEntities = open && deferred.length >= 2 && !isDql && !traceId && !entityId && !problemId && !uuid
   const ents = useDql(wantEntities ? { query: searchEntitiesQuery(deferred), ttl: 60 } : null)
   const entRows = useMemo(() => {
     const groups = new Map<string, { r: any; n: number }>()
@@ -70,11 +71,16 @@ export function Palette() {
             {ents.isFetching ? 'Searching Smartscape…' : 'No matches. Try a name, an ID, or DQL.'}
           </Command.Empty>
 
-          {(problemId || traceId || entityId || isDql) && (
+          {(problemId || traceId || entityId || isDql || uuid) && (
             <Command.Group heading="Detected">
               {problemId && (
                 <Item value={`detected ${search}`} onSelect={() => go(problemHref(problemId))} icon={<AlertOctagon className="size-4 text-crit" />}>
                   Open problem <b>{problemId}</b>
+                </Item>
+              )}
+              {uuid && (
+                <Item value={`detected ${search}`} onSelect={() => go(`/ai/conversations/${uuid}`)} icon={<MessagesSquare className="size-4 text-accent" />}>
+                  Open AI conversation <span className="font-mono text-xs">{uuid}</span>
                 </Item>
               )}
               {traceId && (
@@ -116,6 +122,9 @@ export function Palette() {
             <Command.Group heading="Search">
               <Item value={`search logs ${search}`} onSelect={() => go(`/logs?${new URLSearchParams({ q: search })}`)} icon={<ScrollText className="size-4" />}>
                 Search logs for “{search}”
+              </Item>
+              <Item value={`search ai conversations ${search}`} onSelect={() => go(`/ai?${new URLSearchParams({ q: search })}`)} icon={<MessagesSquare className="size-4" />}>
+                Search AI conversations for “{search}”
               </Item>
             </Command.Group>
           )}
