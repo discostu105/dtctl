@@ -131,15 +131,16 @@ conventions (`gen_ai.*` spans) plus LLM-as-judge results.
    selects the matching conversations and then aggregates all of their spans, so the counts stay
    complete. The search box is also reachable from ⌘K ("Search AI conversations for …"), and pasting a
    conversation UUID opens it directly.
-2. **"Why did this run go wrong?"** The *conversation replay* tells the run as a story. It starts
-   with the user's prompt. Then each LLM call shows its model, latency, TTFT and tokens (cached
-   vs. fresh), with the model's reasoning, its text and the tool calls it requested (name and arguments).
-   Each tool execution follows the call that asked for it, with its outcome. The story ends with the final answer.
-   A *context per call* chart shows how the context grows with each call, which is where cost and latency come
-   from; click a bar to jump to that step. Any step opens in a maximizable panel: the
-   full message exchange for LLM calls, all attributes for tools. Every trace that contains GenAI
-   spans shows an "✦ N LLM calls · replay conversation →" summary, and its LLM spans open the same
-   message view. Wrapper spans that carry no model and no tokens are left out.
+2. **"Why did this run go wrong?"** The *conversation replay* puts the outcome first: what the user
+   *asked* and the *final answer*. The answer is taken from a finishing tool's argument such as
+   `complete_run.summary` when there is one, otherwise from the last message. A *run timeline* (a Gantt
+   with an LLM lane and a tool lane) shows where the time went, with an LLM-vs-tools breakdown, the token totals
+   and a sparkline of the context size. Below that, *How it got there* numbers the turns. Each turn is one LLM call
+   (model, latency, tokens), with its collapsible reasoning, its message, and the tool calls it
+   requested, each *paired with its execution* (args rendered readably, duration, failure).
+   Consecutive bookkeeping calls such as `todo_create ×6` collapse into one row. Every LLM call and tool opens in a
+   maximizable panel. HTTP and proxy child spans that only share the conversation ID are left out.
+   Every trace that contains GenAI spans shows an "✦ N LLM calls · replay conversation →" summary.
 3. **"Is it fast, reliable and affordable?"** The headline numbers (calls, tokens, cache-hit rate, TTFT, tool
    failure rate, eval pass rate) and the charts stay on top. Each table drills into the next step:
    a *model* opens its LLM calls, an *agent* opens its conversations, and a *tool* opens its executions
