@@ -2,8 +2,10 @@ import { useQuery } from '@tanstack/react-query'
 import { ExternalLink, FileText, LayoutDashboard, Lock, NotebookPen } from 'lucide-react'
 import { useState } from 'react'
 import { DataTable } from '../components/DataTable'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
-import { ErrorBox, Segmented, TimeAgo, Tip } from '../components/ui'
+import { PageHeader, Panel } from '../components/Panel'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import type { Facet } from '../lib/facets'
+import { Empty, ErrorBox, Segmented, TimeAgo, Tip } from '../components/ui'
 import { getJSON, useMeta } from '../lib/api'
 import { dtLinks } from '../lib/links'
 import { useTitle } from '../lib/store'
@@ -18,16 +20,20 @@ interface Doc {
   lastOpened?: string
 }
 
+const opened = (d: Doc) => !!d.lastOpened && !d.lastOpened.startsWith('0001')
+const DOC_FACETS: Facet<Doc>[] = [
+  { key: 'opened', label: 'Opened by you', value: (d) => (opened(d) ? 'Yes' : 'Never'), order: ['Yes', 'Never'] },
+  { key: 'visibility', label: 'Visibility', value: (d) => (d.isPrivate ? 'Private' : 'Shared'), order: ['Shared', 'Private'] },
+]
+
 export default function Documents() {
   useTitle('Documents')
   const [type, setType] = useState<'dashboard' | 'notebook'>('dashboard')
-  const [filter, setFilter] = useState('')
   const { data: meta } = useMeta()
   const res = useQuery({ queryKey: ['docs', type], queryFn: () => getJSON<Doc[]>(`/api/documents?type=${type}`), staleTime: 60_000 })
   // warm the other tab
   useQuery({ queryKey: ['docs', type === 'dashboard' ? 'notebook' : 'dashboard'], queryFn: () => getJSON<Doc[]>(`/api/documents?type=${type === 'dashboard' ? 'notebook' : 'dashboard'}`), staleTime: 60_000 })
-  const f = filter.toLowerCase()
-  const rows = res.data?.filter((d) => !f || d.name.toLowerCase().includes(f))
+  const fc = useFacets(res.data, DOC_FACETS, { text: (d) => d.name })
   const href = (d: Doc) => (meta ? dtLinks.document(meta.environment, d.type, d.id) : '#')
 
   return (
@@ -46,18 +52,20 @@ export default function Documents() {
                 { value: 'notebook', label: 'Notebooks' },
               ]}
             />
-            <FilterInput value={filter} onChange={setFilter} placeholder={`Filter ${type}s…`} className="w-64" />
+            <FacetSearch fc={fc} placeholder={`Filter ${type}s…`} className="w-72" />
           </>
         }
       />
-      <Panel className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={`${rows?.length ?? '…'} ${type}s`}>
+      <Panel className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={`${type}s`} />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
           <DataTable
-            rows={rows}
+            rows={fc.rows}
             loading={res.isLoading}
+            facets={fc}
             rowKey={(d) => d.id}
+            empty={<Empty title={`No ${type}s`} hint={`You have no ${type}s in this environment.`} />}
             onOpen={(d) => window.open(href(d), '_blank', 'noopener')}
             initialSort={{ key: 'modified', dir: 'desc' }}
             className="flex-1"
@@ -86,7 +94,7 @@ export default function Documents() {
                 header: 'You opened',
                 width: '110px',
                 align: 'right',
-                render: (d) => (d.lastOpened && !d.lastOpened.startsWith('0001') ? <TimeAgo value={d.lastOpened} className="text-ink-3" /> : <span className="text-ink-4">never</span>),
+                render: (d) => (opened(d) ? <TimeAgo value={d.lastOpened} className="text-ink-3" /> : <span className="text-ink-4">never</span>),
                 sort: (d) => d.lastOpened ?? '',
               },
               { key: 'open', header: '', width: '28px', render: () => <ExternalLink className="size-3.5 text-ink-4" /> },

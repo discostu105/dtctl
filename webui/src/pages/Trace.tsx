@@ -1,16 +1,19 @@
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { BackLink } from '../components/BackLink'
+import { DetailHeader, IdCopy, OpenInDynatrace } from '../components/DetailHeader'
 import clsx from 'clsx'
 import {
   AlertTriangle,
-  ArrowLeft,
+  Bot,
   ChevronDown,
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
-  ExternalLink,
   Route,
   Search,
+  Sparkles,
   Waypoints,
+  Wrench,
   X,
   ZoomIn,
   ZoomOut,
@@ -26,8 +29,8 @@ import { Badge, CopyButton, Empty, ErrorBox, Kbd, Skeleton, TimeAgo, Tip } from 
 import { fmtTokens } from '../lib/ai'
 import { num, useDql, useMeta, type Rec } from '../lib/api'
 import { q } from '../lib/dql'
-import { fmtCompact, fmtInt, fmtMs } from '../lib/format'
-import { dtLinks } from '../lib/links'
+import { fmtCompact, fmtInt, fmtMs, fmtPct } from '../lib/format'
+import { dtLinks, convHref, traceHref } from '../lib/links'
 import { hitScanLimit } from '../lib/sampling'
 import { pushRecent, useTitle } from '../lib/store'
 import { useTimeframe } from '../lib/timeframe'
@@ -155,7 +158,7 @@ export function Trace({ id }: { id: string }) {
   const title = root ? String(root.rec['endpoint.name'] ?? root.name) : 'Trace'
   useTitle(root ? `Trace · ${title}` : 'Trace')
   useEffect(() => {
-    if (root) pushRecent({ href: `/traces/${id}`, label: title, kind: 'Trace' })
+    if (root) pushRecent({ href: traceHref(id, root.rec.start_time), label: title, kind: 'Trace' })
   }, [root, id, title])
 
   const ai = useMemo(() => {
@@ -179,9 +182,7 @@ export function Trace({ id }: { id: string }) {
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col p-5">
-        <Link href="/traces" className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
-          <ArrowLeft className="size-3.5" /> Traces
-        </Link>
+        <BackLink fallback="/traces" label="Traces" />
         {res.error || loc.error ? (
           <ErrorBox error={res.error ?? loc.error} />
         ) : locating || res.isLoading ? (
@@ -204,21 +205,18 @@ export function Trace({ id }: { id: string }) {
           />
         ) : (
           <>
-            {/* ── header ── */}
-            <div className="mb-3 flex flex-wrap items-start gap-4">
-              <div className={clsx('flex size-10 items-center justify-center rounded-xl', m.failed ? 'bg-crit-wash text-crit' : 'bg-accent-wash text-accent-ink')}>
-                <Waypoints className="size-5" />
-              </div>
-              <div className="min-w-0 flex-1">
-                <h1 className="truncate text-xl font-semibold tracking-tight" title={title}>
-                  {title}
-                </h1>
-                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
+            <DetailHeader
+              icon={<Waypoints />}
+              tone={m.failed ? 'crit' : 'accent'}
+              title={<span title={title}>{title}</span>}
+              meta={
+                <>
+                  <IdCopy id={id} label="trace ID" />
                   <span className="tnum font-medium text-ink">{fmtMs(total)}</span>
                   <span>
                     {fmtInt(m.nodes.length)} spans{truncated && <span className="text-warn"> (first {fmtInt(TRACE_LIMIT)})</span>}
                   </span>
-                  <span>{m.services.length === 1 ? '1 service' : `${m.services.length} services`}</span>
+                  <span>{m.services.length === 1 ? '1 service' : `${fmtInt(m.services.length)} services`}</span>
                   <span>depth {m.maxDepth + 1}</span>
                   {m.failed > 0 && (
                     <button type="button" onClick={() => step(errors, 1)} className="inline-flex items-center gap-1 text-crit hover:underline">
@@ -226,33 +224,20 @@ export function Trace({ id }: { id: string }) {
                     </button>
                   )}
                   <TimeAgo value={root.rec.start_time} />
-                  <span className="inline-flex items-center gap-1 font-mono text-xs">
-                    {id}
-                    <CopyButton value={id} label="trace ID" />
-                  </span>
                   {ai.llm + ai.tools > 0 && (
-                    <span className="inline-flex items-center gap-2 rounded-md bg-[var(--s7)]/10 px-2 py-0.5 text-xs text-[var(--s7)]">
-                      ✦ {ai.llm} LLM calls · ⚙ {ai.tools} tool calls · {fmtTokens(ai.tokens)} tokens
+                    <span className="inline-flex items-center gap-2 rounded-md bg-[var(--genai-llm)]/10 px-2 py-0.5 text-xs text-[var(--genai-llm)]">
+                      <Sparkles className="size-3" /> {fmtInt(ai.llm)} LLM calls · <Wrench className="size-3" /> {fmtInt(ai.tools)} tool calls · {fmtTokens(ai.tokens)} tokens
                       {ai.convs.slice(0, 2).map((c) => (
-                        <Link key={c} href={`/ai/conversations/${c}?t=${encodeURIComponent(String(root.rec.start_time))}`} className="font-medium underline-offset-2 hover:underline">
+                        <Link key={c} href={convHref(c, root.rec.start_time)} className="font-medium underline-offset-2 hover:underline">
                           replay conversation →
                         </Link>
                       ))}
                     </span>
                   )}
-                </div>
-              </div>
-              {meta?.environment && (
-                <a
-                  href={dtLinks.trace(meta.environment, id)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink"
-                >
-                  Open in Dynatrace <ExternalLink className="size-3.5" />
-                </a>
-              )}
-            </div>
+                </>
+              }
+              actions={<OpenInDynatrace href={meta?.environment && dtLinks.trace(meta.environment, id)} />}
+            />
             <ServiceBreakdown m={m} ids={serviceIds} onPick={(s) => setQuery(s)} />
 
             {/* ── main ── */}
@@ -361,7 +346,7 @@ function ServiceBreakdown({ m, ids, onPick }: { m: TraceModel; ids: Map<string, 
             <i className="inline-block size-2 rounded-[2px]" style={{ background: s.color }} />
             {ids.get(s.name) ? <EntityLink id={ids.get(s.name)!} name={s.name} type="SERVICE" /> : s.name}
             <button type="button" onClick={() => onPick(s.name)} className="tnum text-ink-3 hover:text-accent-ink" title="Highlight this service's spans">
-              {m.services.length > 1 ? `${((100 * s.self) / total).toFixed(0)}% · ` : ''}
+              {m.services.length > 1 ? `${fmtPct((100 * s.self) / total, 0)} · ` : ''}
               {fmtCompact(s.spans)} spans
             </button>
             {s.errors > 0 && <span className="text-crit">· {s.errors} failed</span>}
@@ -604,6 +589,8 @@ function Waterfall({
   keys: { nextMatch: () => void; prevMatch: () => void; nextError: () => void; toggleCrit: () => void; resetZoom: () => void }
 }) {
   const scroller = useRef<HTMLDivElement>(null)
+  // the waterfall is the page's list: keys work without clicking it first
+  useEffect(() => scroller.current?.focus({ preventScroll: true }), [])
   const [nameW, setNameW] = useState(() => {
     try {
       return Number(localStorage.getItem(NAME_W_KEY)) || 420
@@ -664,8 +651,8 @@ function Waterfall({
     else if (e.key === 'c') keys.toggleCrit()
     else if (e.key === 'z' && n) onZoom(n)
     else if (e.key === '0') keys.resetZoom()
-    else if (e.key === 'g') go(0)
-    else if (e.key === 'G') go(rows.length - 1)
+    else if (e.key === 'Home') go(0)
+    else if (e.key === 'End') go(rows.length - 1)
   }
 
   const ql = query.trim().toLowerCase()
@@ -774,7 +761,7 @@ function Waterfall({
                   {isCol && (
                     <span className="ml-auto flex shrink-0 items-center gap-1 pl-1 text-2xs">
                       <span className="tnum rounded bg-line px-1 text-ink-3">+{fmtCompact(n.desc)}</span>
-                      {n.errorsBelow > 0 && <span className="tnum rounded bg-crit-wash px-1 text-crit">{n.errorsBelow} ⚠</span>}
+                      {n.errorsBelow > 0 && <span className="tnum rounded bg-crit-wash px-1 text-crit">{n.errorsBelow} failed</span>}
                     </span>
                   )}
                 </div>
@@ -850,12 +837,18 @@ function GenAiBadge({ r }: { r: Rec }) {
   if (!op) return null
   if (op === 'chat')
     return (
-      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[var(--s7)]/15 px-1 text-2xs text-[var(--s7)]">
-        ✦ LLM {fmtTokens(num(r['gen_ai.usage.input_tokens']))}→{fmtTokens(num(r['gen_ai.usage.output_tokens']))}
+      <span className="inline-flex shrink-0 items-center gap-1 rounded bg-[var(--genai-llm)]/15 px-1 text-2xs text-[var(--genai-llm)]">
+        <Sparkles className="size-2.5" /> LLM {fmtTokens(num(r['gen_ai.usage.input_tokens']))}→{fmtTokens(num(r['gen_ai.usage.output_tokens']))}
       </span>
     )
-  if (op === 'execute_tool') return <span className="shrink-0 rounded bg-[var(--s3)]/15 px-1 text-2xs text-[var(--s3)]">⚙ {r['gen_ai.tool.name'] ?? 'tool'}</span>
-  if (op === 'invoke_agent') return <span className="shrink-0 rounded bg-accent-wash px-1 text-2xs text-accent-ink">◈ {r['gen_ai.agent.name'] ?? 'agent'}</span>
+  if (op === 'execute_tool') return <span className="shrink-0 rounded bg-[var(--genai-tool)]/15 px-1 text-2xs text-[var(--genai-tool)]">
+        <Wrench className="mr-0.5 inline size-2.5" />
+        {r['gen_ai.tool.name'] ?? 'tool'}
+      </span>
+  if (op === 'invoke_agent') return <span className="shrink-0 rounded bg-accent-wash px-1 text-2xs text-accent-ink">
+        <Bot className="mr-0.5 inline size-2.5" />
+        {r['gen_ai.agent.name'] ?? 'agent'}
+      </span>
   return <span className="shrink-0 rounded bg-line px-1 text-2xs text-ink-3">{op}</span>
 }
 
@@ -1041,7 +1034,7 @@ function Summary({ m, onPick }: { m: TraceModel; onPick: (op: OpStat) => void })
             <span className="block h-full rounded-full" style={{ width: `${(100 * o.self) / totalSelf}%`, background: serviceColor(o.svc) }} />
           </span>
           <span className="w-16">{fmtMs(o.self)}</span>
-          <span className="w-10 text-ink-3">{((100 * o.self) / totalSelf).toFixed(1)}%</span>
+          <span className="w-10 text-ink-3">{fmtPct((100 * o.self) / totalSelf)}</span>
         </span>
       ),
       sort: (o) => o.self,
@@ -1157,9 +1150,9 @@ function SpanPanel({
         </div>
         <div className="grid grid-cols-4 gap-2 text-xs">
           <Fact label="Duration" value={fmtMs(n.dur)} />
-          <Fact label="Self time" value={fmtMs(n.self)} hint={n.children.length ? `${((100 * n.self) / (n.dur || 1)).toFixed(0)}% of span` : 'no children'} />
+          <Fact label="Self time" value={fmtMs(n.self)} hint={n.children.length ? `${fmtPct((100 * n.self) / (n.dur || 1), 0)} of span` : 'no children'} />
           <Fact label="Starts at" value={`+${fmtMs(n.start - m.t0)}`} />
-          <Fact label="Of trace" value={`${((100 * n.dur) / total).toFixed(1)}%`} hint={n.critical ? 'on critical path' : undefined} />
+          <Fact label="Of trace" value={fmtPct((100 * n.dur) / total)} hint={n.critical ? 'on critical path' : undefined} />
         </div>
         <div className="mt-2.5 flex flex-wrap items-center gap-2 text-xs">
           <span className="inline-flex items-center gap-1.5">

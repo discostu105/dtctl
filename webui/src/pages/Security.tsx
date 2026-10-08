@@ -6,7 +6,7 @@ import { DataTable, type Column } from '../components/DataTable'
 import { Markdown } from '../components/Markdown'
 import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
-import { SidePanel } from '../components/signals'
+import { RiskBadge, SidePanel } from '../components/signals'
 import { Badge, Empty, ErrorBox, Facts, Segmented, SkeletonRows, TimeAgo } from '../components/ui'
 import { arr, num, useDql, type Rec } from '../lib/api'
 import { q } from '../lib/dql'
@@ -16,7 +16,6 @@ import { vulnsSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
 import { useTimeframe } from '../lib/timeframe'
 import { EntityChip } from '../components/Entity'
-import { RiskBadge } from './Pulse'
 
 const LEVELS = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NONE']
 const EXPOSURE: Record<string, string> = { PUBLIC_NETWORK: 'Public network', ADJACENT_NETWORK: 'Adjacent network', NOT_DETECTED: 'Not detected', NOT_AVAILABLE: 'Not available' }
@@ -136,6 +135,7 @@ export default function Security() {
               loading={res.isLoading}
               columns={cols}
               facets={fc}
+            empty={<Empty title="No vulnerabilities" hint="Nothing matches this lens." />}
               rowKey={(r) => r['vulnerability.id']}
               onOpen={select}
               selectedKey={selId}
@@ -171,11 +171,10 @@ function VulnPanel({ v, onClose }: { v: Rec; onClose: () => void }) {
         </span>
       }
       onClose={onClose}
-      width="w-[min(600px,46vw)]"
       actions={
         v.url ? (
           <a href={v.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
-            Dynatrace <ExternalLink className="size-3" />
+            Open in Dynatrace <ExternalLink className="size-3" />
           </a>
         ) : null
       }
@@ -196,7 +195,9 @@ function VulnPanel({ v, onClose }: { v: Rec; onClose: () => void }) {
         ]}
       />
       <div className="mb-2 text-2xs font-medium tracking-wide text-ink-3 uppercase">Affected entities</div>
-      {ents.isLoading ? (
+      {ents.error ? (
+        <ErrorBox error={ents.error} />
+      ) : ents.isLoading ? (
         <SkeletonRows rows={2} />
       ) : !ents.data?.records.length ? (
         <Empty title="No entity details" className="py-4" />

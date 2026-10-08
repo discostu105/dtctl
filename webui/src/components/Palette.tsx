@@ -7,7 +7,7 @@ import { useDql, useMeta } from '../lib/api'
 import { switchTenant } from './TenantSwitcher'
 import { searchEntitiesQuery, typeOfId } from '../lib/dql'
 import { shortType } from '../lib/format'
-import { entityHref, problemHref, traceHref } from '../lib/links'
+import { entityHref, problemHref, traceHref, convHref } from '../lib/links'
 import { paletteStore, recentStore, toggleTheme, useStore } from '../lib/store'
 import { parseRel, PRESETS, setTimeframe } from '../lib/timeframe'
 import { NAV } from './Shell'
@@ -82,7 +82,7 @@ export function Palette() {
                 </Item>
               )}
               {uuid && (
-                <Item value={`detected ${search}`} onSelect={() => go(`/ai/conversations/${uuid}`)} icon={<MessagesSquare className="size-4 text-accent" />}>
+                <Item value={`detected ${search}`} onSelect={() => go(convHref(uuid))} icon={<MessagesSquare className="size-4 text-accent" />}>
                   Open AI conversation <span className="font-mono text-xs">{uuid}</span>
                 </Item>
               )}

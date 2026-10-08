@@ -1,11 +1,14 @@
 import clsx from 'clsx'
-import { ArrowLeft, Network } from 'lucide-react'
+import { BackLink } from '../components/BackLink'
+import { Network } from 'lucide-react'
 import { useMemo, useState } from 'react'
-import { Link, useLocation, useSearch } from 'wouter'
+import { Link, useSearch } from 'wouter'
 import { DataTable } from '../components/DataTable'
 import { EntityLink, TypeIcon } from '../components/Entity'
 import { FilterInput, PageHeader, Panel } from '../components/Panel'
-import { ErrorBox, Skeleton, TimeAgo } from '../components/ui'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import type { Facet } from '../lib/facets'
+import { Empty, ErrorBox, Skeleton, TimeAgo } from '../components/ui'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
 import { censusQuery, instancesQuery } from '../lib/dql'
 import { fmtInt, shortType } from '../lib/format'
@@ -48,8 +51,8 @@ function Census() {
       <PageHeader
         title="Smartscape"
         icon={<Network className="size-5" />}
-        sub={res.data ? `${fmtInt(total)} entities across ${res.data.records.length} types` : 'Every entity Dynatrace knows about'}
-        actions={<FilterInput value={filter} onChange={setFilter} placeholder="Filter types…" className="w-64" />}
+        sub={res.data ? `${fmtInt(total)} entities across ${fmtInt(res.data.records.length)} types` : 'Every entity Dynatrace knows about'}
+        actions={<FilterInput value={filter} onChange={setFilter} placeholder="Filter types…" className="w-72" />}
       />
       {res.error && <ErrorBox error={res.error} />}
       {res.isLoading && (
@@ -58,6 +61,9 @@ function Census() {
             <Skeleton key={i} className="h-16" />
           ))}
         </div>
+      )}
+      {res.data && !groups.length && (
+        <Empty title={filter ? 'No type matches' : 'No entities'} hint={filter ? `Nothing matches “${filter}”.` : 'Smartscape returned no entity types.'} />
       )}
       {groups.map((g) => (
         <section key={g.label} className="mb-6">
@@ -87,42 +93,46 @@ function Census() {
   )
 }
 
+const INSTANCE_FACETS: Facet<Rec>[] = [
+  { key: 'ns', label: 'Namespace', value: (r) => r['k8s.namespace.name'], aliases: ['namespace'] },
+  { key: 'cluster', label: 'Cluster', value: (r) => r['k8s.cluster.name'] },
+  { key: 'region', label: 'Region', value: (r) => r['aws.region'] },
+  { key: 'account', label: 'AWS account', value: (r) => r['aws.account.id'] },
+]
+
 function Instances({ type }: { type: string }) {
   useTitle(shortType(type))
   const spec = { query: instancesQuery(type), ttl: 120 }
   const res = useDql(spec)
-  const [filter, setFilter] = useState('')
-  const [, navigate] = useLocation()
-  const f = filter.toLowerCase()
-  const rows = useMemo(() => res.data?.records.filter((r) => !f || `${r.name} ${r.id} ${r['k8s.namespace.name'] ?? ''}`.toLowerCase().includes(f)), [res.data, f])
-  const hasNs = rows?.some((r) => r['k8s.namespace.name'])
-  const hasRegion = rows?.some((r) => r['aws.region'])
+  const fc = useFacets(res.data?.records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id}` })
+  const hasNs = res.data?.records.some((r) => r['k8s.namespace.name'])
+  const hasRegion = res.data?.records.some((r) => r['aws.region'])
   return (
     <div className="flex h-full flex-col p-5">
-      <button type="button" onClick={() => navigate('/smartscape')} className="mb-3 inline-flex items-center gap-1 self-start text-xs text-ink-3 hover:text-ink-2">
-        <ArrowLeft className="size-3.5" /> All types
-      </button>
+      <BackLink fallback="/smartscape" label="All types" />
       <PageHeader
         title={shortType(type)}
         icon={<TypeIcon type={type} className="size-5" />}
         sub={<span className="font-mono text-xs">{type}</span>}
-        actions={<FilterInput value={filter} onChange={setFilter} placeholder="Filter by name or ID…" className="w-72" />}
+        actions={<FacetSearch fc={fc} placeholder="Filter by name or ID…" className="w-72" />}
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={`${rows?.length ?? '…'} entities`}>
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="entities" />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
           <DataTable
-            rows={rows}
+            rows={fc.rows}
             loading={res.isLoading}
+            facets={fc}
             rowKey={(r: Rec) => r.id}
+            empty={<Empty title="No entities" hint="Smartscape has no entities of this type." />}
             href={(r) => entityHref(r.id, r.name)}
             className="flex-1"
             autoFocus
             columns={[
               { key: 'name', header: 'Name', width: 'minmax(260px,2fr)', render: (r) => <EntityLink id={r.id} name={r.name} type={type} />, sort: (r) => String(r.name).toLowerCase() },
-              ...(hasNs ? [{ key: 'ns', header: 'Namespace', width: 'minmax(120px,1fr)', render: (r: Rec) => <span className="text-ink-2">{r['k8s.namespace.name']}</span>, sort: (r: Rec) => r['k8s.namespace.name'] }] : []),
-              ...(hasRegion ? [{ key: 'region', header: 'Region', width: '120px', render: (r: Rec) => <span className="text-ink-2">{r['aws.region']}</span>, sort: (r: Rec) => r['aws.region'] }] : []),
+              ...(hasNs ? [{ key: 'ns', header: 'Namespace', width: 'minmax(120px,1fr)', facet: 'ns', render: (r: Rec) => <span className="text-ink-2">{r['k8s.namespace.name']}</span>, sort: (r: Rec) => r['k8s.namespace.name'] }] : []),
+              ...(hasRegion ? [{ key: 'region', header: 'Region', width: '120px', facet: 'region', render: (r: Rec) => <span className="text-ink-2">{r['aws.region']}</span>, sort: (r: Rec) => r['aws.region'] }] : []),
               { key: 'id', header: 'ID', width: '220px', render: (r) => <span className={clsx('font-mono text-xs text-ink-3')}>{r.id}</span> },
               { key: 'seen', header: 'Last seen', width: '100px', align: 'right', render: (r) => <TimeAgo value={r.lifetime?.end} className="text-ink-3" />, sort: (r) => r.lifetime?.end },
             ]}

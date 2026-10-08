@@ -1,5 +1,8 @@
 import clsx from 'clsx'
-import { AlertTriangle, ArrowLeft, Bot, Brain, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, MessagesSquare, User, Wrench, XCircle } from 'lucide-react'
+import { Legend } from '../components/Chart'
+import { BackLink, DetailFallback } from '../components/BackLink'
+import { DetailHeader, IdCopy } from '../components/DetailHeader'
+import { AlertTriangle, Bot, Brain, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, MessagesSquare, User, Wrench, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useSearch } from 'wouter'
 import { parseMessages } from '../components/Conversation'
@@ -7,13 +10,13 @@ import { EntityLink } from '../components/Entity'
 import { Markdown } from '../components/Markdown'
 import { QueryInfo } from '../components/Panel'
 import { Spark } from '../components/Spark'
-import { Badge, CopyButton, Empty, ErrorBox, Skeleton, Tip } from '../components/ui'
+import { Badge, TimeAgo, Empty, ErrorBox, Skeleton, Tip } from '../components/ui'
 import { num, useDql, type Rec } from '../lib/api'
-import { conversationPromptQuery, conversationStepsQuery, fmtTokens } from '../lib/ai'
-import { fmtDateTime, fmtMs, fmtPct } from '../lib/format'
-import { traceHref } from '../lib/links'
+import { conversationPromptQuery, conversationStepsQuery, fmtTokens, promptHeadline } from '../lib/ai'
+import { fmtDateTime, fmtMs, fmtNs, fmtPct, fmtSec } from '../lib/format'
+import { traceHref, convHref } from '../lib/links'
 import { pushRecent, useTitle } from '../lib/store'
-import { LlmCallPanel, secs } from './Ai'
+import { LlmCallPanel } from './Ai'
 import { argsText, ToolCallPanel, type ToolUse } from '../components/ToolCallPanel'
 
 // ── model ─────────────────────────────────────────────────────────────────
@@ -150,11 +153,13 @@ export default function AiConversation({ id }: { id: string }) {
   const agents = [...new Set(steps.map((s) => s.agent).filter(Boolean))]
   const models = [...new Set(llm.map((s) => s.model).filter(Boolean))]
   const services = [...new Map(steps.filter((s) => s.service_id).map((s) => [s.service_id, s.service])).entries()]
-  const firstLine = prompt.split('\n').find((l) => l.trim()) ?? ''
+  // the headline: a payload's title when the prompt is "instruction + JSON", else its first line
+  const { headline } = promptHeadline(prompt.replace(/\s+/g, ' ').trim())
+  const firstLine = headline.length < 200 ? headline : (prompt.split('\n').find((l) => l.trim()) ?? '')
 
   useTitle(firstLine ? `Conversation · ${firstLine.slice(0, 60)}` : 'Conversation')
   useEffect(() => {
-    if (steps.length) pushRecent({ href: `/ai/conversations/${id}`, label: firstLine.slice(0, 80) || id, kind: 'Conversation' })
+    if (steps.length) pushRecent({ href: convHref(id), label: firstLine.slice(0, 80) || id, kind: 'Conversation' })
   }, [steps.length, id, firstLine])
 
   const jump = (n: number) => {
@@ -162,7 +167,12 @@ export default function AiConversation({ id }: { id: string }) {
     document.getElementById(`turn-${n}`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
 
-  if (res.error) return <ErrorBox error={res.error} />
+  if (res.error)
+    return (
+      <DetailFallback fallback="/ai" label="AI">
+        <ErrorBox error={res.error} />
+      </DetailFallback>
+    )
   if (res.isLoading)
     return (
       <div className="p-5">
@@ -171,51 +181,53 @@ export default function AiConversation({ id }: { id: string }) {
         <Skeleton className="h-96" />
       </div>
     )
-  if (!steps.length) return <Empty icon={<MessagesSquare className="size-5" />} title="Conversation not found" hint="No GenAI spans with this conversation ID in the last 7 days." />
+  if (!steps.length)
+    return (
+      <DetailFallback fallback="/ai" label="AI">
+        <Empty icon={<MessagesSquare className="size-5" />} title="Conversation not found" hint="No GenAI spans with this conversation ID in the last 7 days." />
+      </DetailFallback>
+    )
 
   return (
     <div className="flex h-full">
       <div className="min-w-0 flex-1 overflow-auto p-5">
-        <Link href="/ai" className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
-          <ArrowLeft className="size-3.5" /> AI
-        </Link>
+        <BackLink fallback="/ai" label="AI" />
 
-        {/* header */}
-        <div className="mb-4 flex flex-wrap items-start gap-4">
-          <div className={clsx('flex size-10 items-center justify-center rounded-xl', failedTools.length ? 'bg-warn-wash text-warn' : 'bg-accent-wash text-accent-ink')}>
-            <MessagesSquare className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="line-clamp-2 text-xl font-semibold tracking-tight">{firstLine || 'Conversation'}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
-              <span>{fmtDateTime(t0)}</span>
-              {agents.map((a) => (
-                <Badge key={a} tone="accent">
-                  <Bot className="size-3" /> {a}
-                </Badge>
-              ))}
+        <DetailHeader
+          icon={<MessagesSquare />}
+          tone={failedTools.length ? 'crit' : 'accent'}
+          title={firstLine || 'Conversation'}
+          badges={agents.map((a) => (
+            <Badge key={a} tone="accent">
+              <Bot className="size-3" /> {a}
+            </Badge>
+          ))}
+          meta={
+            <>
+              <IdCopy id={id} label="conversation ID" />
+              <span>
+                started {fmtDateTime(t0)} (<TimeAgo value={t0} />)
+              </span>
               {services.map(([sid, name]) => (
                 <EntityLink key={sid} id={sid} name={name} type="SERVICE" />
               ))}
               <span className="font-mono text-xs">{models.join(', ')}</span>
-              <span className="inline-flex items-center gap-1 font-mono text-2xs text-ink-4">
-                {id}
-                <CopyButton value={id} label="conversation ID" />
-              </span>
-            </div>
-          </div>
-          <div className="flex flex-wrap gap-1.5">
-            {traces.slice(0, 3).map((tr, i) => (
-              <Link key={tr} href={traceHref(tr, steps.find((x) => x['trace.id'] === tr)?.start_time)} className="inline-flex h-8 items-center rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink">
-                {traces.length > 1 ? `Trace ${i + 1}` : 'Open trace'} →
-              </Link>
-            ))}
-          </div>
-        </div>
+            </>
+          }
+          actions={traces.slice(0, 3).map((tr, i) => (
+            <Link
+              key={tr}
+              href={traceHref(tr, steps.find((x) => x['trace.id'] === tr)?.start_time)}
+              className="inline-flex h-8 items-center rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink"
+            >
+              {traces.length > 1 ? `Trace ${i + 1}` : 'Open trace'} →
+            </Link>
+          ))}
+        />
 
         {/* outcome first: what was asked, what came back */}
         <div className="mb-4 grid grid-cols-2 gap-3 max-xl:grid-cols-1">
-          <Card icon={<User className="size-4 text-[var(--s1)]" />} title="Asked">
+          <Card icon={<User className="size-4 text-[var(--genai-user)]" />} title="Asked">
             {prompt ? <Clamp text={prompt} lines={8} /> : <span className="text-sm text-ink-4">No user prompt captured.</span>}
           </Card>
           <Card
@@ -235,9 +247,13 @@ export default function AiConversation({ id }: { id: string }) {
         <div className="mb-4 rounded-xl border border-line bg-panel p-3">
           <div className="mb-2 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-ink-3">
             <span className="text-sm font-medium text-ink">Run timeline</span>
-            <Legend color="bg-[var(--s7)]" label={`thinking (LLM) ${fmtMs(llmMs)} · ${fmtPct((100 * llmMs) / total, 0)}`} />
-            <Legend color="bg-[var(--s3)]" label={`tools ${fmtMs(toolMs)} · ${fmtPct((100 * toolMs) / total, 0)}`} />
-            {failedTools.length > 0 && <Legend color="bg-crit" label={`${failedTools.length} failed tool call${failedTools.length === 1 ? '' : 's'}`} />}
+            <Legend
+              items={[
+                { label: `LLM ${fmtMs(llmMs)} · ${fmtPct((100 * llmMs) / total, 0)}`, color: '--genai-llm' },
+                { label: `Tool calls ${fmtMs(toolMs)} · ${fmtPct((100 * toolMs) / total, 0)}`, color: '--genai-tool' },
+                ...(failedTools.length ? [{ label: `${failedTools.length} failed tool call${failedTools.length === 1 ? '' : 's'}`, color: '--crit' }] : []),
+              ]}
+            />
             <span className="ml-auto flex items-center gap-4">
               <span className="tnum">
                 {fmtTokens(inTok)} in · {inTok ? fmtPct((100 * cached) / inTok, 0) : '—'} cached · {fmtTokens(outTok)} out
@@ -245,7 +261,7 @@ export default function AiConversation({ id }: { id: string }) {
               {llm.length > 1 && (
                 <Tip content="Input tokens per turn: the context the model re-reads each time">
                   <span className="flex items-center gap-1.5">
-                    context <Spark values={llm.map((s) => num(s.input))} width={90} height={18} color="var(--s7)" />
+                    context <Spark values={llm.map((s) => num(s.input))} width={90} height={18} color="var(--genai-llm)" />
                     {fmtTokens(num(llm[0].input))} → {fmtTokens(num(llm[llm.length - 1].input))}
                   </span>
                 </Tip>
@@ -307,14 +323,6 @@ function Card({ icon, title, children }: { icon: ReactNode; title: ReactNode; ch
   )
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <i className={clsx('inline-block h-2 w-3 rounded-[2px]', color)} />
-      {label}
-    </span>
-  )
-}
 
 function Clamp({ text, lines, markdown }: { text: string; lines: number; markdown?: boolean }) {
   const [open, setOpen] = useState(false)
@@ -351,7 +359,7 @@ function Gantt({ turns, setup, t0, total, focus, onPick }: { turns: Turn[]; setu
             key={tr.n}
             onClick={() => onPick(tr.n)}
             onMouseMove={(e) => show(e, `Turn ${tr.n} · ${tr.call.model} · ${fmtMs(tr.end - tr.start)}`)}
-            className={clsx('absolute top-0.5 bottom-0.5 rounded-[3px] bg-[var(--s7)] hover:brightness-125', focus === tr.n && 'ring-2 ring-accent ring-offset-1 ring-offset-panel')}
+            className={clsx('absolute top-0.5 bottom-0.5 rounded-[3px] bg-[var(--genai-llm)] hover:brightness-125', focus === tr.n && 'ring-2 ring-accent ring-offset-1 ring-offset-panel')}
             style={pos(tr.start, tr.end - tr.start)}
           />
         ))}
@@ -364,8 +372,8 @@ function Gantt({ turns, setup, t0, total, focus, onPick }: { turns: Turn[]; setu
               type="button"
               key={x['span.id']}
               onClick={() => turn && onPick(turn.n)}
-              onMouseMove={(e) => show(e, `${String(x['span.name'] ?? x.tool).replace(/^execute_tool\s+/, '')} · ${fmtMs(num(x.duration) / 1e6)}${failed(x) ? ' · failed' : ''}`)}
-              className={clsx('absolute top-0.5 bottom-0.5 rounded-[2px] hover:brightness-125', failed(x) ? 'bg-crit' : 'bg-[var(--s3)]')}
+              onMouseMove={(e) => show(e, `${String(x['span.name'] ?? x.tool).replace(/^execute_tool\s+/, '')} · ${fmtNs(num(x.duration))}${failed(x) ? ' · failed' : ''}`)}
+              className={clsx('absolute top-0.5 bottom-0.5 rounded-[2px] hover:brightness-125', failed(x) ? 'bg-crit' : 'bg-[var(--genai-tool)]')}
               style={pos(t(x.start_time), num(x.duration) / 1e6)}
             />
           )
@@ -395,11 +403,11 @@ function TurnCard({ turn, t0, total, focused, onOpenCall, onOpenTool }: { turn: 
     <div id={`turn-${turn.n}`} className={clsx('scroll-mt-4 rounded-xl border bg-panel transition-colors', focused ? 'border-accent/60' : 'border-line', bad && !focused && 'border-crit/30')}>
       {/* turn header: click for the full message exchange */}
       <button type="button" onClick={onOpenCall} className="flex w-full items-center gap-2 rounded-t-xl px-3 py-2 text-left text-xs hover:bg-panel-hover">
-        <span className={clsx('flex size-6 shrink-0 items-center justify-center rounded-full text-2xs font-semibold', last ? 'bg-accent text-white' : 'bg-[var(--s7)]/15 text-[var(--s7)]')}>{turn.n}</span>
-        <Brain className="size-3.5 text-[var(--s7)]" />
+        <span className={clsx('flex size-6 shrink-0 items-center justify-center rounded-full text-2xs font-semibold', last ? 'bg-accent text-white' : 'bg-[var(--genai-llm)]/15 text-[var(--genai-llm)]')}>{turn.n}</span>
+        <Brain className="size-3.5 text-[var(--genai-llm)]" />
         <span className="font-mono text-ink-2">{c.model}</span>
         <span className="tnum text-ink-3">
-          thought {fmtMs(turn.end - turn.start)} · first token {secs(num(c.ttft))} · {fmtTokens(inTok)} in{inTok ? ` (${fmtPct((100 * num(c.cached)) / inTok, 0)} cached)` : ''} · {fmtTokens(num(c.output))} out
+          thought {fmtMs(turn.end - turn.start)} · first token {fmtSec(num(c.ttft))} · {fmtTokens(inTok)} in{inTok ? ` (${fmtPct((100 * num(c.cached)) / inTok, 0)} cached)` : ''} · {fmtTokens(num(c.output))} out
         </span>
         {failed(c) && (
           <Badge tone="crit">
@@ -461,7 +469,7 @@ function ToolGroup({ uses, onOpen }: { uses: ToolUse[]; onOpen: (u: ToolUse) => 
         <Tip content="Requested by the model; no execution spans were recorded (handled in-process)">
           <CircleDashed className="size-3.5 shrink-0 text-ink-4" />
         </Tip>
-        <Wrench className="size-3 shrink-0 text-[var(--s3)]" />
+        <Wrench className="size-3 shrink-0 text-[var(--genai-tool)]" />
         <span className="shrink-0 font-mono font-medium text-ink">
           {uses[0].name} <span className="text-ink-3">×{uses.length}</span>
         </span>
@@ -499,7 +507,7 @@ function ToolRow({ use, onOpen, compact }: { use: ToolUse; onOpen: () => void; c
       <button type="button" onClick={onOpen} className="inline-flex items-center gap-1.5 rounded-md bg-sunken px-2 py-0.5 font-mono text-2xs text-ink-2 hover:text-ink">
         {icon}
         {use.name}
-        {x && <span className="text-ink-4">{fmtMs(num(x.duration) / 1e6)}</span>}
+        {x && <span className="text-ink-4">{fmtNs(num(x.duration))}</span>}
       </button>
     )
   return (
@@ -509,12 +517,12 @@ function ToolRow({ use, onOpen, compact }: { use: ToolUse; onOpen: () => void; c
       className={clsx('group flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-xs hover:bg-panel-hover', failed(x) && 'bg-crit-wash/50')}
     >
       {icon}
-      <Wrench className="size-3 shrink-0 text-[var(--s3)]" />
+      <Wrench className="size-3 shrink-0 text-[var(--genai-tool)]" />
       <span className="shrink-0 font-mono font-medium text-ink">{use.name}</span>
       <span className="min-w-0 flex-1 truncate font-mono text-ink-3" title={args}>
         {args}
       </span>
-      {x ? <span className="tnum shrink-0 font-mono text-ink-3">{fmtMs(num(x.duration) / 1e6)}</span> : <span className="shrink-0 text-2xs text-ink-4">no span</span>}
+      {x ? <span className="tnum shrink-0 font-mono text-ink-3">{fmtNs(num(x.duration))}</span> : <span className="shrink-0 text-2xs text-ink-4">no span</span>}
     </button>
   )
 }

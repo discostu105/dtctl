@@ -1,17 +1,21 @@
 import clsx from 'clsx'
-import { AlertTriangle, ArrowLeft, Clapperboard, ExternalLink, Laptop, MonitorSmartphone, Smartphone, Tablet, User, X } from 'lucide-react'
+import { BackLink, DetailFallback } from '../components/BackLink'
+import { DetailHeader, IdCopy, OpenInDynatrace } from '../components/DetailHeader'
+import { AlertTriangle, Clapperboard, Laptop, MonitorSmartphone, Smartphone, Tablet, User, X } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearch } from 'wouter'
 import { DataTable, type Column } from '../components/DataTable'
 import { DataTabs } from '../components/DataTabs'
 import { EntityLink } from '../components/Entity'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
+import { PageHeader, Panel } from '../components/Panel'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import type { Facet } from '../lib/facets'
 import { Inspector, SidePanel } from '../components/signals'
 import { Spark } from '../components/Spark'
-import { Badge, CopyButton, Empty, ErrorBox, Segmented, Skeleton, SkeletonRows, TimeAgo, Tip, type Tone } from '../components/ui'
+import { Badge, Empty, ErrorBox, Segmented, Skeleton, SkeletonRows, TimeAgo, Tip, type Tone, When } from '../components/ui'
 import { arr, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
-import { fmtCompact, fmtDateTime, fmtInt, fmtMs, fmtTime } from '../lib/format'
-import { dtLinks, traceHref } from '../lib/links'
+import { fmtCompact, fmtDateTime, fmtInt, fmtMs, fmtNs, fmtTime } from '../lib/format'
+import { dtLinks, traceHref, sessionHref } from '../lib/links'
 import {
   errorGroupsQuery, errorOccurrencesQuery, flag, fmtVital, frontendsQuery, frontendTrafficQuery, pagesQuery, sessionEventsQuery, sessionQuery,
   sessionsQuery, VITAL_LABEL, vitalRating, vitalValue, type SessionLens, type Vital,
@@ -19,7 +23,7 @@ import {
 import { tfSpec } from '../lib/shared'
 import { useNames } from '../lib/names'
 import { pushRecent, useTitle } from '../lib/store'
-import { floorTf, sparkInterval, useTimeframe, type Timeframe } from '../lib/timeframe'
+import { floorTf, sparkInterval, useTimeframe, type Timeframe, tfPhrase } from '../lib/timeframe'
 
 // RUM is sparse compared to backend signals: floor the window at 24h (as
 // dynatui does) so lists are never misleadingly empty, and say so.
@@ -32,7 +36,6 @@ export const sessionsSpec = (tf: Timeframe, realOnly: boolean, frontend: string 
 export const errorGroupsSpec = (tf: Timeframe, realOnly: boolean, frontend?: string | null) => tfSpec(rumTf(tf), errorGroupsQuery({ realOnly, frontend }), { ttl: 30 })
 export const pagesSpec = (tf: Timeframe, realOnly: boolean, frontend?: string | null) => tfSpec(rumTf(tf), pagesQuery({ realOnly, frontend }), { ttl: 60 })
 
-const sessionHref = (id: string) => `/rum/sessions/${encodeURIComponent(id)}`
 
 function useRealOnly() {
   const params = new URLSearchParams(useSearch())
@@ -199,7 +202,7 @@ export default function Experience() {
       <PageHeader
         title="Experience"
         icon={<MonitorSmartphone className="size-5" />}
-        sub={`Real user monitoring · ${tf.label.toLowerCase()}${tf !== raw ? ' (at least 24h: RUM is sparse)' : ''}`}
+        sub={`Real user monitoring · ${tfPhrase(tf, raw)}`}
         actions={
           <Segmented
             value={realOnly ? 'real' : 'all'}
@@ -265,27 +268,37 @@ function DeviceIcon({ type }: { type: unknown }) {
   return <I className="size-3.5 shrink-0 text-ink-3" />
 }
 
+const SESSION_FACETS: Facet<Rec>[] = [
+  { key: 'frontend', label: 'Frontend', value: (r) => arr(r['frontend.name']), aliases: ['app'] },
+  { key: 'user', label: 'User', value: (r) => (r['user.identifier'] ? 'Signed in' : 'Anonymous'), order: ['Signed in', 'Anonymous'] },
+  { key: 'errors', label: 'Errors', value: (r) => (num(r['error.count']) > 0 ? 'With errors' : 'No errors'), order: ['With errors', 'No errors'] },
+  { key: 'browser', label: 'Browser', value: (r) => r['browser.name'] },
+  { key: 'os', label: 'OS', value: (r) => r['os.name'] },
+  { key: 'device', label: 'Device', value: (r) => r['device.type'] },
+  { key: 'country', label: 'Country', value: (r) => r['geo.country.iso_code'], display: (v) => `${flag(v)} ${v}` },
+  { key: 'replay', label: 'Replay', value: (r) => (r['characteristics.has_replay'] ? 'Recorded' : 'None'), order: ['Recorded', 'None'] },
+]
+const ERROR_FACETS: Facet<Rec>[] = [
+  { key: 'frontend', label: 'Frontend', value: (r) => r.app, aliases: ['app'] },
+  { key: 'type', label: 'Type', value: (r) => r.type },
+]
+const PAGE_FACETS: Facet<Rec>[] = [{ key: 'frontend', label: 'Frontend', value: (r) => r.app, aliases: ['app'] }]
+
 export function SessionsView({ tf, realOnly, frontend, height }: { tf: Timeframe; realOnly: boolean; frontend?: string | null; height?: number }) {
   const [lens, setLens] = useState<SessionLens>('all')
-  const [filter, setFilter] = useState('')
   const spec = sessionsSpec(tf, realOnly, frontend, lens)
   const res = useDql(spec)
-  const f = filter.toLowerCase()
-  const rows = useMemo(
-    () => res.data?.records.filter((r) => !f || JSON.stringify([r['user.identifier'], r['frontend.name'], r['geo.city.name'], r['browser.name'], r['dt.rum.session.id']]).toLowerCase().includes(f)),
-    [res.data, f],
-  )
+  const fc = useFacets(res.data?.records, SESSION_FACETS, {
+    param: 's',
+    text: (r) => `${r['user.identifier'] ?? ''} ${arr(r['frontend.name']).join(' ')} ${r['geo.city.name'] ?? ''} ${r['browser.name'] ?? ''} ${r['dt.rum.session.id']}`,
+  })
 
   const cols: Column[] = [
     {
       key: 'start',
       header: 'Started',
       width: '130px',
-      render: (r) => (
-        <span className="flex flex-col leading-tight">
-          <span className="tnum text-xs text-ink-2">{fmtDateTime(r.start_time)}</span>
-        </span>
-      ),
+      render: (r) => <When value={r.start_time} />,
       sort: (r) => r.start_time,
     },
     {
@@ -303,8 +316,8 @@ export function SessionsView({ tf, realOnly, frontend, height }: { tf: Timeframe
         ),
       sort: (r) => r['user.identifier'] ?? '~',
     },
-    { key: 'app', header: 'App', width: 'minmax(100px,1fr)', render: (r) => <span className="text-ink-2">{arr(r['frontend.name']).join(', ')}</span>, sort: (r) => arr(r['frontend.name'])[0] },
-    { key: 'dur', header: 'Duration', width: '80px', align: 'right', render: (r) => fmtMs(num(r.duration) / 1e6), sort: (r) => num(r.duration) },
+    { key: 'app', header: 'Frontend', width: 'minmax(100px,1fr)', facet: 'frontend', render: (r) => <span className="text-ink-2">{arr(r['frontend.name']).join(', ')}</span>, sort: (r) => arr(r['frontend.name'])[0] },
+    { key: 'dur', header: 'Duration', width: '80px', align: 'right', render: (r) => fmtNs(num(r.duration)), sort: (r) => num(r.duration) },
     { key: 'views', header: 'Views', width: '56px', align: 'right', render: (r) => fmtInt(num(r.view_summary_count)), sort: (r) => num(r.view_summary_count) },
     { key: 'actions', header: 'Actions', width: '64px', align: 'right', render: (r) => fmtInt(num(r.user_action_count)), sort: (r) => num(r.user_action_count) },
     {
@@ -373,16 +386,18 @@ export function SessionsView({ tf, realOnly, frontend, height }: { tf: Timeframe
             { value: 'bounced', label: 'Bounced' },
           ]}
         />
-        <span className="tnum text-xs text-ink-3">{rows ? `${rows.length}${rows.length >= 500 ? '+' : ''} sessions` : ''}</span>
-        <FilterInput value={filter} onChange={setFilter} placeholder="User, app, city, browser…" className="ml-auto w-64" />
+        <FacetSummary fc={fc} noun={(res.data?.records.length ?? 0) >= 500 ? 'newest sessions' : 'sessions'} />
+        <FacetSearch fc={fc} placeholder="Filter sessions by user, frontend, city…" className="ml-auto w-72 shrink-0" />
       </div>
       {res.error ? (
         <ErrorBox error={res.error} />
       ) : (
         <DataTable
-          rows={rows}
+          rows={fc.rows}
           loading={res.isLoading}
           columns={cols}
+          facets={fc}
+          autoFocus={!height}
           rowKey={(r) => r['dt.rum.session.id']}
           href={(r) => sessionHref(r['dt.rum.session.id'])}
           initialSort={{ key: 'start', dir: 'desc' }}
@@ -401,9 +416,7 @@ export function ErrorsView({ tf, realOnly, frontend, height }: { tf: Timeframe; 
   const spec = errorGroupsSpec(tf, realOnly, frontend)
   const res = useDql(spec)
   const [sel, setSel] = useState<Rec | null>(null)
-  const [filter, setFilter] = useState('')
-  const f = filter.toLowerCase()
-  const rows = useMemo(() => res.data?.records.filter((r) => !f || String(r.error).toLowerCase().includes(f)), [res.data, f])
+  const fc = useFacets(res.data?.records, ERROR_FACETS, { param: 'e', text: (r) => String(r.error ?? '') })
 
   const cols: Column[] = [
     {
@@ -418,10 +431,10 @@ export function ErrorsView({ tf, realOnly, frontend, height }: { tf: Timeframe; 
       ),
       sort: (r) => r.error,
     },
-    { key: 'type', header: 'Type', width: '90px', render: (r) => (r.type ? <Badge>{r.type}</Badge> : null), sort: (r) => r.type },
+    { key: 'type', header: 'Type', width: '90px', facet: 'type', render: (r) => (r.type ? <Badge>{r.type}</Badge> : null), sort: (r) => r.type },
     { key: 'count', header: 'Occurrences', width: '96px', align: 'right', render: (r) => fmtCompact(num(r.count)), sort: (r) => num(r.count) },
     { key: 'sessions', header: 'Sessions', width: '76px', align: 'right', render: (r) => fmtCompact(num(r.sessions)), sort: (r) => num(r.sessions) },
-    { key: 'app', header: 'App', width: 'minmax(100px,1fr)', render: (r) => <span className="text-ink-2">{r.app}</span>, sort: (r) => r.app },
+    { key: 'app', header: 'Frontend', width: 'minmax(100px,1fr)', facet: 'frontend', render: (r) => <span className="text-ink-2">{r.app}</span>, sort: (r) => r.app },
     { key: 'last', header: 'Last seen', width: '90px', align: 'right', render: (r) => <TimeAgo value={r.last} className="text-ink-2" />, sort: (r) => r.last },
   ]
 
@@ -429,16 +442,17 @@ export function ErrorsView({ tf, realOnly, frontend, height }: { tf: Timeframe; 
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-          <span className="tnum text-xs text-ink-3">{rows ? `${rows.length} distinct errors` : ''}</span>
-          <FilterInput value={filter} onChange={setFilter} placeholder="Filter errors…" className="ml-auto w-64" />
+          <FacetSummary fc={fc} noun="distinct errors" />
+          <FacetSearch fc={fc} placeholder="Filter errors…" className="ml-auto w-72 shrink-0" />
         </div>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
           <DataTable
-            rows={rows}
+            rows={fc.rows}
             loading={res.isLoading}
             columns={cols}
+            facets={fc}
             rowKey={(r) => String(r.error)}
             onOpen={setSel}
             selectedKey={sel ? String(sel.error) : null}
@@ -461,7 +475,7 @@ function ErrorPanel({ group, tf, realOnly, frontend, onClose }: { group: Rec; tf
   useEffect(() => setOpen(null), [group])
   const latest = open ?? occ[0]
   return (
-    <SidePanel title={<span className="font-mono text-xs">{group.error}</span>} onClose={onClose} width="w-[min(560px,44vw)]">
+    <SidePanel title={<span className="font-mono text-xs">{group.error}</span>} onClose={onClose}>
       <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-2">
         <span>
           <b className="tnum text-ink">{fmtInt(num(group.count))}</b> occurrences
@@ -474,8 +488,12 @@ function ErrorPanel({ group, tf, realOnly, frontend, onClose }: { group: Rec; tf
         </span>
       </div>
       <div className="mb-1 text-2xs font-medium tracking-wide text-ink-3 uppercase">Recent occurrences</div>
-      {res.isLoading ? (
+      {res.error ? (
+        <ErrorBox error={res.error} />
+      ) : res.isLoading ? (
         <SkeletonRows rows={4} />
+      ) : !occ.length ? (
+        <Empty title="No occurrences" hint="This error group has no recent occurrences in the timeframe." className="py-4" />
       ) : (
         <ul className="mb-4 max-h-64 divide-y divide-line overflow-auto rounded-lg border border-line">
           {occ.map((o, i) => (
@@ -507,12 +525,10 @@ function ErrorPanel({ group, tf, realOnly, frontend, onClose }: { group: Rec; tf
 
 function PagesView({ tf, realOnly, frontend }: { tf: Timeframe; realOnly: boolean; frontend?: string | null }) {
   const res = useDql(pagesSpec(tf, realOnly, frontend))
-  const [filter, setFilter] = useState('')
-  const f = filter.toLowerCase()
-  const rows = useMemo(() => res.data?.records.filter((r) => !f || String(r.page).toLowerCase().includes(f)), [res.data, f])
+  const fc = useFacets(res.data?.records, PAGE_FACETS, { param: 'p', text: (r) => String(r.page ?? '') })
   const cols: Column[] = [
     { key: 'page', header: 'Page', width: 'minmax(280px,3fr)', render: (r) => <span className="truncate font-mono text-xs">{r.page ?? '(unknown)'}</span>, sort: (r) => r.page },
-    { key: 'app', header: 'App', width: 'minmax(90px,1fr)', render: (r) => <span className="text-ink-2">{r.app}</span>, sort: (r) => r.app },
+    { key: 'app', header: 'Frontend', width: 'minmax(90px,1fr)', facet: 'frontend', render: (r) => <span className="text-ink-2">{r.app}</span>, sort: (r) => r.app },
     { key: 'views', header: 'Views', width: '72px', align: 'right', render: (r) => fmtCompact(num(r.views)), sort: (r) => num(r.views) },
     { key: 'sessions', header: 'Sessions', width: '76px', align: 'right', render: (r) => fmtCompact(num(r.sessions)), sort: (r) => num(r.sessions) },
     ...(['lcp', 'inp', 'cls'] as Vital[]).map(
@@ -527,7 +543,7 @@ function PagesView({ tf, realOnly, frontend }: { tf: Timeframe; realOnly: boolea
     ),
     {
       key: 'errors',
-      header: 'JS errors',
+      header: 'Errors',
       width: '76px',
       align: 'right',
       render: (r) => <span className={clsx(num(r.errors) > 0 ? 'text-crit' : 'text-ink-4')}>{fmtCompact(num(r.errors))}</span>,
@@ -537,16 +553,25 @@ function PagesView({ tf, realOnly, frontend }: { tf: Timeframe; realOnly: boolea
   return (
     <>
       <div className="flex items-center gap-2 border-b border-line px-3 py-2">
-        <span className="tnum text-xs text-ink-3">{rows ? `${rows.length} pages` : ''}</span>
-        <span className="ml-3">
+        <FacetSummary fc={fc} noun="pages" />
+        <span className="ml-3 shrink-0">
           <VitalsLegend />
         </span>
-        <FilterInput value={filter} onChange={setFilter} placeholder="Filter pages…" className="ml-auto w-64" />
+        <FacetSearch fc={fc} placeholder="Filter pages…" className="ml-auto w-72 shrink-0" />
       </div>
       {res.error ? (
         <ErrorBox error={res.error} />
       ) : (
-        <DataTable rows={rows} loading={res.isLoading} columns={cols} rowKey={(r) => `${r.app}|${r.page}`} initialSort={{ key: 'views', dir: 'desc' }} className="flex-1" />
+        <DataTable
+          rows={fc.rows}
+          loading={res.isLoading}
+          columns={cols}
+          facets={fc}
+          rowKey={(r) => `${r.app}|${r.page}`}
+          initialSort={{ key: 'views', dir: 'desc' }}
+          className="flex-1"
+          empty={<Empty title="No page views" hint="No pages were viewed in this timeframe." />}
+        />
       )}
     </>
   )
@@ -640,7 +665,12 @@ export function Session({ id }: { id: string }) {
   const frontendId = arr(s?.['dt.smartscape.frontend'])[0]
   const fnames = useNames(frontendId ? [frontendId] : [])
 
-  if (sres.error) return <ErrorBox error={sres.error} />
+  if (sres.error)
+    return (
+      <DetailFallback fallback="/rum" label="Experience">
+        <ErrorBox error={sres.error} />
+      </DetailFallback>
+    )
   if (sres.isLoading)
     return (
       <div className="p-5">
@@ -650,6 +680,7 @@ export function Session({ id }: { id: string }) {
     )
   if (!s)
     return (
+      <DetailFallback fallback="/rum" label="Experience">
       <Empty
         title="Session not found"
         hint={
@@ -661,25 +692,36 @@ export function Session({ id }: { id: string }) {
           </>
         }
       />
+      </DetailFallback>
     )
 
   const lcpRating = vitalRating('lcp', worstLcp)
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col overflow-auto p-5">
-        <Link href="/rum" className="mb-3 inline-flex items-center gap-1 self-start text-xs text-ink-3 hover:text-ink-2">
-          <ArrowLeft className="size-3.5" /> Experience
-        </Link>
-        <div className="mb-4 flex flex-wrap items-start gap-4">
-          <div className={clsx('flex size-10 items-center justify-center rounded-xl', num(s['error.count']) > 0 ? 'bg-crit-wash text-crit' : 'bg-accent-wash text-accent-ink')}>
-            <User className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h1 className="truncate text-xl font-semibold tracking-tight">{user ?? 'Anonymous user'}</h1>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
+        <BackLink fallback="/rum" label="Experience" />
+        <DetailHeader
+          icon={<User />}
+          tone={num(s['error.count']) > 0 ? 'crit' : 'accent'}
+          title={user ?? 'Anonymous user'}
+          badges={
+            <>
+              {s['characteristics.has_replay'] && (
+                <Badge tone="accent">
+                  <Clapperboard className="size-3" /> replay
+                </Badge>
+              )}
+              {s['dt.rum.user_type'] !== 'real_user' && <Badge tone="warn">{s['dt.rum.user_type']}</Badge>}
+            </>
+          }
+          meta={
+            <>
+              <IdCopy id={id} label="session ID" />
               {frontendId ? <EntityLink id={frontendId} name={fnames.get(frontendId) ?? arr(s['frontend.name'])[0]} type="FRONTEND" /> : <span>{arr(s['frontend.name']).join(', ')}</span>}
-              <span>{fmtDateTime(s.start_time)}</span>
-              <span className="tnum text-ink">{fmtMs(num(s.duration) / 1e6)}</span>
+              <span>
+                started {fmtDateTime(s.start_time)} (<TimeAgo value={s.start_time} />)
+              </span>
+              <span className="tnum text-ink">{fmtNs(num(s.duration))}</span>
               <span className="inline-flex items-center gap-1">
                 <DeviceIcon type={s['device.type']} /> {s['browser.name']} {s['browser.version']} · {s['os.name']}
               </span>
@@ -687,29 +729,10 @@ export function Session({ id }: { id: string }) {
                 {flag(s['geo.country.iso_code'])} {[s['geo.city.name'], s['geo.region.name'], s['geo.country.name']].filter(Boolean).join(', ')}
               </span>
               {s.end_reason && <span>ended: {String(s.end_reason).replace(/_/g, ' ')}</span>}
-              {s['characteristics.has_replay'] && (
-                <Badge tone="accent">
-                  <Clapperboard className="size-3" /> replay
-                </Badge>
-              )}
-              {s['dt.rum.user_type'] !== 'real_user' && <Badge tone="warn">{s['dt.rum.user_type']}</Badge>}
-            </div>
-            <div className="mt-1 inline-flex items-center gap-1 font-mono text-2xs text-ink-4">
-              {id}
-              <CopyButton value={id} label="session ID" />
-            </div>
-          </div>
-          {meta?.environment && frontendId && (
-            <a
-              href={dtLinks.entity(meta.environment, frontendId, 'FRONTEND')}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink"
-            >
-              Open in Dynatrace <ExternalLink className="size-3.5" />
-            </a>
-          )}
-        </div>
+            </>
+          }
+          actions={<OpenInDynatrace href={meta?.environment && frontendId && dtLinks.entity(meta.environment, frontendId, 'FRONTEND')} />}
+        />
 
         <div className="mb-4 grid grid-cols-6 gap-3 max-xl:grid-cols-3">
           {[

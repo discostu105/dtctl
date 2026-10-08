@@ -159,7 +159,7 @@ export function facetQuery(filters: string[], field: string, limit = 12) {
 
 export const SPAN_LENSES: { key: string; label: string; filter: string }[] = [
   { key: 'roots', label: 'Requests', filter: 'request.is_root_span == true' },
-  { key: 'errors', label: 'Errors', filter: 'request.is_failed == true or span.status_code == "error"' },
+  { key: 'errors', label: 'Failed', filter: 'request.is_failed == true or span.status_code == "error"' },
   { key: 'slow', label: 'Slowest', filter: 'request.is_root_span == true' },
   { key: 'db', label: 'Database', filter: 'isNotNull(db.system.name) or isNotNull(db.system)' },
   { key: 'genai', label: 'GenAI', filter: 'isNotNull(gen_ai.operation.name) or isNotNull(llm.request.type)' },
@@ -222,7 +222,7 @@ export function censusQuery() {
 export function instancesQuery(type: string) {
   return `smartscapeNodes ${q(type)}
 | fieldsAdd display = coalesce(if(name != "", name), aws.arn, id)
-| fields id, name = display, type, k8s.namespace.name, k8s.cluster.name, aws.region, lifetime
+| fields id, name = display, type, k8s.namespace.name, k8s.cluster.name, aws.region, aws.account.id, lifetime
 | sort name asc
 | limit 1000`
 }

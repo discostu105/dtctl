@@ -1,19 +1,19 @@
 import clsx from 'clsx'
-import { AlertOctagon, ArrowLeft, ArrowRight, CheckCircle2, ExternalLink, GitCommitVertical, Network } from 'lucide-react'
+import { AlertOctagon, ArrowLeft, ArrowRight, CheckCircle2, GitCommitVertical, Network } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useLocation, useSearch } from 'wouter'
 import { TimeChart, tsAxis } from '../components/Chart'
 import { EntityLink, TypeIcon } from '../components/Entity'
 import { Panel } from '../components/Panel'
 import { Inspector, LogDetail, LogStream, ProblemsTable, SidePanel, SpanTable } from '../components/signals'
-import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo } from '../components/ui'
+import { Badge, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo } from '../components/ui'
 import { arr, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
 import {
   changesQuery, detailQuery, edgesQuery, logsQuery, namesQuery, problemsQuery, signalFilter, signalFilterAll, spanFilter, spanScopable, spansQuery,
   typeOfId, vitalQuery, vitalsFor, type Entity, type Vital,
 } from '../lib/dql'
-import { fmtBytes, fmtCompact, fmtDateTime, fmtMs, fmtUs, shortType } from '../lib/format'
-import { dtLinks } from '../lib/links'
+import { fmtBytes, fmtDateTime, fmtUnit, shortType } from '../lib/format'
+import { dtLinks, entityHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { pushRecent, useTitle } from '../lib/store'
 import { absolute, intervalFor, setTimeframe, useTimeframe, type Timeframe } from '../lib/timeframe'
@@ -21,6 +21,8 @@ import { displayName, useResolved } from '../lib/names'
 import { EventList } from './Problem'
 import { ErrorsView, errorGroupsSpec, SessionsView, sessionsSpec } from './Rum'
 import { DataTabs } from '../components/DataTabs'
+import { BackLink, DetailFallback } from '../components/BackLink'
+import { DetailHeader, IdCopy, OpenInDynatrace } from '../components/DetailHeader'
 import { EntityMetrics } from '../components/EntityMetrics'
 import { headlineVitals, metricDiscoveryQuery } from '../lib/metrics'
 
@@ -61,7 +63,7 @@ export default function EntityPage({ id }: { id: string }) {
 
   useTitle(name)
   useEffect(() => {
-    if (rec) pushRecent({ href: `/e/${id}`, label: rec.name || id, kind: shortType(type) })
+    if (rec) pushRecent({ href: entityHref(id, rec.name), label: rec.name || id, kind: shortType(type) })
   }, [rec, id, type])
 
   const { data: meta } = useMeta()
@@ -99,27 +101,23 @@ export default function EntityPage({ id }: { id: string }) {
     rumerrors: useDql(tabErrorsSpec),
   }
 
-  if (detail.error) return <ErrorBox error={detail.error} />
+  if (detail.error)
+    return (
+      <DetailFallback {...sectionOf(type)}>
+        <ErrorBox error={detail.error} />
+      </DetailFallback>
+    )
 
   return (
     <EntityLayout>
-      <div className="mb-1">
-        <BackLink />
-      </div>
-      <div className="mb-4 flex flex-wrap items-start gap-4">
-        <div className="flex size-10 items-center justify-center rounded-xl bg-accent-wash">
-          <TypeIcon type={type} className="size-5 text-accent-ink" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            {detail.isLoading && !search.get('n') ? <Skeleton className="h-7 w-72" /> : <h1 className="truncate text-xl font-semibold tracking-tight">{name}</h1>}
-            <Badge tone="accent">{shortType(type)}</Badge>
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
-            <span className="inline-flex items-center gap-1 font-mono text-xs">
-              {id}
-              <CopyButton value={id} label="entity ID" />
-            </span>
+      <BackLink {...sectionOf(type)} />
+      <DetailHeader
+        icon={<TypeIcon type={type} />}
+        title={detail.isLoading && !search.get('n') ? <Skeleton className="h-7 w-72" /> : name}
+        badges={<Badge tone="accent">{shortType(type)}</Badge>}
+        meta={
+          <>
+            <IdCopy id={id} label="entity ID" />
             {rec?.lifetime?.start && (
               <span>
                 first seen <TimeAgo value={rec.lifetime.start} />
@@ -130,21 +128,10 @@ export default function EntityPage({ id }: { id: string }) {
                 last seen <TimeAgo value={rec.lifetime.end} />
               </span>
             )}
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          {meta?.environment && (
-            <a
-              href={dtLinks.entity(meta.environment, id, type)}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink"
-            >
-              Open in Dynatrace <ExternalLink className="size-3.5" />
-            </a>
-          )}
-        </div>
-      </div>
+          </>
+        }
+        actions={<OpenInDynatrace href={meta?.environment && dtLinks.entity(meta.environment, id, type)} />}
+      />
 
       {/* health strip */}
       <div className="mb-4 flex flex-wrap gap-2">
@@ -227,34 +214,7 @@ function EntityLayout({ children }: { children: React.ReactNode }) {
   return <div className="p-5">{children}</div>
 }
 
-function BackLink() {
-  return (
-    <button type="button" onClick={() => history.back()} className="inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
-      <ArrowLeft className="size-3.5" /> Back
-    </button>
-  )
-}
 
-export function fmtUnit(unit: Vital['unit']) {
-  switch (unit) {
-    case '%':
-      return (v: number) => `${v.toFixed(v < 10 ? 1 : 0)}%`
-    case 'B':
-      return (v: number) => fmtBytes(v)
-    case 'B/s':
-      return (v: number) => `${fmtBytes(v)}/s`
-    case 'µs':
-      return (v: number) => fmtUs(v)
-    case 'ms':
-      return (v: number) => fmtMs(v)
-    case 's':
-      return (v: number) => fmtMs(v * 1000)
-    case 'mCores':
-      return (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} cores` : `${Math.round(v)} m`)
-    default:
-      return (v: number) => fmtCompact(v)
-  }
-}
 
 function VitalPanel({ v, e }: { v: Vital; e: Entity }) {
   const tf = useTimeframe()
@@ -284,12 +244,14 @@ function VitalPanel({ v, e }: { v: Vital; e: Entity }) {
       ) : res.isLoading ? (
         <Skeleton className="m-3 h-[110px]" />
       ) : !r ? (
-        <Empty title="No data" hint={`${v.key} has no data for this entity in the timeframe.`} className="py-6" />
+        <div className="grid h-[120px] place-items-center px-4 text-center text-xs text-ink-4" title={v.key}>
+          No data in this timeframe
+        </div>
       ) : (
         <div className="p-2 pl-0">
           <TimeChart
             x={tsAxis(r, 'v')}
-            series={[{ label: v.title, values: vals, color: v.key.includes('fail') ? '--s8' : '--s1' }]}
+            series={[{ label: v.title, values: vals, color: v.key.includes('fail') ? '--crit' : '--s1' }]}
             height={120}
             format={fmt}
             syncKey="vitals"
@@ -398,7 +360,7 @@ function EntityLogs({ entity }: { entity: Entity }) {
         {res.error ? <ErrorBox error={res.error} /> : <LogStream records={res.data?.records} loading={!res.data} onSelect={setSel} selected={sel} className="flex-1" />}
       </div>
       {sel && (
-        <SidePanel title="Log record" onClose={() => setSel(null)} width="w-[min(520px,45vw)]">
+        <SidePanel title="Log record" onClose={() => setSel(null)}>
           <LogDetail rec={sel} />
         </SidePanel>
       )}
@@ -416,7 +378,7 @@ function EntityTraces({ entity }: { entity: Entity }) {
       <div className="flex h-9 items-center gap-3 border-b border-line px-3 text-xs">
         {(['all', 'errors'] as const).map((l) => (
           <button key={l} type="button" onClick={() => setLens(l)} className={clsx(lens === l ? 'text-ink' : 'text-ink-3 hover:text-ink-2')}>
-            {l === 'all' ? 'Requests' : 'Errors only'}
+            {l === 'all' ? 'Requests' : 'Failed'}
           </button>
         ))}
       </div>
@@ -435,7 +397,7 @@ function EntityEvents({ entity }: { entity: Entity }) {
         {res.error ? <ErrorBox error={res.error} /> : res.isLoading ? <SkeletonRows /> : <EventList records={res.data?.records ?? []} onSelect={setSel} />}
       </div>
       {sel && (
-        <SidePanel title={sel['event.name'] ?? 'Event'} onClose={() => setSel(null)} width="w-[min(520px,45vw)]">
+        <SidePanel title={sel['event.name'] ?? 'Event'} onClose={() => setSel(null)}>
           <Inspector rec={sel} />
         </SidePanel>
       )}
@@ -516,4 +478,14 @@ function Related({ id }: { id: string }) {
       ))}
     </div>
   )
+}
+
+/** The list an entity type belongs to (where "back" goes without history). */
+function sectionOf(type: string): { fallback: string; label: string } {
+  if (type === 'SERVICE') return { fallback: '/services', label: 'Services' }
+  if (type === 'HOST') return { fallback: '/hosts', label: 'Hosts' }
+  if (type.startsWith('K8S_') || type === 'CONTAINER') return { fallback: '/k8s', label: 'Kubernetes' }
+  if (type === 'FRONTEND') return { fallback: '/rum', label: 'Experience' }
+  if (type.startsWith('GENAI_')) return { fallback: '/ai', label: 'AI' }
+  return { fallback: `/smartscape?type=${encodeURIComponent(type)}`, label: shortType(type) }
 }

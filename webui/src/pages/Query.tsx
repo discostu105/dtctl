@@ -5,7 +5,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearch } from 'wouter'
 import { TimeChart, tsAxis, SERIES } from '../components/Chart'
 import { DataTable, type Column } from '../components/DataTable'
-import { QueryInfo } from '../components/Panel'
+import { PageHeader, QueryInfo } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { CopyButton, Empty, ErrorBox, Kbd, Segmented, SkeletonRows, Tip } from '../components/ui'
 import { dqlKey, forceFresh, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
@@ -109,11 +109,7 @@ export default function Query() {
   return (
     <div className="flex h-full">
       <div className="flex min-w-0 flex-1 flex-col p-5">
-        <div className="mb-3 flex items-center gap-2">
-          <Terminal className="size-5 text-ink-3" />
-          <h1 className="text-xl font-semibold tracking-tight">Query</h1>
-          <span className="text-sm text-ink-3">DQL workbench · default timeframe: {tf.label.toLowerCase()}</span>
-        </div>
+        <PageHeader title="Query" icon={<Terminal className="size-5" />} sub={`DQL workbench · ${tf.label.toLowerCase()} unless the query sets its own`} />
 
         <div className="rounded-xl border border-line bg-panel focus-within:border-accent/50">
           <div className="max-h-[42vh] overflow-auto">

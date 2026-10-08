@@ -35,9 +35,9 @@ export function parseMessages(v: unknown): Message[] {
 
 const ROLE: Record<string, { icon: typeof User; label: string; cls: string }> = {
   system: { icon: Cog, label: 'System', cls: 'text-ink-3' },
-  user: { icon: User, label: 'User', cls: 'text-[var(--s1)]' },
+  user: { icon: User, label: 'User', cls: 'text-[var(--genai-user)]' },
   assistant: { icon: Bot, label: 'Assistant', cls: 'text-accent-ink' },
-  tool: { icon: Wrench, label: 'Tool', cls: 'text-[var(--s3)]' },
+  tool: { icon: Wrench, label: 'Tool', cls: 'text-[var(--genai-tool)]' },
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v, null, 2))
@@ -69,7 +69,7 @@ function PartView({ p, collapsed }: { p: Part; collapsed?: boolean }) {
       if (collapsed) return <Collapsible title={firstLine(str(p.content))} body={str(p.content)} defaultOpen={false} />
       return <div className="text-sm leading-relaxed break-words whitespace-pre-wrap text-ink">{str(p.content)}</div>
     case 'reasoning':
-      return <Collapsible title="Reasoning" icon={<Brain className="size-3.5 text-[var(--s7)]" />} body={str(p.content)} defaultOpen={false} />
+      return <Collapsible title="Reasoning" icon={<Brain className="size-3.5 text-[var(--genai-llm)]" />} body={str(p.content)} defaultOpen={false} />
     case 'tool_call':
       return (
         <Collapsible
@@ -78,12 +78,12 @@ function PartView({ p, collapsed }: { p: Part; collapsed?: boolean }) {
               Calls <b className="font-mono font-medium text-ink">{p.name}</b>
             </>
           }
-          icon={<Wrench className="size-3.5 text-[var(--s3)]" />}
+          icon={<Wrench className="size-3.5 text-[var(--genai-tool)]" />}
           body={prettyArgs(p.arguments)}
         />
       )
     case 'tool_call_response':
-      return <Collapsible title={<>Tool result {p.id && <span className="font-mono text-ink-4">{p.id.slice(-8)}</span>}</>} icon={<Reply className="size-3.5 text-[var(--s3)]" />} body={str(p.response ?? p.result ?? p.content)} />
+      return <Collapsible title={<>Tool result {p.id && <span className="font-mono text-ink-4">{p.id.slice(-8)}</span>}</>} icon={<Reply className="size-3.5 text-[var(--genai-tool)]" />} body={str(p.response ?? p.result ?? p.content)} />
   }
   return <Collapsible title={p.type ?? 'part'} body={str(p)} />
 }

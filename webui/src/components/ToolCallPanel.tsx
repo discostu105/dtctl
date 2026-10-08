@@ -1,10 +1,10 @@
 import clsx from 'clsx'
-import { CheckCircle2, ChevronRight, CircleDashed, ExternalLink, Wrench, XCircle } from 'lucide-react'
+import { CheckCircle2, ChevronRight, CircleDashed, Wrench, XCircle } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
 import { num, useDql, type Rec } from '../lib/api'
 import { callDetailQuery } from '../lib/ai'
-import { fmtMs } from '../lib/format'
+import { fmtNs } from '../lib/format'
 import { highlightDql } from '../lib/highlight'
 import { traceHref } from '../lib/links'
 import { parseMessages } from './Conversation'
@@ -85,7 +85,7 @@ export function ToolCallPanel({ use, next, onClose }: { use: ToolUse; next?: Rec
     <SidePanel
       title={
         <span className="flex items-center gap-2">
-          <Wrench className="size-3.5 text-[var(--s3)]" />
+          <Wrench className="size-3.5 text-[var(--genai-tool)]" />
           <span className="font-mono text-sm">{use.name}</span>
         </span>
       }
@@ -112,7 +112,7 @@ export function ToolCallPanel({ use, next, onClose }: { use: ToolUse; next?: Rec
             <CheckCircle2 className="size-3" /> ok
           </Badge>
         )}
-        {x && <span className="tnum text-ink-2">ran {fmtMs(num(x.duration) / 1e6)}</span>}
+        {x && <span className="tnum text-ink-2">ran {fmtNs(num(x.duration))}</span>}
         {use.callId && <span className="font-mono text-2xs text-ink-4">{use.callId}</span>}
       </div>
 
@@ -126,7 +126,7 @@ export function ToolCallPanel({ use, next, onClose }: { use: ToolUse; next?: Rec
               onClick={() => navigate(queryHref({ query: dql }))}
               className="mt-2 inline-flex h-7 items-center gap-1.5 rounded-md bg-accent-wash px-2.5 text-xs font-medium text-accent-ink hover:brightness-110"
             >
-              Run it in Query <ExternalLink className="size-3" />
+              Run it in Query →
             </button>
           </>
         ) : cmd ? (

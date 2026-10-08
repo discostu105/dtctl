@@ -132,7 +132,13 @@ export default function Logs() {
                 onChange={(e) => setText(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === 'Enter') setDebounced(text)
-                  if (e.key === 'Escape') (e.target as HTMLInputElement).blur()
+                  if (e.key === 'Escape') {
+                    // like every filter field: Esc clears, a second Esc leaves the field
+                    if (text) {
+                      setText('')
+                      setDebounced('')
+                    } else (e.target as HTMLInputElement).blur()
+                  }
                 }}
                 placeholder="Search log content…"
                 className="h-9 w-full rounded-lg border border-line bg-sunken pr-10 pl-8 font-mono text-sm outline-none placeholder:font-sans placeholder:text-ink-4 focus:border-accent/60"
@@ -180,7 +186,7 @@ export default function Logs() {
                 </button>
               ))}
               <button type="button" onClick={() => navigate('/logs', { replace: true })} className="text-xs text-ink-3 hover:text-ink-2">
-                clear all
+                Clear all
               </button>
             </div>
           )}
@@ -245,7 +251,7 @@ export default function Logs() {
       </div>
 
       {sel && (
-        <SidePanel title="Log record" onClose={() => setSel(null)} width="w-[min(560px,42vw)]">
+        <SidePanel title="Log record" onClose={() => setSel(null)}>
           <LogDetail rec={sel} />
         </SidePanel>
       )}

@@ -111,9 +111,12 @@ export function DataTable<T = Rec>({
     } else if (e.key === 'Enter' && cursor >= 0 && sorted[cursor]) {
       e.preventDefault()
       open(sorted[cursor])
-    } else if (e.key === 'g') {
+    } else if (e.key === 'Home') {
+      // (not g/G: "g" is the app-wide go-to prefix)
+      e.preventDefault()
       setCursor(0)
-    } else if (e.key === 'G') {
+    } else if (e.key === 'End') {
+      e.preventDefault()
       setCursor(sorted.length - 1)
     }
   }
@@ -163,7 +166,7 @@ export function DataTable<T = Rec>({
             </button>
           </div>
         ) : (
-          (empty ?? <Empty title="No results" hint="Nothing matched in this timeframe." />)
+          (empty ?? <Empty title="Nothing to show" />)
         )
       ) : (
         <div style={{ height: v.getTotalSize(), position: 'relative' }}>

@@ -100,6 +100,15 @@ export function getTimeframe() {
   return current
 }
 
+/**
+ * The timeframe as a page's sub line says it: "last 2 hours", or, when the
+ * page had to widen it (floorTf), "last 24 hours (widened from last 2 hours)".
+ */
+export function tfPhrase(tf: Timeframe, requested?: Timeframe) {
+  const l = tf.label.toLowerCase()
+  return requested && requested.key !== tf.key ? `${l} (widened from ${requested.label.toLowerCase()})` : l
+}
+
 /** Timeframe ≥ floor (dynatui's floorTimeframe): e.g. problem/vuln views need ≥24h. */
 export function floorTf(tf: Timeframe, floorKey: string): Timeframe {
   const f = parseRel(floorKey)!

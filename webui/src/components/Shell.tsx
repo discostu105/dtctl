@@ -14,6 +14,7 @@ import { autoRefreshStore, helpStore, paletteStore, tfPickerStore, titleStore, t
 import { floorTf, getTimeframe, syncUrl, useTimeframe } from '../lib/timeframe'
 import { useThemeVersion } from './Chart'
 import { QueryActivity } from './Activity'
+import { useNavTrail } from './BackLink'
 import { TenantSwitcher } from './TenantSwitcher'
 import { TimeframePicker } from './TimeframePicker'
 import { Kbd, Tip } from './ui'
@@ -277,6 +278,7 @@ function useAutoRefresh() {
 export function Shell({ children }: { children: ReactNode }) {
   useHotkeys()
   useAutoRefresh()
+  useNavTrail()
   const [loc] = useLocation()
   const tf = useTimeframe()
   // Keep ?tf= in the URL on every navigation and timeframe change.
@@ -312,10 +314,21 @@ export function Help() {
       [
         [['J'], 'Next row'],
         [['K'], 'Previous row'],
+        [['Home', 'End'], 'First / last row'],
         [['↵'], 'Open'],
         [['⌘', 'click'], 'Open in new tab'],
         [['M'], 'Maximize / restore detail panel'],
         [['Esc'], 'Close panel / clear filter'],
+      ],
+    ],
+    [
+      'Trace',
+      [
+        [['←', '→'], 'Collapse / expand span'],
+        [['N'], 'Next search match (⇧N previous)'],
+        [['E'], 'Next failed span'],
+        [['C'], 'Critical path'],
+        [['Z'], 'Zoom to span · 0 resets'],
       ],
     ],
     [

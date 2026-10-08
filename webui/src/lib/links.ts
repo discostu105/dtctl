@@ -35,3 +35,11 @@ export const traceHref = (traceId: string, t?: unknown, spanId?: string) => {
   const qs = p.toString()
   return `/traces/${encodeURIComponent(traceId)}${qs ? `?${qs}` : ''}`
 }
+
+/** AI conversation replay; `t` (its start) lets the page read a narrow window. */
+export const convHref = (id: string, t?: unknown) => `/ai/conversations/${encodeURIComponent(id)}${t ? `?t=${encodeURIComponent(String(t))}` : ''}`
+
+export const sessionHref = (id: string) => `/rum/sessions/${encodeURIComponent(id)}`
+
+/** Security list with one vulnerability's panel open. */
+export const vulnHref = (vulnerabilityId: string) => `/security?v=${encodeURIComponent(vulnerabilityId)}`

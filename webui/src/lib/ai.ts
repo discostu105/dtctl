@@ -266,3 +266,48 @@ export function lastText(raw: unknown) {
   // A tail-trimmed text starts mid-word: cut to the next word boundary.
   return raw.startsWith('[') ? tail : '…' + tail.replace(/^\S*\s+/, '')
 }
+
+/**
+ * What a conversation is about, in a few words. Agent harnesses often send a
+ * generic instruction followed by a JSON payload ("Investigate the following
+ * task. {"task": {"title": …}}"): then the payload's human field (title,
+ * question, …) is the headline and the instruction is only context.
+ */
+export function promptHeadline(prompt: string): { headline: string; lead?: string } {
+  const start = prompt.indexOf('{')
+  if (start < 0) return { headline: prompt }
+  const json = firstJsonObject(prompt, start)
+  if (!json) return { headline: prompt }
+  let v: any
+  try {
+    v = JSON.parse(json)
+  } catch {
+    return { headline: prompt }
+  }
+  const pick = (o: any): string | undefined => {
+    if (!o || typeof o !== 'object') return undefined
+    for (const k of ['title', 'question', 'query', 'prompt', 'name', 'summary', 'description']) if (typeof o[k] === 'string' && o[k].trim()) return o[k].trim()
+    return undefined
+  }
+  const inner = v.task ?? v.request ?? v.input ?? v
+  const title = pick(inner) ?? pick(v)
+  if (!title) return { headline: prompt }
+  const kind = typeof inner?.type === 'string' ? inner.type : undefined
+  const lead = prompt.slice(0, start).trim()
+  return { headline: kind && !title.includes(kind) ? `${title} · ${kind}` : title, lead: lead || undefined }
+}
+
+function firstJsonObject(s: string, start: number): string | null {
+  let depth = 0
+  let inStr = false
+  for (let i = start; i < s.length; i++) {
+    const c = s[i]
+    if (inStr) {
+      if (c === '\\') i++
+      else if (c === '"') inStr = false
+    } else if (c === '"') inStr = true
+    else if (c === '{') depth++
+    else if (c === '}' && --depth === 0) return s.slice(start, i + 1)
+  }
+  return null
+}

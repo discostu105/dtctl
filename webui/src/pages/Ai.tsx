@@ -1,5 +1,6 @@
 import clsx from 'clsx'
-import { AlertTriangle, Bot, CheckCircle2, Database, ExternalLink, Gauge, MessagesSquare, Search, Sparkles, Wrench, X, XCircle } from 'lucide-react'
+import { Kpi } from '../components/Kpi'
+import { AlertTriangle, Bot, CheckCircle2, Database, Gauge, MessagesSquare, Search, Sparkles, Wrench, X, XCircle } from 'lucide-react'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useLocation, useSearch } from 'wouter'
 import { Legend, SERIES, TimeChart, tsAxis } from '../components/Chart'
@@ -10,15 +11,15 @@ import { EntityLink } from '../components/Entity'
 import { FilterInput, PageHeader, Panel, QueryInfo } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { Spark } from '../components/Spark'
-import { Badge, Empty, ErrorBox, Facts, Kbd, Segmented, Skeleton, SkeletonRows, TimeAgo, Tip } from '../components/ui'
+import { Badge, Empty, ErrorBox, Facts, Kbd, Segmented, Skeleton, SkeletonRows, TimeAgo, Tip, When } from '../components/ui'
 import { arr, num, useDql, type DqlSpec, type Rec } from '../lib/api'
 import {
   agentsQuery, aiKpiQuery, callDetailQuery, callsByModelMetricSeries, callsByModelSeries, GENAI_METRIC_PROBE, conversationsQuery, evalRunsQuery, evalsByQuestionQuery, evalSourceQuery, evalsQuery,
-  fmtTokens, lastText, modelsQuery, userPrompt, recentCallsQuery, toolExecutionsQuery, toolsQuery, ttftSeries, type ConversationFilter,
+  fmtTokens, lastText, modelsQuery, promptHeadline, userPrompt, recentCallsQuery, toolExecutionsQuery, toolsQuery, ttftSeries, type ConversationFilter,
 } from '../lib/ai'
 import { q } from '../lib/dql'
-import { fmtCompact, fmtDateTime, fmtMs, fmtPct } from '../lib/format'
-import { traceHref } from '../lib/links'
+import { fmtCompact, fmtDateTime, fmtNs, fmtPct, fmtSec, span } from '../lib/format'
+import { traceHref, convHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { useScanWindow } from '../lib/sampling'
 import { ScanNotice } from '../components/Sampled'
@@ -38,9 +39,6 @@ const agentsSpec = (tf: Timeframe) => tfSpec(tf, agentsQuery(), { ttl: 30 })
 const toolsSpec = (tf: Timeframe) => tfSpec(tf, toolsQuery(), { ttl: 30 })
 const evalsSpec = (tf: Timeframe) => tfSpec(evalTf(tf), evalsQuery(), { ttl: 60 })
 
-export const secs = (s: number) => (Number.isFinite(s) ? (s < 1 ? `${Math.round(s * 1000)} ms` : `${s.toFixed(s < 10 ? 2 : 1)} s`) : '—')
-/** `t` (when the conversation started) lets the replay read a narrow window instead of 7 days. */
-export const convHref = (id: string, t?: unknown) => `/ai/conversations/${encodeURIComponent(id)}${t ? `?t=${encodeURIComponent(String(t))}` : ''}`
 
 export default function Ai() {
   useTitle('AI')
@@ -159,7 +157,7 @@ export default function Ai() {
             <Kpi label="LLM calls" value={k && fmtCompact(num(k.chats))} sub={k && (num(k.chat_fail) ? <span className="text-crit">{num(k.chat_fail)} failed</span> : 'none failed')} />
             <Kpi label="Tokens" value={k && fmtTokens(num(k.input) + num(k.output))} sub={k && `${fmtTokens(num(k.input))} in · ${fmtTokens(num(k.output))} out`} />
             <Kpi label="Prompt cache hits" value={k && (num(k.input) ? fmtPct((100 * num(k.cache_read)) / num(k.input)) : '—')} sub="of input tokens" />
-            <Kpi label="Time to first token" value={k && secs(num(k.ttft_p50))} sub={k && `p50 · p90 ${secs(num(k.ttft_p90))}`} />
+            <Kpi label="Time to first token" value={k && fmtSec(num(k.ttft_p50))} sub={k && `p50 · p90 ${fmtSec(num(k.ttft_p90))}`} />
             <Kpi
               label="Tool calls"
               value={k && fmtCompact(num(k.tools))}
@@ -199,7 +197,7 @@ export default function Ai() {
                 <Skeleton className="m-3 h-[160px]" />
               ) : (
                 <div className="p-3 pl-1">
-                  <TimeChart x={ttftChart.x} series={ttftChart.series} height={160} format={secs} syncKey="ai" onZoom={(a, b) => setTimeframe(absolute(a, b))} />
+                  <TimeChart x={ttftChart.x} series={ttftChart.series} height={160} format={fmtSec} syncKey="ai" onZoom={(a, b) => setTimeframe(absolute(a, b))} />
                   <Legend className="mt-2 pl-3" items={ttftChart.series.map((s) => ({ label: s.label, color: s.color }))} />
                 </div>
               )}
@@ -286,15 +284,6 @@ function FilterChips({ chips }: { chips: (false | '' | null | undefined | { labe
   )
 }
 
-function Kpi({ label, value, sub, tone, onClick }: { label: string; value: ReactNode; sub?: ReactNode; tone?: 'warn'; onClick?: () => void }) {
-  return (
-    <div onClick={onClick} className={clsx('rounded-xl border border-line bg-panel p-3.5', onClick && 'cursor-pointer hover:border-line-strong hover:bg-panel-hover')}>
-      <div className="text-xs text-ink-3">{label}</div>
-      {value == null ? <Skeleton className="mt-1.5 h-7 w-20" /> : <div className={clsx('tnum mt-1 text-[24px] leading-none font-semibold tracking-tight', tone === 'warn' && 'text-warn')}>{value}</div>}
-      <div className="mt-1.5 truncate text-xs text-ink-3">{sub}</div>
-    </div>
-  )
-}
 
 type Result = ReturnType<typeof useDql>
 
@@ -305,13 +294,8 @@ function ConversationsView({ result, search, errorsOnly, onErrorsOnly }: { resul
     {
       key: 'start',
       header: 'Started',
-      width: '96px',
-      render: (r) => (
-        <span className="flex flex-col leading-tight">
-          <TimeAgo value={r.start} className="text-ink-2" />
-          <span className="tnum text-2xs text-ink-4">{fmtDateTime(r.start).slice(-8)}</span>
-        </span>
-      ),
+      width: '130px',
+      render: (r) => <When value={r.start} />,
       sort: (r) => r.start,
     },
     {
@@ -320,10 +304,14 @@ function ConversationsView({ result, search, errorsOnly, onErrorsOnly }: { resul
       width: 'minmax(360px,4fr)',
       render: (r) => {
         const prompt = userPrompt(r.prompt)
+        const { headline, lead } = promptHeadline(prompt)
         const answer = lastText(r.answer)
         return (
           <span className="flex min-w-0 flex-col leading-snug">
-            <span className="truncate font-medium text-ink">{prompt || <span className="font-normal text-ink-4">(no user prompt captured)</span>}</span>
+            <span className="truncate font-medium text-ink" title={prompt}>
+              {headline || <span className="font-normal text-ink-4">(no user prompt captured)</span>}
+              {lead && <span className="ml-2 font-normal text-ink-4">{lead}</span>}
+            </span>
             <span className="truncate text-xs text-ink-3">{answer ? <>↳ {answer}</> : <span className="text-ink-4">no final answer text</span>}</span>
           </span>
         )
@@ -394,7 +382,7 @@ function ConversationsView({ result, search, errorsOnly, onErrorsOnly }: { resul
           onChange={(v) => onErrorsOnly(v === 'errors')}
           options={[
             { value: 'all', label: 'All' },
-            { value: 'errors', label: 'With errors' },
+            { value: 'errors', label: 'Failed' },
           ]}
         />
         <span className="text-xs text-ink-3">{search ? `Matching “${search}” in prompts, answers and tool calls` : 'Newest first · click to replay a conversation step by step'}</span>
@@ -419,17 +407,13 @@ function ConversationsView({ result, search, errorsOnly, onErrorsOnly }: { resul
   )
 }
 
-function span(a: unknown, b: unknown) {
-  const ms = Date.parse(String(b)) - Date.parse(String(a))
-  return Number.isFinite(ms) ? fmtMs(ms) : '—'
-}
 
 // ── LLM calls ───────────────────────────────────────────────────────────
 
 function CallsView({ result }: { result: Result }) {
   const [sel, setSel] = useState<Rec | null>(null)
   const cols: Column[] = [
-    { key: 'time', header: 'Time', width: '130px', render: (r) => <span className="tnum text-xs text-ink-2">{fmtDateTime(r.start_time)}</span>, sort: (r) => r.start_time },
+    { key: 'time', header: 'Started', width: '130px', render: (r) => <When value={r.start_time} />, sort: (r) => r.start_time },
     {
       key: 'model',
       header: 'Model',
@@ -453,8 +437,8 @@ function CallsView({ result }: { result: Result }) {
       sort: (r) => num(r.cached) / (num(r.input) || 1),
     },
     { key: 'out', header: 'Output', width: '68px', align: 'right', render: (r) => fmtTokens(num(r.output)), sort: (r) => num(r.output) },
-    { key: 'ttft', header: 'TTFT', width: '72px', align: 'right', render: (r) => secs(num(r.ttft)), sort: (r) => num(r.ttft) },
-    { key: 'dur', header: 'Duration', width: '80px', align: 'right', render: (r) => fmtMs(num(r.duration) / 1e6), sort: (r) => num(r.duration) },
+    { key: 'ttft', header: 'TTFT', width: '72px', align: 'right', render: (r) => fmtSec(num(r.ttft)), sort: (r) => num(r.ttft) },
+    { key: 'dur', header: 'Duration', width: '80px', align: 'right', render: (r) => fmtNs(num(r.duration)), sort: (r) => num(r.duration) },
     { key: 'finish', header: 'Finish', width: '96px', render: (r) => <span className="text-xs text-ink-3">{arr(r.finish).join(', ')}</span>, sort: (r) => arr(r.finish)[0] },
   ]
   return (
@@ -489,14 +473,14 @@ export function LlmCallPanel({ traceId, spanId, title, at, onClose }: { traceId:
     <SidePanel
       title={<span className="font-mono text-xs">{title ?? d?.['gen_ai.request.model'] ?? 'LLM call'}</span>}
       onClose={onClose}
-      width="w-[min(680px,50vw)]"
+      size="wide"
       actions={
         <Link href={traceHref(traceId, at, spanId)} className="inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs text-accent-ink hover:bg-accent-wash">
-          Trace <ExternalLink className="size-3" />
+          Trace →
         </Link>
       }
     >
-      {res.isLoading ? <SkeletonRows rows={8} /> : !d ? <Empty title="Span not found" /> : <LlmCallBody d={d} />}
+      {res.error ? <ErrorBox error={res.error} /> : res.isLoading ? <SkeletonRows rows={8} /> : !d ? <Empty title="Span not found" hint="The call is no longer in Grail for this window." /> : <LlmCallBody d={d} />}
     </SidePanel>
   )
 }
@@ -517,8 +501,8 @@ function LlmCallBody({ d }: { d: Rec }) {
           ['Model', <span className="font-mono text-xs">{d['gen_ai.request.model']}</span>],
           ['Provider', d['gen_ai.provider.name']],
           ['Tokens', `${fmtTokens(inTok)} in (${fmtTokens(num(d['gen_ai.usage.cache_read.input_tokens']))} cached) · ${fmtTokens(num(d['gen_ai.usage.output_tokens']))} out`],
-          ['Time to first token', secs(num(d['gen_ai.server.time_to_first_token']))],
-          ['Duration', fmtMs(num(d.duration) / 1e6)],
+          ['Time to first token', fmtSec(num(d['gen_ai.server.time_to_first_token']))],
+          ['Duration', fmtNs(num(d.duration))],
           ['Finish', arr(d['gen_ai.response.finish_reasons']).join(', ')],
           [
             'Conversation',
@@ -567,9 +551,9 @@ function ModelsView({ result, onPick }: { result: Result; onPick: (model: string
     { key: 'in', header: 'Input tok', width: '84px', align: 'right', render: (r) => fmtTokens(num(r.input)), sort: (r) => num(r.input) },
     { key: 'out', header: 'Output tok', width: '84px', align: 'right', render: (r) => fmtTokens(num(r.output)), sort: (r) => num(r.output) },
     { key: 'cache', header: 'Cache hits', width: '84px', align: 'right', render: (r) => (num(r.input) ? fmtPct((100 * num(r.cache_read)) / num(r.input)) : '—'), sort: (r) => num(r.cache_read) / (num(r.input) || 1) },
-    { key: 'ttft50', header: 'TTFT p50', width: '80px', align: 'right', render: (r) => secs(num(r.ttft_p50)), sort: (r) => num(r.ttft_p50) },
-    { key: 'ttft90', header: 'TTFT p90', width: '80px', align: 'right', render: (r) => secs(num(r.ttft_p90)), sort: (r) => num(r.ttft_p90) },
-    { key: 'dur90', header: 'Duration p90', width: '96px', align: 'right', render: (r) => fmtMs(num(r.dur_p90) / 1e6), sort: (r) => num(r.dur_p90) },
+    { key: 'ttft50', header: 'TTFT p50', width: '80px', align: 'right', render: (r) => fmtSec(num(r.ttft_p50)), sort: (r) => num(r.ttft_p50) },
+    { key: 'ttft90', header: 'TTFT p90', width: '80px', align: 'right', render: (r) => fmtSec(num(r.ttft_p90)), sort: (r) => num(r.ttft_p90) },
+    { key: 'dur90', header: 'Duration p90', width: '96px', align: 'right', render: (r) => fmtNs(num(r.dur_p90)), sort: (r) => num(r.dur_p90) },
     { key: 'failed', header: 'Failed', width: '64px', align: 'right', render: (r) => <span className={clsx(num(r.failed) ? 'text-crit' : 'text-ink-4')}>{num(r.failed)}</span>, sort: (r) => num(r.failed) },
   ]
   if (result.error) return <ErrorBox error={result.error} />
@@ -600,8 +584,8 @@ function AgentsView({ result, onPick }: { result: Result; onPick: (agent: string
     },
     { key: 'svc', header: 'Runs in', width: 'minmax(160px,1.5fr)', render: (r) => <span className="truncate text-ink-2">{arr(r.services).join(', ')}</span> },
     { key: 'runs', header: 'Runs', width: '72px', align: 'right', render: (r) => fmtCompact(num(r.runs)), sort: (r) => num(r.runs) },
-    { key: 'p50', header: 'Duration p50', width: '100px', align: 'right', render: (r) => fmtMs(num(r.dur_p50) / 1e6), sort: (r) => num(r.dur_p50) },
-    { key: 'p90', header: 'Duration p90', width: '100px', align: 'right', render: (r) => fmtMs(num(r.dur_p90) / 1e6), sort: (r) => num(r.dur_p90) },
+    { key: 'p50', header: 'Duration p50', width: '100px', align: 'right', render: (r) => fmtNs(num(r.dur_p50)), sort: (r) => num(r.dur_p50) },
+    { key: 'p90', header: 'Duration p90', width: '100px', align: 'right', render: (r) => fmtNs(num(r.dur_p90)), sort: (r) => num(r.dur_p90) },
     { key: 'failed', header: 'Failed', width: '64px', align: 'right', render: (r) => <span className={clsx(num(r.failed) ? 'text-crit' : 'text-ink-4')}>{num(r.failed)}</span>, sort: (r) => num(r.failed) },
     { key: 'last', header: 'Last run', width: '90px', align: 'right', render: (r) => <TimeAgo value={r.last} className="text-ink-2" />, sort: (r) => r.last },
   ]
@@ -645,15 +629,15 @@ function ToolsView({ tf, result }: { tf: Timeframe; result: Result }) {
       },
       sort: (r) => num(r.failed) / (num(r.calls) || 1),
     },
-    { key: 'p50', header: 'p50', width: '80px', align: 'right', render: (r) => fmtMs(num(r.dur_p50) / 1e6), sort: (r) => num(r.dur_p50) },
-    { key: 'p90', header: 'p90', width: '80px', align: 'right', render: (r) => fmtMs(num(r.dur_p90) / 1e6), sort: (r) => num(r.dur_p90) },
+    { key: 'p50', header: 'p50', width: '80px', align: 'right', render: (r) => fmtNs(num(r.dur_p50)), sort: (r) => num(r.dur_p50) },
+    { key: 'p90', header: 'p90', width: '80px', align: 'right', render: (r) => fmtNs(num(r.dur_p90)), sort: (r) => num(r.dur_p90) },
   ]
   return (
     <div className="flex min-h-0 flex-1">
       <div className="flex min-w-0 flex-1 flex-col">
         <div className="flex items-center border-b border-line px-3 py-2">
           <span className="text-xs text-ink-3">Click a tool to see its executions, failures first.</span>
-          <FilterInput value={filter} onChange={setFilter} placeholder="Filter tools…" className="ml-auto w-64" />
+          <FilterInput value={filter} onChange={setFilter} placeholder="Filter tools…" className="ml-auto w-72" />
         </div>
         {result.error ? (
           <ErrorBox error={result.error} />
@@ -674,7 +658,7 @@ function ToolPanel({ tf, tool, onClose }: { tf: Timeframe; tool: Rec; onClose: (
   const res = useDql(spec)
   const [open, setOpen] = useState<Rec | null>(null)
   return (
-    <SidePanel title={<span className="font-mono text-xs">{tool.tool}</span>} onClose={onClose} width="w-[min(620px,46vw)]" actions={<QueryInfo spec={spec} result={res} />}>
+    <SidePanel title={<span className="font-mono text-xs">{tool.tool}</span>} onClose={onClose} actions={<QueryInfo spec={spec} result={res} />}>
       <div className="mb-3 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-2">
         <span>
           <b className="tnum text-ink">{fmtCompact(num(tool.calls))}</b> calls
@@ -683,7 +667,7 @@ function ToolPanel({ tf, tool, onClose }: { tf: Timeframe; tool: Rec; onClose: (
           <b className="tnum">{failed}</b> failed
         </span>
         <span>
-          p50 {fmtMs(num(tool.dur_p50) / 1e6)} · p90 {fmtMs(num(tool.dur_p90) / 1e6)}
+          p50 {fmtNs(num(tool.dur_p50))} · p90 {fmtNs(num(tool.dur_p90))}
         </span>
       </div>
       <Segmented
@@ -695,7 +679,9 @@ function ToolPanel({ tf, tool, onClose }: { tf: Timeframe; tool: Rec; onClose: (
           { value: 'all', label: 'All executions' },
         ]}
       />
-      {res.isLoading ? (
+      {res.error ? (
+        <ErrorBox error={res.error} />
+      ) : res.isLoading ? (
         <SkeletonRows rows={6} />
       ) : !res.data?.records.length ? (
         <Empty title={failedOnly ? 'No failures' : 'No executions'} className="py-6" />
@@ -709,7 +695,7 @@ function ToolPanel({ tf, tool, onClose }: { tf: Timeframe; tool: Rec; onClose: (
                   <TimeAgo value={r.start_time} />
                 </span>
                 <span className="min-w-0 flex-1 truncate font-mono text-ink-2">{String(r['span.name'] ?? '').replace(/^execute_tool\s+/, '')}</span>
-                <span className="tnum shrink-0 text-ink-3">{fmtMs(num(r.duration) / 1e6)}</span>
+                <span className="tnum shrink-0 text-ink-3">{fmtNs(num(r.duration))}</span>
                 {r.conversation ? (
                   <Link href={convHref(r.conversation, r.start_time)} onClick={(e) => e.stopPropagation()} className="shrink-0 text-accent-ink hover:underline">
                     conversation →
@@ -855,7 +841,7 @@ function EvalResults({ result, focus }: { result: Result; focus: { kind: 'questi
     [result.data, label, focus],
   )
   const cols: Column[] = [
-    { key: 'time', header: 'Time', width: '130px', render: (r) => <span className="tnum text-xs text-ink-2">{fmtDateTime(r.timestamp)}</span>, sort: (r) => r.timestamp },
+    { key: 'time', header: 'Time', width: '130px', render: (r) => <When value={r.timestamp} />, sort: (r) => r.timestamp },
     {
       key: 'label',
       header: 'Result',
@@ -905,7 +891,7 @@ function EvalResults({ result, focus }: { result: Result; focus: { kind: 'questi
         )}
       </div>
       {sel && (
-        <SidePanel title={sel.question ?? 'Evaluation'} onClose={() => setSel(null)} width="w-[min(620px,46vw)]">
+        <SidePanel title={sel.question ?? 'Evaluation'} onClose={() => setSel(null)}>
           <div className="mb-3 flex items-center gap-2">
             {sel.label === 'pass' ? <Badge tone="ok">pass</Badge> : <Badge tone="crit">{sel.label ?? 'fail'}</Badge>}
             <span className="tnum text-sm">score {num(sel.score).toFixed(2)}</span>
@@ -968,7 +954,7 @@ function EvalRuns({ tf, onPick }: { tf: Timeframe; onPick: (r: string) => void }
   const res = useDql(spec)
   const rows = res.data?.records
   const cols: Column[] = [
-    { key: 'start', header: 'Run started', width: '150px', render: (r) => <span className="tnum text-ink-2">{fmtDateTime(r.start)}</span>, sort: (r) => r.start },
+    { key: 'start', header: 'Started', width: '130px', render: (r) => <When value={r.start} />, sort: (r) => r.start },
     { key: 'run', header: 'Run', width: 'minmax(160px,1fr)', render: (r) => <span className="font-mono text-xs">{r.run ?? '(no run id)'}</span>, sort: (r) => r.run },
     { key: 'n', header: 'Results', width: '72px', align: 'right', render: (r) => num(r.n), sort: (r) => num(r.n) },
     {

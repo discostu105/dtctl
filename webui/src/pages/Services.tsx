@@ -6,16 +6,15 @@ import { EntityLink } from '../components/Entity'
 import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
 import { Spark } from '../components/Spark'
-import { Badge, ErrorBox, Segmented } from '../components/ui'
+import { Badge, Empty, ErrorBox, Segmented } from '../components/ui'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
 import { detailQuery, serviceListQuery } from '../lib/dql'
 import { bucket, type Facet } from '../lib/facets'
-import { fmtCompact, fmtPct } from '../lib/format'
+import { fmtCompact, fmtPct, fmtUs } from '../lib/format'
 import { entityHref } from '../lib/links'
 import { servicesSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
 import { useTimeframe } from '../lib/timeframe'
-import { fmtLatencyUs } from './Pulse'
 
 const kindLabel = (k: unknown) => (k ? String(k).replace(/_SERVICE$/, '').replace(/_/g, ' ').toLowerCase() : null)
 
@@ -123,7 +122,7 @@ export default function Services() {
       render: (r) => (
         <span className="flex items-center justify-end gap-3">
           <Spark values={r.rt} color="var(--s7)" width={96} zeroBased={false} />
-          <span className="w-16">{fmtLatencyUs(r.latency)}</span>
+          <span className="w-16">{fmtUs(r.latency)}</span>
         </span>
       ),
       sort: (r) => r.latency ?? -1,
@@ -168,6 +167,7 @@ export default function Services() {
             loading={red.isLoading && list.isLoading}
             columns={cols}
             facets={fc}
+            empty={<Empty title="No services" hint="No service reported traffic or appeared in Smartscape in this timeframe." />}
             rowKey={(r) => r.id}
             href={(r) => entityHref(r.id, r.name)}
             onHover={(r) => prefetchDql({ query: detailQuery({ id: r.id, type: 'SERVICE' }) })}

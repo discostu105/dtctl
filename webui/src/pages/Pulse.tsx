@@ -1,16 +1,17 @@
 import clsx from 'clsx'
+import { Kpi } from '../components/Kpi'
 import { AlertOctagon, ArrowUpRight, CheckCircle2, GitCommitVertical, MonitorSmartphone, ScrollText, Share2, ShieldAlert } from 'lucide-react'
 import { useMemo, type ReactNode } from 'react'
 import { Link } from 'wouter'
-import { TimeChart, tsAxis } from '../components/Chart'
+import { TimeChart, tsAxis, Legend } from '../components/Chart'
 import { EntityLink } from '../components/Entity'
 import { Panel } from '../components/Panel'
-import { ProblemStatus } from '../components/signals'
+import { ProblemStatus, RiskBadge } from '../components/signals'
 import { Spark } from '../components/Spark'
 import { Badge, Empty, ErrorBox, Skeleton, SkeletonRows, TimeAgo, Tip, useNow } from '../components/ui'
 import { num, useDql, useMeta, type Rec } from '../lib/api'
-import { fmtCompact, fmtInt, fmtPct, span } from '../lib/format'
-import { problemHref } from '../lib/links'
+import { fmtCompact, fmtInt, fmtPct, fmtUs, span } from '../lib/format'
+import { problemHref, vulnHref } from '../lib/links'
 import { activeProblemsSpec, changesSpec, recentProblemsSpec, ERROR_LEVELS, servicesSpec, tfSpec, vulnsSpec } from '../lib/shared'
 import { useAdaptiveDql } from '../lib/sampling'
 import { useTitle } from '../lib/store'
@@ -58,8 +59,8 @@ export default function Pulse() {
     return {
       x,
       series: [
-        ...(e ? [{ label: 'Error logs', values: (e.count as number[]).map((v) => v ?? 0), color: '--s2' }] : []),
-        ...(f ? [{ label: 'Failed requests', values: alignTo(x, f, 'failed'), color: '--s1' }] : []),
+        ...(e ? [{ label: 'Error logs', values: (e.count as number[]).map((v) => v ?? 0), color: '--warn' }] : []),
+        ...(f ? [{ label: 'Failed requests', values: alignTo(x, f, 'failed'), color: '--crit' }] : []),
       ],
     }
   }, [errLogs.data, failed.data])
@@ -88,12 +89,12 @@ export default function Pulse() {
               'Checking your environment…'
             ) : allClear ? (
               <>
-                <CheckCircle2 className="size-4 text-ok" /> All clear. No active problems, no failing services in {tf.label.toLowerCase()}.
+                <CheckCircle2 className="size-4 text-ok" /> All clear: no active problems, no failing services · {tf.label.toLowerCase()}
               </>
             ) : (
               <>
-                {nActive > 0 ? `${nActive} active problem${nActive === 1 ? '' : 's'}` : 'No active problems'}
-                {failing.length > 0 && ` · ${failing.length} service${failing.length === 1 ? '' : 's'} with failures`} · {tf.label.toLowerCase()}
+                {nActive > 0 ? `${fmtInt(nActive)} active problem${nActive === 1 ? '' : 's'}` : 'No active problems'}
+                {failing.length > 0 && ` · ${fmtInt(failing.length)} failing service${failing.length === 1 ? '' : 's'}`} · {tf.label.toLowerCase()}
               </>
             )}
           </div>
@@ -134,7 +135,7 @@ export default function Pulse() {
           href="/security"
           icon={<ShieldAlert className="size-4" />}
           label="Critical & high vulns"
-          sub={`${vulnRows.length} open in total`}
+          sub={`${fmtInt(vulnRows.length)} open in total`}
           value={vulns.data ? critVulns.length : undefined}
           tone={critVulns.length ? 'warn' : 'ok'}
           loading={vulns.isLoading}
@@ -205,20 +206,14 @@ export default function Pulse() {
           result={errLogs}
           actions={
             chart && (
-              <div className="mr-2 flex items-center gap-3 text-xs text-ink-2">
-                {chart.series.map((s) => (
-                  <span key={s.label} className="flex items-center gap-1.5">
-                    <i className="inline-block h-0.5 w-3 rounded" style={{ background: `var(${s.color})` }} />
-                    {s.label}
-                  </span>
-                ))}
+              <Legend className="mr-2" swatch="line" items={chart.series.map((s) => ({ label: s.label, color: s.color! }))}>
                 {markers.length > 0 && (
                   <span className="flex items-center gap-1.5">
                     <i className="inline-block h-2.5 w-0 border-l border-dashed border-accent" />
                     Deployments
                   </span>
                 )}
-              </div>
+              </Legend>
             )
           }
         >
@@ -274,7 +269,7 @@ export default function Pulse() {
             <ul className="divide-y divide-line">
               {vulnRows.slice(0, 6).map((r) => (
                 <li key={r['vulnerability.id']}>
-                  <Link href={`/security?v=${encodeURIComponent(r['vulnerability.id'])}`} className="flex items-center gap-2.5 px-3 py-2 hover:bg-panel-hover">
+                  <Link href={vulnHref(r['vulnerability.id'])} className="flex items-center gap-2.5 px-3 py-2 hover:bg-panel-hover">
                     <RiskBadge level={r.level} score={r.score} />
                     <span className="min-w-0 flex-1 truncate text-sm">{r.title}</span>
                     {r.exposure === 'PUBLIC_NETWORK' && (
@@ -326,57 +321,6 @@ function HeaderLink({ href, children }: { href: string; children: ReactNode }) {
   )
 }
 
-function Kpi({
-  href,
-  icon,
-  label,
-  sub,
-  value,
-  tone,
-  loading,
-  spark,
-  sparkColor,
-}: {
-  href: string
-  icon: ReactNode
-  label: string
-  sub?: ReactNode
-  value: number | undefined
-  tone?: 'crit' | 'warn' | 'ok'
-  loading?: boolean
-  spark?: number[]
-  sparkColor?: string
-}) {
-  return (
-    <Link
-      href={href}
-      className="group relative flex flex-col gap-2 overflow-hidden rounded-xl border border-line bg-panel p-3.5 transition-colors hover:border-line-strong hover:bg-panel-hover"
-    >
-      <div className="flex items-center gap-2 text-xs text-ink-3">
-        <span className={clsx(tone === 'crit' && value ? 'text-crit' : tone === 'warn' && value ? 'text-warn' : 'text-ink-3')}>{icon}</span>
-        {label}
-        <ArrowUpRight className="ml-auto size-3.5 opacity-0 transition-opacity group-hover:opacity-100" />
-      </div>
-      <div className="flex items-end justify-between gap-2">
-        {loading || value == null ? (
-          <Skeleton className="h-8 w-16" />
-        ) : (
-          <div
-            className={clsx(
-              'tnum text-[28px] leading-none font-semibold tracking-tight',
-              tone === 'crit' && value > 0 && 'text-crit',
-              tone === 'warn' && value > 0 && 'text-warn',
-            )}
-          >
-            {fmtCompact(value)}
-          </div>
-        )}
-        {spark && <Spark values={spark} color={sparkColor} width={88} height={28} kind="bars" />}
-      </div>
-      <div className="truncate text-xs text-ink-3">{sub}</div>
-    </Link>
-  )
-}
 
 function ProblemRow({ r, now }: { r: Rec; now: number }) {
   const ids: string[] = Array.isArray(r.affected_ids) ? r.affected_ids : []
@@ -440,30 +384,26 @@ function ChangeItem({ r }: { r: Rec }) {
     <li className="relative flex gap-3 pb-3 pl-4 last:pb-1">
       <span className="absolute top-1.5 bottom-0 left-[3px] w-px bg-line" />
       <span className={clsx('absolute top-1.5 left-0 size-[7px] rounded-full ring-2 ring-panel', bad ? 'bg-crit' : ok ? 'bg-ok' : 'bg-accent')} />
-      <div className="min-w-0 flex-1">
+      <Link
+        href={r.workload ? `/changes?f=${encodeURIComponent(`workload:${r.workload}`)}` : '/changes'}
+        className="min-w-0 flex-1 rounded-md hover:text-accent-ink"
+      >
         <div className="flex items-center gap-2">
-          <span className="truncate text-sm">{r.what}</span>
+          {/* name the thing that changed; K8s events only say "Deployment spec change" */}
+          <span className="truncate text-sm">{r.workload ?? r.what}</span>
           {r.env && <Badge>{r.env}</Badge>}
         </div>
         <div className="flex items-center gap-2 text-xs text-ink-3">
           <TimeAgo value={r.timestamp} />
+          {r.workload && <span className="truncate">· {r.what}</span>}
           {r.outcome && <span>· {String(r.outcome).toLowerCase()}</span>}
           {r.rev && <span className="font-mono">· {String(r.rev).slice(0, 7)}</span>}
         </div>
-      </div>
+      </Link>
     </li>
   )
 }
 
-export function RiskBadge({ level, score }: { level: string; score?: unknown }) {
-  const tone = level === 'CRITICAL' ? 'crit' : level === 'HIGH' ? 'warn' : level === 'MEDIUM' ? 'info' : 'muted'
-  return (
-    <Badge tone={tone} className="w-[64px] justify-between font-mono">
-      <span>{({ CRITICAL: 'CRIT', HIGH: 'HIGH', MEDIUM: 'MED', LOW: 'LOW', NONE: 'NONE' } as Record<string, string>)[level] ?? String(level ?? '').slice(0, 4)}</span>
-      <span>{Number.isFinite(num(score)) ? num(score).toFixed(1) : ''}</span>
-    </Badge>
-  )
-}
 
 function ServiceAttention({ rows }: { rows: Rec[] }) {
   const top = [...rows].sort((a, b) => num(b.failure_rate) - num(a.failure_rate) || num(b.failed) - num(a.failed)).slice(0, 7)
@@ -485,16 +425,10 @@ function ServiceAttention({ rows }: { rows: Rec[] }) {
           <span className={clsx('tnum text-right', num(r.failure_rate) >= 5 ? 'text-crit' : num(r.failure_rate) > 0 ? 'text-warn' : 'text-ink-3')}>
             {fmtPct(num(r.failure_rate), 2)}
           </span>
-          <span className="tnum text-right text-ink-2">{fmtLatencyUs(num(r.latency))}</span>
+          <span className="tnum text-right text-ink-2">{fmtUs(num(r.latency))}</span>
         </div>
       ))}
     </div>
   )
 }
 
-export function fmtLatencyUs(us: number) {
-  if (!Number.isFinite(us)) return '—'
-  if (us < 1000) return `${Math.round(us)} µs`
-  if (us < 1e6) return `${(us / 1000).toFixed(us < 1e4 ? 1 : 0)} ms`
-  return `${(us / 1e6).toFixed(2)} s`
-}

@@ -1,5 +1,5 @@
 import clsx from 'clsx'
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import uPlot from 'uplot'
 import { num, type Rec } from '../lib/api'
 import { fmtTime } from '../lib/format'
@@ -279,15 +279,27 @@ function escapeHtml(s: string) {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)
 }
 
-export function Legend({ items, className }: { items: { label: string; color: string }[]; className?: string }) {
+/** The one chart legend: square swatches for areas/bars, line swatches for line charts. */
+export function Legend({
+  items,
+  className,
+  swatch = 'square',
+  children,
+}: {
+  items: { label: string; color: string }[]
+  className?: string
+  swatch?: 'square' | 'line'
+  children?: ReactNode
+}) {
   return (
     <div className={clsx('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-ink-2', className)}>
       {items.map((it) => (
         <span key={it.label} className="inline-flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2 rounded-[2px]" style={{ background: `var(${it.color})` }} />
+          <i className={clsx('inline-block', swatch === 'line' ? 'h-0.5 w-3 rounded' : 'h-2 w-2 rounded-[2px]')} style={{ background: `var(${it.color})` }} />
           {it.label}
         </span>
       ))}
+      {children}
     </div>
   )
 }

@@ -8,6 +8,10 @@
    Series slots follow the validated categorical order (fixed, never cycled). */
 :root {
   color-scheme: dark;
+  /* GenAI roles (theme-aware through the series colors they alias) */
+  --genai-llm: var(--s7);
+  --genai-tool: var(--s3);
+  --genai-user: var(--s1);
   --bg: #0a0b0d;
   --bg-raised: #101115;
   --bg-sunken: #07080a;

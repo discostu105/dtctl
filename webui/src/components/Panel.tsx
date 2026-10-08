@@ -1,7 +1,7 @@
 import * as Popover from '@radix-ui/react-popover'
 import type { UseQueryResult } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { Code2, ExternalLink, Zap } from 'lucide-react'
+import { Code2, Zap } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import type { DqlResult, DqlSpec } from '../lib/api'
@@ -54,7 +54,7 @@ export function QueryInfo({ spec, result, className }: { spec: DqlSpec | null | 
                 onClick={() => navigate(queryHref(spec))}
                 className="inline-flex h-6 items-center gap-1 rounded-md px-2 text-xs text-accent-ink hover:bg-accent-wash"
               >
-                Open in Query <ExternalLink className="size-3" />
+                Open in Query →
               </button>
             </div>
           </div>

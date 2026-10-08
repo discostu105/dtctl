@@ -5,11 +5,12 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link } from 'wouter'
 import { num, type Rec } from '../lib/api'
 import type { FacetCtl } from './Facets'
+import type { Facet } from '../lib/facets'
 import { fmtNs, fmtTime, span, titleCase } from '../lib/format'
 import { problemHref, traceHref } from '../lib/links'
 import { DataTable, type Column } from './DataTable'
 import { EntityLink } from './Entity'
-import { Badge, CopyButton, Empty, Kbd, SkeletonRows, TimeAgo, Tip, type Tone } from './ui'
+import { Badge, CopyButton, Empty, Kbd, SkeletonRows, TimeAgo, Tip, type Tone, When } from './ui'
 
 // ── log levels ───────────────────────────────────────────────────────────────
 
@@ -90,24 +91,47 @@ export function prettyContent(s: string): { text: string; json: boolean } {
   return { text: s, json: false }
 }
 
+const isEmpty = (v: unknown) => v == null || v === '' || (Array.isArray(v) && v.length === 0)
+
+/**
+ * All attributes of a record, sorted, filterable. Empty values (null, "",
+ * []) are hidden by default: they are noise in OTel records with sparse
+ * attributes, and one click shows them.
+ */
 export function Inspector({ rec, hide = [] }: { rec: Rec; hide?: string[] }) {
   const [filter, setFilter] = useState('')
+  const [showEmpty, setShowEmpty] = useState(false)
+  const all = useMemo(() => Object.entries(rec).filter(([k]) => !hide.includes(k)), [rec, hide])
+  const nEmpty = all.filter(([, v]) => isEmpty(v)).length
   const entries = useMemo(
     () =>
-      Object.entries(rec)
-        .filter(([k]) => !hide.includes(k))
+      all
+        .filter(([, v]) => showEmpty || !isEmpty(v))
         .filter(([k, v]) => !filter || k.toLowerCase().includes(filter.toLowerCase()) || String(JSON.stringify(v)).toLowerCase().includes(filter.toLowerCase()))
         .sort(([a], [b]) => a.localeCompare(b)),
-    [rec, hide, filter],
+    [all, filter, showEmpty],
   )
   return (
     <div>
-      <input
-        value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        placeholder={`Filter ${Object.keys(rec).length} attributes…`}
-        className="mb-2 h-7 w-full rounded-md border border-line bg-sunken px-2 text-xs outline-none placeholder:text-ink-4 focus:border-accent/60"
-      />
+      <div className="mb-2 flex items-center gap-2">
+        <input
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape' && filter) {
+              e.stopPropagation()
+              setFilter('')
+            }
+          }}
+          placeholder={`Filter ${all.length - nEmpty} attributes…`}
+          className="h-7 min-w-0 flex-1 rounded-md border border-line bg-sunken px-2 text-xs outline-none placeholder:text-ink-4 focus:border-accent/60"
+        />
+        {nEmpty > 0 && (
+          <button type="button" onClick={() => setShowEmpty(!showEmpty)} className="shrink-0 rounded px-1.5 py-1 text-2xs text-ink-3 hover:bg-line hover:text-ink-2">
+            {showEmpty ? 'hide' : 'show'} {nEmpty} empty
+          </button>
+        )}
+      </div>
       <div className="divide-y divide-line">
         {entries.map(([k, v]) => (
           <div key={k} className="group grid grid-cols-[minmax(120px,38%)_1fr_auto] items-start gap-3 py-1.5 text-xs">
@@ -139,7 +163,23 @@ function loadMax() {
  * `m`) to fill the content area; the choice is remembered across panels.
  * `Esc` restores a maximized panel first, then closes.
  */
-export function SidePanel({ title, onClose, children, actions, width = 'w-[min(640px,48vw)]' }: { title: ReactNode; onClose: () => void; children: ReactNode; actions?: ReactNode; width?: string }) {
+const PANEL_WIDTH = { default: 'w-[min(640px,48vw)]', wide: 'w-[min(720px,52vw)]' }
+
+/** Detail panel sizes: `default` for records, spans, tools; `wide` only for LLM message content. */
+export function SidePanel({
+  title,
+  onClose,
+  children,
+  actions,
+  size = 'default',
+}: {
+  title: ReactNode
+  onClose: () => void
+  children: ReactNode
+  actions?: ReactNode
+  size?: keyof typeof PANEL_WIDTH
+}) {
+  const width = PANEL_WIDTH[size]
   const [max, setMax] = useState(loadMax)
   const toggle = () =>
     setMax((m) => {
@@ -212,10 +252,27 @@ export function LogStream({
   const ref = useRef<HTMLDivElement>(null)
   const rows = records ?? []
   const v = useVirtualizer({ count: rows.length, getScrollElement: () => ref.current, estimateSize: () => 30, overscan: 20 })
+  // j/k (or arrows) move through records and drive the detail panel, like every list
+  const at = selected ? rows.indexOf(selected) : -1
+  const onKey = (e: React.KeyboardEvent) => {
+    if (!onSelect || e.metaKey || e.ctrlKey || e.altKey) return
+    const step = e.key === 'j' || e.key === 'ArrowDown' ? 1 : e.key === 'k' || e.key === 'ArrowUp' ? -1 : 0
+    if (step) {
+      e.preventDefault()
+      const next = Math.max(0, Math.min(rows.length - 1, at + step))
+      onSelect(rows[next])
+      v.scrollToIndex(next, { align: 'auto' })
+    } else if (e.key === 'Home' || e.key === 'End') {
+      e.preventDefault()
+      const next = e.key === 'Home' ? 0 : rows.length - 1
+      onSelect(rows[next])
+      v.scrollToIndex(next, { align: 'auto' })
+    }
+  }
   if (loading && !records) return <SkeletonRows rows={12} />
   if (rows.length === 0) return <Empty title="No log records" hint="Nothing matched in this timeframe. Try widening it (T) or loosening the filters." />
   return (
-    <div ref={ref} className={clsx('min-h-0 overflow-auto', className)} tabIndex={0}>
+    <div ref={ref} className={clsx('min-h-0 overflow-auto outline-none', className)} tabIndex={0} onKeyDown={onKey}>
       <div style={{ height: v.getTotalSize(), position: 'relative' }}>
         {v.getVirtualItems().map((vi) => {
           const r = rows[vi.index]
@@ -294,7 +351,7 @@ export function spanFailed(r: Rec) {
 export const spanColumns: Column[] = [
   {
     key: 'time',
-    header: 'Start',
+    header: 'Started',
     width: '108px',
     render: (r) => <span className="tnum font-mono text-xs text-ink-3">{fmtTime(r.start_time)}</span>,
     sort: (r) => r.start_time,
@@ -323,6 +380,7 @@ export const spanColumns: Column[] = [
     key: 'service',
     header: 'Service',
     width: 'minmax(140px,1fr)',
+    facet: 'service',
     render: (r) =>
       r['dt.smartscape.service'] ? (
         <EntityLink id={r['dt.smartscape.service']} name={r.service} type="SERVICE" />
@@ -334,7 +392,8 @@ export const spanColumns: Column[] = [
   {
     key: 'code',
     header: 'Code',
-    width: '56px',
+    width: '64px',
+    facet: 'code',
     align: 'right',
     render: (r) => {
       const c = num(r['http.response.status_code'])
@@ -352,12 +411,38 @@ export const spanColumns: Column[] = [
   },
 ]
 
-export function SpanTable({ records, loading, maxHeight, className }: { records: Rec[] | undefined; loading?: boolean; maxHeight?: number | string; className?: string }) {
+/** Facets for span lists (client-side over the loaded spans). */
+export const SPAN_FACETS: Facet<Rec>[] = [
+  { key: 'service', label: 'Service', value: (r) => r.service },
+  { key: 'status', label: 'Status', value: (r) => (spanFailed(r) ? 'Failed' : 'OK'), order: ['Failed', 'OK'] },
+  { key: 'code', label: 'HTTP status', value: (r) => r['http.response.status_code'], aliases: ['status_code'] },
+  { key: 'method', label: 'Method', value: (r) => r['http.request.method'] },
+  { key: 'kind', label: 'Span kind', value: (r) => r['span.kind'] },
+  { key: 'db', label: 'Database', value: (r) => r['db.system'] },
+]
+
+export function SpanTable({
+  records,
+  loading,
+  maxHeight,
+  className,
+  facets,
+  autoFocus,
+}: {
+  records: Rec[] | undefined
+  loading?: boolean
+  maxHeight?: number | string
+  className?: string
+  facets?: FacetCtl<Rec>
+  autoFocus?: boolean
+}) {
   return (
     <DataTable
       rows={records}
       loading={loading}
       columns={spanColumns}
+      facets={facets}
+      autoFocus={autoFocus}
       rowKey={(r, i) => `${r['span.id']}-${i}`}
       href={(r) => traceHref(r['trace.id'], r.start_time ?? r.timestamp, r['span.id'])}
       maxHeight={maxHeight}
@@ -418,7 +503,7 @@ export const problemColumns: Column[] = [
     render: (r) => <span className="text-ink-2">{span(r.start, r.status === 'ACTIVE' ? Date.now() : r.end)}</span>,
     sort: (r) => (r.status === 'ACTIVE' ? Date.now() : Date.parse(r.end)) - Date.parse(r.start),
   },
-  { key: 'start', header: 'Started', width: '84px', align: 'right', render: (r) => <TimeAgo value={r.start} className="text-ink-2" />, sort: (r) => r.start },
+  { key: 'start', header: 'Started', width: '130px', align: 'right', render: (r) => <When value={r.start} />, sort: (r) => r.start },
 ]
 
 export function ProblemsTable({
@@ -426,11 +511,13 @@ export function ProblemsTable({
   loading,
   maxHeight,
   facets,
+  autoFocus,
 }: {
   records: Rec[] | undefined
   loading?: boolean
   maxHeight?: number | string
   facets?: FacetCtl<Rec>
+  autoFocus?: boolean
 }) {
   return (
     <DataTable
@@ -438,10 +525,22 @@ export function ProblemsTable({
       loading={loading}
       columns={problemColumns}
       facets={facets}
+      autoFocus={autoFocus}
       rowKey={(r) => r.display_id}
       href={(r) => problemHref(r.display_id)}
       maxHeight={maxHeight}
       empty={<Empty title="No problems" hint="Davis found nothing in this timeframe. Enjoy the quiet." />}
     />
+  )
+}
+
+/** Vulnerability risk: level abbreviation and score, fixed width so a column lines up. */
+export function RiskBadge({ level, score }: { level: string; score?: unknown }) {
+  const tone = level === 'CRITICAL' ? 'crit' : level === 'HIGH' ? 'warn' : level === 'MEDIUM' ? 'info' : 'muted'
+  return (
+    <Badge tone={tone} className="w-[64px] justify-between font-mono">
+      <span>{({ CRITICAL: 'CRIT', HIGH: 'HIGH', MEDIUM: 'MED', LOW: 'LOW', NONE: 'NONE' } as Record<string, string>)[level] ?? String(level ?? '').slice(0, 4)}</span>
+      <span>{Number.isFinite(num(score)) ? num(score).toFixed(1) : ''}</span>
+    </Badge>
   )
 }

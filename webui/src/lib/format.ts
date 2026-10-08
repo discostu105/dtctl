@@ -31,8 +31,13 @@ export function fmtUs(us: number) {
   if (!Number.isFinite(us)) return '—'
   return fmtMs(us / 1e3)
 }
+/** Durations given in seconds (e.g. gen_ai.server.time_to_first_token). */
+export function fmtSec(s: number) {
+  return fmtMs(s * 1000)
+}
 export function fmtMs(ms: number) {
   if (!Number.isFinite(ms)) return '—'
+  if (ms === 0) return '0'
   const a = Math.abs(ms)
   if (a < 1) return nf2.format(ms * 1000) + ' µs'
   if (a < 1000) return (a < 10 ? nf1 : nf0).format(ms) + ' ms'
@@ -94,21 +99,45 @@ export function fmtTime(v: unknown) {
   const ms = String(d.getMilliseconds()).padStart(3, '0')
   return `${tf.format(d)}.${ms}`
 }
+/** Clock time for list cells: "14:32" today, "Oct 7 14:32" on other days. */
+export function fmtClock(v: unknown, now = Date.now()) {
+  const d = toDate(v)
+  if (!d) return '—'
+  const t = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (new Date(now).toDateString() === d.toDateString()) return t
+  return `${d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} ${t}`
+}
 export function fmtAbs(v: unknown) {
   const d = toDate(v)
   return d ? d.toISOString().replace('T', ' ').replace('Z', ' UTC') : ''
 }
 
+// Entity type words as people write them: acronyms upper-cased, Kubernetes
+// kinds in their CamelCase, run-together AWS resource names split.
+const TYPE_WORDS: Record<string, string> = {
+  aws: 'AWS', ec2: 'EC2', rds: 'RDS', iam: 'IAM', sqs: 'SQS', sns: 'SNS', ses: 'SES', ecr: 'ECR', eks: 'EKS', ecs: 'ECS', s3: 'S3',
+  vpc: 'VPC', kms: 'KMS', acm: 'ACM', db: 'DB', api: 'API', http: 'HTTP', dns: 'DNS', otel: 'OTel', genai: 'GenAI', cpu: 'CPU',
+  dbinstance: 'DB instance', dbcluster: 'DB cluster', dbsnapshot: 'DB snapshot', dbsubnetgroup: 'DB subnet group',
+  dbclustersnapshot: 'DB cluster snapshot', dbparametergroup: 'DB parameter group', dbclusterparametergroup: 'DB cluster parameter group',
+  elasticloadbalancingv2: 'ELBv2', elasticloadbalancing: 'ELB', loadbalancer: 'load balancer', targetgroup: 'target group',
+  networkinterface: 'network interface', securitygroup: 'security group', launchtemplate: 'launch template', routetable: 'route table',
+  vpcendpoint: 'VPC endpoint', loggroup: 'log group', hostedzone: 'hosted zone', secretsmanager: 'Secrets Manager',
+  cloudformation: 'CloudFormation', cloudtrail: 'CloudTrail', certificatemanager: 'Certificate Manager', managedpolicy: 'managed policy',
+  replicaset: 'ReplicaSet', statefulset: 'StatefulSet', daemonset: 'DaemonSet', cronjob: 'CronJob', dynakube: 'DynaKube',
+  customresourcedefinition: 'CustomResourceDefinition', horizontalpodautoscaler: 'HorizontalPodAutoscaler',
+  persistentvolumeclaim: 'PersistentVolumeClaim', persistentvolume: 'PersistentVolume', networkpolicy: 'NetworkPolicy',
+  configmap: 'ConfigMap', serviceaccount: 'ServiceAccount', activegate: 'ActiveGate', oneagent: 'OneAgent',
+}
 export function shortType(t: string) {
-  return t
-    .replace(/^GENAI_/, 'GENAI ')
+  const words = t
     .replace(/^K8S_/, '')
-    .replace(/^AWS_/, 'AWS ')
-    .replace(/_/g, ' ')
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-    .replace(/^Aws /, 'AWS ')
-    .replace(/^Genai /, 'GenAI ')
+    .split('_')
+    .filter(Boolean)
+    .map((w) => w.toLowerCase())
+  return words
+    .map((w, i) => TYPE_WORDS[w] ?? (i === 0 ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ')
+    .replace(/^./, (c) => c.toUpperCase())
 }
 
 export function titleCase(s: string) {
@@ -116,4 +145,26 @@ export function titleCase(s: string) {
     .toLowerCase()
     .replace(/_/g, ' ')
     .replace(/\b\w/g, (c) => c.toUpperCase())
+}
+
+/** Formatter for a metric unit (curated vitals and discovered metrics). */
+export function fmtUnit(unit: string) {
+  switch (unit) {
+    case '%':
+      return (v: number) => fmtPct(v, v < 10 ? 1 : 0)
+    case 'B':
+      return (v: number) => fmtBytes(v)
+    case 'B/s':
+      return (v: number) => `${fmtBytes(v)}/s`
+    case 'µs':
+      return (v: number) => fmtUs(v)
+    case 'ms':
+      return (v: number) => fmtMs(v)
+    case 's':
+      return (v: number) => fmtSec(v)
+    case 'mCores':
+      return (v: number) => (v >= 1000 ? `${nf2.format(v / 1000)} cores` : `${Math.round(v)} m`)
+    default:
+      return (v: number) => fmtCompact(v)
+  }
 }

@@ -5,7 +5,7 @@ import { DataTable, type Column } from '../components/DataTable'
 import { EntityLink } from '../components/Entity'
 import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
-import { Badge, ErrorBox, Segmented, TimeAgo } from '../components/ui'
+import { Badge, Empty, ErrorBox, Segmented, TimeAgo } from '../components/ui'
 import { num, useDql, type Rec } from '../lib/api'
 import { parseFilters, serializeFilter, type Facet } from '../lib/facets'
 import { fmtInt, shortType } from '../lib/format'
@@ -146,6 +146,7 @@ export default function Kubernetes() {
             loading={res.isLoading}
             columns={COLUMNS[view]}
             facets={fc}
+            empty={<Empty title={`No ${view}`} hint="Smartscape has no Kubernetes objects of this kind." />}
             rowKey={(r) => r.id}
             href={(r) => entityHref(r.id, r.name)}
             initialSort={view === 'pods' ? { key: 'health', dir: 'desc' } : view === 'workloads' ? { key: 'ready', dir: 'asc' } : undefined}
@@ -209,7 +210,7 @@ const COLUMNS: Record<View, Column[]> = {
       sort: (r) => (num(r.desired) ? num(r.ready) / num(r.desired) : 1),
     },
     { key: 'cluster', header: 'Cluster', width: '120px', facet: 'cluster', render: (r) => <span className="text-ink-3">{r.cluster}</span>, sort: (r) => r.cluster },
-    { key: 'age', header: 'Created', width: '96px', align: 'right', render: (r) => <TimeAgo value={r.created} className="text-ink-3" />, sort: (r) => r.created },
+    { key: 'age', header: 'Age', width: '96px', align: 'right', render: (r) => <TimeAgo value={r.created} className="text-ink-3" />, sort: (r) => r.created },
   ],
   pods: [
     {

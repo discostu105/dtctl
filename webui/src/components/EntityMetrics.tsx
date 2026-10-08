@@ -1,4 +1,5 @@
 import type { UseQueryResult } from '@tanstack/react-query'
+import { fmtUnit } from '../lib/format'
 import { Activity } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { arr, useDql, type DqlResult } from '../lib/api'
@@ -6,7 +7,6 @@ import { smartscapeField, q, type Entity } from '../lib/dql'
 import { discoveredVital, splitMetric } from '../lib/metrics'
 import { tfSpec } from '../lib/shared'
 import { absolute, intervalFor, setTimeframe, useTimeframe } from '../lib/timeframe'
-import { fmtUnit } from '../pages/Entity'
 import { TimeChart, tsAxis } from './Chart'
 import { FilterInput, Panel } from './Panel'
 import { Empty, ErrorBox, Skeleton } from './ui'
@@ -72,7 +72,7 @@ export function EntityMetrics({ entity, discovery }: { entity: Entity; discovery
         <div className="text-sm text-ink-2">
           <b className="font-semibold text-ink">{keys.length}</b> metrics found by <code className="font-mono text-xs text-ink-3">{smartscapeField(entity.type)}</code>
         </div>
-        {keys.length > 6 && <FilterInput value={filter} onChange={setFilter} placeholder="Filter metrics…" className="ml-auto w-60" />}
+        {keys.length > 6 && <FilterInput value={filter} onChange={setFilter} placeholder="Filter metrics…" className="ml-auto w-72" />}
       </div>
       {groups.map(([g, ks]) => (
         <section key={g} className="mb-5">
@@ -150,7 +150,7 @@ function MetricChart({
         <div className="p-2 pl-0">
           <TimeChart
             x={tsAxis(r, field)}
-            series={[{ label: v.title, values: vals, color: /error|fail|5xx|reject/i.test(metric) ? '--s8' : '--s1' }]}
+            series={[{ label: v.title, values: vals, color: /error|fail|5xx|reject/i.test(metric) ? '--crit' : '--s1' }]}
             height={84}
             format={fmt}
             syncKey="metrics"

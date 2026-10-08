@@ -1,10 +1,11 @@
 import { Waypoints } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useLocation, useSearch } from 'wouter'
-import { FilterInput, PageHeader, Panel } from '../components/Panel'
-import { SpanTable, spanFailed } from '../components/signals'
+import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
+import { PageHeader, Panel } from '../components/Panel'
+import { SPAN_FACETS, SpanTable } from '../components/signals'
 import { ErrorBox, Segmented } from '../components/ui'
-import { useDql } from '../lib/api'
+import { useDql, type Rec } from '../lib/api'
 import { q, SPAN_LENSES, spansQuery } from '../lib/dql'
 import { tfSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
@@ -16,39 +17,45 @@ export default function Traces() {
   const params = new URLSearchParams(useSearch())
   const [, navigate] = useLocation()
   const lens = params.get('lens') ?? 'roots'
-  const [text, setText] = useState(params.get('q') ?? '')
-  const [debounced, setDebounced] = useState(text)
+  // The text is searched server-side (span, service, endpoint over the whole
+  // timeframe); facets then narrow the loaded spans client-side.
+  const [rowsForFacets, setRowsForFacets] = useState<Rec[] | undefined>()
+  const fc = useFacets(rowsForFacets, SPAN_FACETS, { text: (r) => `${r['span.name']} ${r['endpoint.name'] ?? ''} ${r.service}` })
+  const [debounced, setDebounced] = useState(fc.text.trim())
   useEffect(() => {
-    const t = setTimeout(() => setDebounced(text.trim()), 350)
+    const t = setTimeout(() => setDebounced(fc.text.split(/\s+/).filter((w) => w && !w.includes(':')).join(' ')), 350)
     return () => clearTimeout(t)
-  }, [text])
+  }, [fc.text])
   const extra = debounced
     ? [`contains(span.name, ${q(debounced)}, caseSensitive:false) or contains(coalesce(dt.service.name, service.name, ""), ${q(debounced)}, caseSensitive:false) or contains(coalesce(endpoint.name, ""), ${q(debounced)}, caseSensitive:false)`]
     : []
   const spec = tfSpec(tf, spansQuery(lens, extra, 500))
   const res = useDql(spec)
-  const rows = res.data?.records
-  const failed = rows?.filter(spanFailed).length ?? 0
+  useEffect(() => setRowsForFacets(res.data?.records), [res.data])
 
   return (
     <div className="flex h-full flex-col p-5">
       <PageHeader
         title="Traces"
         icon={<Waypoints className="size-5" />}
-        sub={rows ? `${rows.length}${rows.length >= 500 ? '+' : ''} spans · ${failed} failed · ${tf.label.toLowerCase()}` : 'Distributed traces'}
+        sub={`Distributed traces · ${tf.label.toLowerCase()}`}
         actions={
           <>
             <Segmented
               value={lens}
-              onChange={(l) => navigate(`/traces?lens=${l}`, { replace: true })}
+              onChange={(l) => {
+                const p = new URLSearchParams(window.location.search)
+                p.set('lens', l)
+                navigate(`/traces?${p}`, { replace: true })
+              }}
               options={SPAN_LENSES.map((l) => ({ value: l.key, label: l.label }))}
             />
-            <FilterInput value={text} onChange={setText} placeholder="Span, service or endpoint…" className="w-64" />
+            <FacetSearch fc={fc} placeholder="Filter spans by name, service, endpoint…" className="w-72" />
           </>
         }
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" title={SPAN_LENSES.find((l) => l.key === lens)?.label}>
-        {res.error ? <ErrorBox error={res.error} /> : <SpanTable records={rows} loading={res.isLoading} className="flex-1" />}
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={(res.data?.records.length ?? 0) >= 500 ? 'newest spans' : 'spans'} />}>
+        {res.error ? <ErrorBox error={res.error} /> : <SpanTable records={fc.rows} loading={res.isLoading} facets={fc} className="flex-1" autoFocus />}
       </Panel>
     </div>
   )

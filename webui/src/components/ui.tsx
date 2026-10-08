@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { AlertTriangle, Check, Copy, Inbox } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { toast } from 'sonner'
-import { ago, fmtAbs } from '../lib/format'
+import { ago, fmtAbs, fmtClock, fmtInt } from '../lib/format'
 
 export function Tip({ content, children, side = 'top' }: { content: ReactNode; children: ReactNode; side?: 'top' | 'bottom' | 'left' | 'right' }) {
   if (!content) return <>{children}</>
@@ -103,23 +103,6 @@ export function copy(value: string, label?: string) {
   )
 }
 
-/** Monospace ID that copies on click. */
-export function IdChip({ id, className }: { id: string; className?: string }) {
-  return (
-    <Tip content="Click to copy">
-      <button
-        type="button"
-        onClick={(e) => {
-          e.stopPropagation()
-          copy(id, 'ID')
-        }}
-        className={clsx('truncate rounded px-1 font-mono text-2xs text-ink-3 hover:bg-line hover:text-ink-2', className)}
-      >
-        {id}
-      </button>
-    </Tip>
-  )
-}
 
 /** Relative time that ticks, with the absolute timestamp on hover. */
 export function TimeAgo({ value, className }: { value: unknown; className?: string }) {
@@ -128,6 +111,24 @@ export function TimeAgo({ value, className }: { value: unknown; className?: stri
   return (
     <Tip content={fmtAbs(value)}>
       <span className={clsx('tnum whitespace-nowrap', className)}>{ago(value, now)}</span>
+    </Tip>
+  )
+}
+
+/**
+ * The time cell for lists: "13m ago" plus the clock time, muted, on one line;
+ * the full timestamp on hover. Event streams (logs, spans) show the precise
+ * clock time instead (fmtTime), because there the order and the ms matter.
+ */
+export function When({ value, className }: { value: unknown; className?: string }) {
+  const now = useNow(15_000)
+  if (value == null) return <span className="text-ink-4">—</span>
+  return (
+    <Tip content={fmtAbs(value)}>
+      <span className={clsx('tnum inline-flex items-baseline gap-1.5 whitespace-nowrap', className)}>
+        <span className="text-ink-2">{ago(value, now)}</span>
+        <span className="text-2xs text-ink-4">{fmtClock(value, now)}</span>
+      </span>
     </Tip>
   )
 }
@@ -202,67 +203,14 @@ export function Segmented<T extends string>({
           )}
         >
           {o.label}
-          {o.count != null && <span className="tnum text-2xs text-ink-3">{o.count}</span>}
+          {o.count != null && <span className="tnum text-2xs text-ink-3">{fmtInt(o.count)}</span>}
         </button>
       ))}
     </div>
   )
 }
 
-export function Tabs<T extends string>({
-  value,
-  onChange,
-  tabs,
-  className,
-}: {
-  value: T
-  onChange: (v: T) => void
-  tabs: { value: T; label: ReactNode; count?: number | null; hidden?: boolean }[]
-  className?: string
-}) {
-  return (
-    <div className={clsx('flex items-center gap-1 border-b border-line', className)} role="tablist">
-      {tabs
-        .filter((t) => !t.hidden)
-        .map((t, i) => (
-          <button
-            key={t.value}
-            role="tab"
-            aria-selected={t.value === value}
-            onClick={() => onChange(t.value)}
-            className={clsx(
-              'relative -mb-px inline-flex h-9 items-center gap-1.5 px-2.5 text-sm transition-colors',
-              t.value === value ? 'text-ink' : 'text-ink-3 hover:text-ink-2',
-            )}
-          >
-            <span>{t.label}</span>
-            {t.count != null && <span className="tnum rounded bg-line px-1 text-2xs text-ink-3">{t.count}</span>}
-            {i < 9 && <span className="sr-only">(press {i + 1})</span>}
-            {t.value === value && <span className="absolute inset-x-1.5 bottom-0 h-0.5 rounded-full bg-accent" />}
-          </button>
-        ))}
-    </div>
-  )
-}
 
-export function Stat({ label, value, sub, tone, className }: { label: ReactNode; value: ReactNode; sub?: ReactNode; tone?: Tone; className?: string }) {
-  return (
-    <div className={clsx('min-w-0', className)}>
-      <div className="text-2xs font-medium tracking-wide text-ink-3 uppercase">{label}</div>
-      <div
-        className={clsx(
-          'tnum mt-0.5 text-lg font-semibold',
-          tone === 'crit' && 'text-crit',
-          tone === 'warn' && 'text-warn',
-          tone === 'ok' && 'text-ok',
-        )}
-      >
-        {value}
-      </div>
-      {sub && <div className="truncate text-xs text-ink-3">{sub}</div>}
-    </div>
-  )
-}
 
 /** Key/value facts grid. */
 export function Facts({ items, className }: { items: [ReactNode, ReactNode][]; className?: string }) {

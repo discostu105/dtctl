@@ -6,10 +6,10 @@ import { EntityLink } from '../components/Entity'
 import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
 import { Meter, Spark } from '../components/Spark'
-import { Badge, ErrorBox, TimeAgo } from '../components/ui'
+import { Badge, Empty, ErrorBox, TimeAgo } from '../components/ui'
 import { arr, num, useDql, type Rec } from '../lib/api'
 import { bucket, type Facet } from '../lib/facets'
-import { fmtBytes, titleCase } from '../lib/format'
+import { fmtBytes, fmtInt, fmtPct, titleCase } from '../lib/format'
 import { entityHref } from '../lib/links'
 import { tfSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
@@ -76,7 +76,7 @@ export default function Hosts() {
         <span className="flex items-center justify-end gap-2.5">
           <Spark values={r[key]} color={color} width={72} max={100} />
           <Meter pct={now} className="w-12" />
-          <span className={clsx('w-11', now >= 90 ? 'text-crit' : now >= 75 ? 'text-warn' : '')}>{Number.isFinite(now) ? `${now.toFixed(0)}%` : '—'}</span>
+          <span className={clsx('w-11', now >= 90 ? 'text-crit' : now >= 75 ? 'text-warn' : '')}>{Number.isFinite(now) ? fmtPct(now, 0) : '—'}</span>
         </span>
       )
     },
@@ -118,7 +118,7 @@ export default function Hosts() {
       <PageHeader
         title="Hosts"
         icon={<Server className="size-5" />}
-        sub={`${rows.length || '…'} hosts · utilization over ${tf.label.toLowerCase()}`}
+        sub={`${list.data ? fmtInt(rows.length) : '…'} hosts · utilization · ${tf.label.toLowerCase()}`}
         actions={<FacetSearch fc={fc} placeholder="Filter hosts…" className="w-72" />}
       />
       <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" />}>
@@ -130,6 +130,7 @@ export default function Hosts() {
             loading={list.isLoading}
             columns={cols}
             facets={fc}
+            empty={<Empty title="No hosts" hint="Smartscape knows no hosts." />}
             rowKey={(r) => r.id}
             href={(r) => entityHref(r.id, r.name)}
             initialSort={{ key: 'cpu', dir: 'desc' }}

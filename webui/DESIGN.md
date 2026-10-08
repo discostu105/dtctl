@@ -291,6 +291,9 @@ Code map: `pkg/webui` (HTTP server: batch, cache, guards, static), `cmd/serve.go
 wiring to `pkg/exec` / `pkg/resources/document`), `webui/src/lib/dql.ts` (every query the UI
 runs), `webui/src/pages/*` (one file per destination), `webui/src/components/*` (design system).
 
+Building or changing a screen? Follow [UI_GUIDELINES.md](UI_GUIDELINES.md): page shapes, the
+component catalog, states, formatting, wording, keyboard, color and the rules for big tenants.
+
 ## 10. Further ideas
 
 * Saved views ("my services") pinned in the rail.

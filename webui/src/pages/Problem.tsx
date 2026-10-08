@@ -1,18 +1,19 @@
 import clsx from 'clsx'
-import { AlertOctagon, ArrowLeft, ExternalLink, Lightbulb, Sparkles } from 'lucide-react'
+import { BackLink, DetailFallback } from '../components/BackLink'
+import { DetailHeader, IdCopy, OpenInDynatrace } from '../components/DetailHeader'
+import { AlertOctagon, Lightbulb, Sparkles } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
-import { Link } from 'wouter'
-import { TimeChart, tsAxis } from '../components/Chart'
+import { TimeChart, tsAxis, Legend } from '../components/Chart'
 import { EntityChip } from '../components/Entity'
 import { Markdown } from '../components/Markdown'
 import { DataTabs } from '../components/DataTabs'
 import { Panel } from '../components/Panel'
 import { Inspector, LogDetail, LogStream, ProblemStatus, SidePanel, SpanTable } from '../components/signals'
-import { Badge, CopyButton, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo, useNow } from '../components/ui'
+import { Badge, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo, useNow } from '../components/ui'
 import { arr, num, useDql, useMeta, type Rec } from '../lib/api'
 import { evidenceQuery, logsQuery, problemDetailQuery, signalFilterAll, spanFilter, spanScopable, spansQuery, type Entity } from '../lib/dql'
 import { fmtCompact, fmtDateTime, span, titleCase } from '../lib/format'
-import { dtLinks } from '../lib/links'
+import { dtLinks, problemHref } from '../lib/links'
 import { ERROR_LEVELS } from '../lib/shared'
 import { useAdaptiveDql } from '../lib/sampling'
 import { useNames } from '../lib/names'
@@ -24,10 +25,15 @@ export default function Problem({ id }: { id: string }) {
   const p = res.data?.records[0]
   useTitle(p ? `${id} · ${p['event.name']}` : id)
   useEffect(() => {
-    if (p) pushRecent({ href: `/problems/${id}`, label: `${id} ${p['event.name']}`, kind: 'Problem' })
+    if (p) pushRecent({ href: problemHref(id), label: `${id} ${p['event.name']}`, kind: 'Problem' })
   }, [p, id])
 
-  if (res.error) return <ErrorBox error={res.error} />
+  if (res.error)
+    return (
+      <DetailFallback fallback="/problems" label="Problems">
+        <ErrorBox error={res.error} />
+      </DetailFallback>
+    )
   if (res.isLoading)
     return (
       <div className="p-5">
@@ -36,7 +42,12 @@ export default function Problem({ id }: { id: string }) {
         <Skeleton className="h-64" />
       </div>
     )
-  if (!p) return <Empty title={`Problem ${id} not found`} hint="It may be older than 30 days or the ID may be mistyped." />
+  if (!p)
+    return (
+      <DetailFallback fallback="/problems" label="Problems">
+        <Empty title={`Problem ${id} not found`} hint="It may be older than 30 days or the ID may be mistyped." />
+      </DetailFallback>
+    )
   return <ProblemView p={p} id={id} />
 }
 
@@ -87,8 +98,8 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
     if (!base) return null
     const x = tsAxis(base, f ? 'failed' : 'count')
     const series = []
-    if (f) series.push({ label: 'Failed requests', values: f.failed, color: '--s1' })
-    if (e) series.push({ label: 'Error logs', values: e.count, color: '--s2' })
+    if (f) series.push({ label: 'Failed requests', values: f.failed, color: '--crit' })
+    if (e) series.push({ label: 'Error logs', values: e.count, color: '--warn' })
     return { x, series }
   }, [errs.data, fails.data])
 
@@ -115,30 +126,17 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
   return (
     <div className="flex h-full">
       <div className="min-w-0 flex-1 overflow-auto p-5">
-        <Link href="/problems" className="mb-3 inline-flex items-center gap-1 text-xs text-ink-3 hover:text-ink-2">
-          <ArrowLeft className="size-3.5" /> Problems
-        </Link>
+        <BackLink fallback="/problems" label="Problems" />
 
         {/* header */}
-        <div className="mb-5 flex flex-wrap items-start gap-4">
-          <div
-            className={clsx(
-              'flex size-10 items-center justify-center rounded-xl',
-              active ? 'bg-crit-wash text-crit' : 'bg-line text-ink-3',
-            )}
-          >
-            <AlertOctagon className="size-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-2">
-              <h1 className="text-xl font-semibold tracking-tight">{p['event.name']}</h1>
-              <ProblemStatus status={p['event.status']} />
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-ink-3">
-              <span className="inline-flex items-center gap-1 font-mono text-xs">
-                {id}
-                <CopyButton value={id} label="problem ID" />
-              </span>
+        <DetailHeader
+          icon={<AlertOctagon />}
+          tone={active ? 'crit' : 'muted'}
+          title={p['event.name']}
+          badges={<ProblemStatus status={p['event.status']} />}
+          meta={
+            <>
+              <IdCopy id={id} label="problem ID" />
               <span>{titleCase(String(p['event.category'] ?? ''))}</span>
               <span>
                 started {fmtDateTime(p['event.start'])} (<TimeAgo value={p['event.start']} />)
@@ -150,19 +148,10 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
               {arr(p['dt.davis.impact_level']).map((l: string) => (
                 <Badge key={l}>{l} impact</Badge>
               ))}
-            </div>
-          </div>
-          {meta?.environment && (
-            <a
-              href={dtLinks.problem(meta.environment, p['event.id'])}
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-line bg-sunken px-3 text-sm text-ink-2 hover:border-line-strong hover:text-ink"
-            >
-              Open in Dynatrace <ExternalLink className="size-3.5" />
-            </a>
-          )}
-        </div>
+            </>
+          }
+          actions={<OpenInDynatrace href={meta?.environment && dtLinks.problem(meta.environment, p['event.id'])} />}
+        />
 
         <div className="grid grid-cols-3 gap-4 max-xl:grid-cols-1">
           <div className="col-span-2 flex flex-col gap-4 max-xl:col-span-1">
@@ -173,14 +162,7 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
               result={failSpec ? fails : errs}
               actions={
                 chart && (
-                  <div className="mr-2 flex items-center gap-3 text-xs text-ink-2">
-                    {chart.series.map((s) => (
-                      <span key={s.label} className="flex items-center gap-1.5">
-                        <i className="inline-block h-0.5 w-3 rounded" style={{ background: `var(${s.color})` }} />
-                        {s.label}
-                      </span>
-                    ))}
-                  </div>
+                  <Legend className="mr-2" swatch="line" items={chart.series.map((s) => ({ label: s.label, color: s.color! }))} />
                 )
               }
             >
@@ -260,7 +242,9 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
             </Panel>
 
             <Panel title="Evidence" spec={eventIds.length ? { query: evidenceQuery(eventIds) } : null} result={evidence}>
-              {evidence.isLoading ? (
+              {evidence.error ? (
+                <ErrorBox error={evidence.error} />
+              ) : evidence.isLoading ? (
                 <SkeletonRows rows={3} />
               ) : !evidence.data?.records.length ? (
                 <Empty title="No evidence events" />

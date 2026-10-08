@@ -10,7 +10,7 @@ import type { Facet } from '../lib/facets'
 import { titleCase } from '../lib/format'
 import { tfSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
-import { floorTf, useTimeframe } from '../lib/timeframe'
+import { floorTf, tfPhrase, useTimeframe } from '../lib/timeframe'
 
 const FACETS: Facet[] = [
   { key: 'status', label: 'Status', value: (r) => r.status, order: ['ACTIVE', 'CLOSED'], display: (v) => titleCase(v) },
@@ -39,7 +39,7 @@ export default function Problems() {
       <PageHeader
         title="Problems"
         icon={<AlertOctagon className="size-5" />}
-        sub={`Davis-detected problems · ${tf.label.toLowerCase()}${tf !== raw ? ' (at least 24h)' : ''}`}
+        sub={`Davis-detected problems · ${tfPhrase(tf, raw)}`}
         actions={
           <>
             <Segmented
@@ -76,7 +76,7 @@ function ProblemsTableWithPrefetch(props: { records: any[] | undefined; loading:
         if (a) prefetchDql({ query: problemDetailQuery(decodeURIComponent(a.getAttribute('href')!.split('/')[2])) })
       }}
     >
-      <ProblemsTable {...props} />
+      <ProblemsTable {...props} autoFocus />
     </div>
   )
 }

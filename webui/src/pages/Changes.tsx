@@ -5,9 +5,8 @@ import { DataTable, type Column } from '../components/DataTable'
 import { FacetSearch, FacetSummary, useFacets } from '../components/Facets'
 import { PageHeader, Panel } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
-import { Badge, CopyButton, ErrorBox, Segmented, TimeAgo } from '../components/ui'
+import { Badge, CopyButton, Empty, ErrorBox, Segmented, When } from '../components/ui'
 import { useDql, type Rec } from '../lib/api'
-import { fmtDateTime } from '../lib/format'
 import type { Facet } from '../lib/facets'
 import { changesSpec } from '../lib/shared'
 import { useTitle } from '../lib/store'
@@ -54,16 +53,11 @@ export default function Changes() {
   const cols: Column[] = [
     {
       key: 'time',
-      header: 'When',
-      width: '150px',
-      render: (r) => (
-        <span className="flex items-center gap-2">
-          <span className="tnum text-ink-2">{fmtDateTime(r.timestamp)}</span>
-        </span>
-      ),
+      header: 'Time',
+      width: '130px',
+      render: (r) => <When value={r.timestamp} />,
       sort: (r) => r.timestamp,
     },
-    { key: 'ago', header: '', width: '70px', render: (r) => <TimeAgo value={r.timestamp} className="text-ink-3" /> },
     {
       key: 'what',
       header: 'Change',
@@ -154,6 +148,7 @@ export default function Changes() {
               loading={res.isLoading}
               columns={cols}
               facets={fc}
+            empty={<Empty title="No changes" hint="No deployments, configuration changes or restarts in this timeframe." />}
               rowKey={(r, i) => `${r['event.id'] ?? i}-${r.timestamp}`}
               onOpen={setSel}
               selectedKey={sel ? `${sel['event.id']}-${sel.timestamp}` : null}
