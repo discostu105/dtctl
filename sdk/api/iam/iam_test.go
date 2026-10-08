@@ -49,6 +49,25 @@ func TestListUsers(t *testing.T) {
 	}
 }
 
+// IAM rejects a comma-joined uuid list ("User uuid is not valid"): each UUID
+// is its own query parameter.
+func TestListUsersByUUIDRepeatsTheParameter(t *testing.T) {
+	var got []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("/platform/iam/v1/organizational-levels/environment/127/users", func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()["uuid"]
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(UserListResponse{})
+	})
+	h := NewHandler(newTestClient(t, mux))
+	if _, err := h.ListUsers(context.Background(), "", []string{"u-1", "u-2"}, 0); err != nil {
+		t.Fatalf("ListUsers() error: %v", err)
+	}
+	if len(got) != 2 || got[0] != "u-1" || got[1] != "u-2" {
+		t.Fatalf("uuid params = %q, want [u-1 u-2]", got)
+	}
+}
+
 func TestGetUser(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/platform/iam/v1/organizational-levels/environment/127/users/u-1", func(w http.ResponseWriter, r *http.Request) {

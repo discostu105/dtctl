@@ -68,19 +68,19 @@ func (h *Handler) ListUsers(ctx context.Context, partialString string, uuids []s
 	for {
 		req := h.client.HTTP().R().SetContext(ctx)
 
-		uuidFilter := ""
-		if len(uuids) > 0 {
-			uuidFilter = strings.Join(uuids, ",")
-		}
-
 		params := httpclient.PaginationParams{
 			Style:         httpclient.PaginationDefault,
 			PageKeyParam:  "page-key",
 			PageSizeParam: "page-size",
 			NextPageKey:   nextPageKey,
 			PageSize:      chunkSize,
-			Filters:       map[string]string{"partialString": partialString, "uuid": uuidFilter},
+			Filters:       map[string]string{"partialString": partialString},
 		}.QueryParams()
+		// IAM takes one uuid parameter per user; a comma-joined list is
+		// rejected as "User uuid is not valid".
+		for _, u := range uuids {
+			params.Add("uuid", u)
+		}
 
 		req.SetQueryParamsFromValues(params)
 

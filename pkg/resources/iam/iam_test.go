@@ -176,10 +176,11 @@ func TestListUsers(t *testing.T) {
 				}
 
 				if len(tt.uuids) > 0 {
-					uuidParam := r.URL.Query().Get("uuid")
-					expectedUUIDs := strings.Join(tt.uuids, ",")
-					if uuidParam != expectedUUIDs {
-						t.Errorf("expected uuid %q on every request, got %q", expectedUUIDs, uuidParam)
+					// one uuid parameter per user: IAM rejects a comma-joined list
+					uuidParams := strings.Join(r.URL.Query()["uuid"], " ")
+					expectedUUIDs := strings.Join(tt.uuids, " ")
+					if uuidParams != expectedUUIDs {
+						t.Errorf("expected uuid params %q on every request, got %q", expectedUUIDs, uuidParams)
 					}
 				}
 
