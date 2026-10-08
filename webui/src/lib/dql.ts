@@ -122,8 +122,26 @@ export function evidenceQuery(eventIds: string[]) {
 export const SERVICES_RED_LIMIT = 500
 export const SERVICES_LIST_LIMIT = 1000
 
+/**
+ * Request, failure and latency series per service, from whichever family the
+ * service reports: requests, service-mesh requests (no OneAgent), messaging
+ * consumers, function invocations. The families are not added up: on the
+ * tenants checked, dt.service.request.count already counts the messaging and
+ * function invocations of a OneAgent service, so a sum would double them. The
+ * others only fill in for a service, or an interval, that has no request count.
+ * union:true gives a series lacking a metric an array of nulls (not null), so
+ * the fallback is per element. timeseries takes at most 10 metric keys, so
+ * function-only services go without latency.
+ */
 export function servicesRedQuery(interval: string, filter = '') {
-  return `timeseries { req = sum(dt.service.request.count, default:0), fail = sum(dt.service.request.failure_count, default:0), rt = avg(dt.service.request.response_time) }, by:{dt.smartscape.service}, interval:${interval}${filter ? `, filter:{ ${filter} }` : ''}
+  return `timeseries {
+  r = sum(dt.service.request.count), rf = sum(dt.service.request.failure_count), rrt = avg(dt.service.request.response_time),
+  s = sum(dt.service.request.service_mesh.count), sf = sum(dt.service.request.service_mesh.failure_count), srt = avg(dt.service.request.service_mesh.response_time),
+  m = sum(dt.service.messaging.process.count), mf = sum(dt.service.messaging.process.failure_count), mrt = avg(dt.service.messaging.process.duration),
+  f = sum(dt.service.faas_invoke.count)
+}, union:true, by:{dt.smartscape.service}, interval:${interval}${filter ? `, filter:{ ${filter} }` : ''}
+| fieldsAdd req = coalesce(r[], s[], m[], f[], 0), fail = coalesce(rf[], sf[], mf[], 0), rt = coalesce(rrt[], srt[], mrt[])
+| fieldsRemove r, rf, rrt, s, sf, srt, m, mf, mrt, f
 | lookup [smartscapeNodes SERVICE | fields id, name, k8s.namespace.name, dt.service.sdv1_type], sourceField:dt.smartscape.service, lookupField:id, prefix:"s."
 | fieldsAdd total = arraySum(req), failed = arraySum(fail), latency = arrayAvg(rt)
 | fieldsAdd failure_rate = if(total > 0, 100.0 * failed / total, else: 0.0)

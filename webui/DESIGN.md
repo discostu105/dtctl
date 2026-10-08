@@ -84,6 +84,10 @@ active), category, and affected entities as chips. Below it:
 ### J3 — "Is my service healthy?" (service owner)
 Services list: RED metrics (throughput, failure rate, latency) as sparklines plus
 current values, sortable, with an instant client-side filter. Failing services sort first.
+The metrics come from whichever family a service reports: requests, service-mesh requests
+(no OneAgent), messaging consumers, function invocations. The families are not added up,
+because `dt.service.request.count` already counts a OneAgent service's messaging and function
+invocations. The others only fill in where it has no data.
 Service page: three vital charts that share one crosshair, followed by Logs,
 Traces, Problems, Events and Related tabs.
 
