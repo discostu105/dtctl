@@ -216,8 +216,7 @@ func TestHandler_Healthz(t *testing.T) {
 func TestNewCommand_Registered(t *testing.T) {
 	c := NewCommand()
 	require.Equal(t, "serve", c.Name())
-	// web is the local web UI (cmd/serve.go), the one non-protocol child.
-	require.Equal(t, []string{"http", "web"}, protocolNames(c),
+	require.Equal(t, []string{"http"}, protocolNames(c),
 		"every server is a named protocol under serve, so a future `serve mcp` "+
 			"lands beside `serve http` rather than competing with a default")
 

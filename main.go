@@ -14,9 +14,7 @@ func main() {
 	// request the server accepts becomes an engine execution that must acquire
 	// the per-invocation lock the pipeline would already be holding for the
 	// serve command itself. See serve.Run.
-	// `dtctl serve web` (the local web UI, cmd/serve.go) is an ordinary command
-	// on the local config and stays in the pipeline.
-	if serve.Enabled() && len(os.Args) > 1 && os.Args[1] == "serve" && (len(os.Args) < 3 || os.Args[2] != "web") {
+	if serve.Enabled() && len(os.Args) > 1 && os.Args[1] == "serve" {
 		os.Exit(serve.Run(os.Args[2:]))
 	}
 

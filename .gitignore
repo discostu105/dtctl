@@ -58,7 +58,3 @@ result-*
 # Python (scripts/gen-docs)
 __pycache__/
 *.pyc
-
-# dtctl web UI: the built SPA is embedded via go:embed and committed so
-# `go build` works without Node (rebuild with `make build-webui`).
-!pkg/webui/dist/
