@@ -8,6 +8,7 @@ import type { FacetCtl } from './Facets'
 import type { Facet } from '../lib/facets'
 import { fmtNs, fmtTime, span, titleCase } from '../lib/format'
 import { problemHref, traceHref } from '../lib/links'
+import { inspectorRows } from '../lib/record'
 import { DataTable, type Column } from './DataTable'
 import { EntityLink } from './Entity'
 import { Badge, CopyButton, Empty, Kbd, SkeletonRows, TimeAgo, Tip, type Tone, When } from './ui'
@@ -91,26 +92,17 @@ export function prettyContent(s: string): { text: string; json: boolean } {
   return { text: s, json: false }
 }
 
-const isEmpty = (v: unknown) => v == null || v === '' || (Array.isArray(v) && v.length === 0)
-
 /**
- * All attributes of a record, sorted, filterable. Empty values (null, "",
- * []) are hidden by default: they are noise in OTel records with sparse
- * attributes, and one click shows them.
+ * All attributes of a record, sorted, filterable. Empty values and legacy
+ * dt.entity.* ids that a dt.smartscape.* field already shows are held back
+ * (lib/record.ts); one click shows them.
  */
 export function Inspector({ rec, hide = [] }: { rec: Rec; hide?: string[] }) {
   const [filter, setFilter] = useState('')
-  const [showEmpty, setShowEmpty] = useState(false)
-  const all = useMemo(() => Object.entries(rec).filter(([k]) => !hide.includes(k)), [rec, hide])
-  const nEmpty = all.filter(([, v]) => isEmpty(v)).length
-  const entries = useMemo(
-    () =>
-      all
-        .filter(([, v]) => showEmpty || !isEmpty(v))
-        .filter(([k, v]) => !filter || k.toLowerCase().includes(filter.toLowerCase()) || String(JSON.stringify(v)).toLowerCase().includes(filter.toLowerCase()))
-        .sort(([a], [b]) => a.localeCompare(b)),
-    [all, filter, showEmpty],
-  )
+  const [showAll, setShowAll] = useState(false)
+  const { rows: entries, empty, twins } = useMemo(() => inspectorRows(rec, { hide, all: showAll, filter }), [rec, hide, showAll, filter])
+  const held = empty + twins
+  const heldLabel = [empty && `${empty} empty`, twins && `${twins} duplicate ${twins === 1 ? 'id' : 'ids'}`].filter(Boolean).join(', ')
   return (
     <div>
       <div className="mb-2 flex items-center gap-2">
@@ -123,13 +115,15 @@ export function Inspector({ rec, hide = [] }: { rec: Rec; hide?: string[] }) {
               setFilter('')
             }
           }}
-          placeholder={`Filter ${all.length - nEmpty} attributes…`}
+          placeholder={`Filter ${Object.keys(rec).filter((k) => !hide.includes(k)).length - held} attributes…`}
           className="h-7 min-w-0 flex-1 rounded-md border border-line bg-sunken px-2 text-xs outline-none placeholder:text-ink-4 focus:border-accent/60"
         />
-        {nEmpty > 0 && (
-          <button type="button" onClick={() => setShowEmpty(!showEmpty)} className="shrink-0 rounded px-1.5 py-1 text-2xs text-ink-3 hover:bg-line hover:text-ink-2">
-            {showEmpty ? 'hide' : 'show'} {nEmpty} empty
-          </button>
+        {held > 0 && (
+          <Tip content={twins ? 'Duplicate ids: dt.entity.* fields that repeat the id of a dt.smartscape.* field' : 'null, empty text and empty lists'}>
+            <button type="button" onClick={() => setShowAll(!showAll)} className="shrink-0 rounded px-1.5 py-1 text-2xs text-ink-3 hover:bg-line hover:text-ink-2">
+              {showAll ? `hide ${heldLabel}` : `show ${heldLabel}`}
+            </button>
+          </Tip>
         )}
       </div>
       <div className="divide-y divide-line">

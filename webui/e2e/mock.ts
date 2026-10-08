@@ -35,6 +35,12 @@ const ACTIVITY = {
   totals: { requested: 0, executed: 0, cached: 0, shared: 0, errors: 0, cancelled: 0, scannedBytes: 0 },
 }
 
+// one owner IAM resolved, one it could not (no iam:users:read, or a service user)
+const DOCS = [
+  { id: 'doc-1', name: 'Checkout overview', type: 'dashboard', owner: '00000000-0000-0000-0000-000000000001', ownerName: 'Ada Example', modified: '2026-01-10T12:00:00Z', isPrivate: false },
+  { id: 'doc-2', name: 'Capacity review', type: 'dashboard', owner: '00000000-0000-0000-0000-000000000002', modified: '2026-01-09T12:00:00Z', isPrivate: true },
+]
+
 const hosts = (n: number): Rec[] => Array.from({ length: n }, (_, i) => ({
   id: `HOST-${String(i + 1).padStart(16, '0')}`,
   name: `host-${i + 1}.example.invalid`,
@@ -107,7 +113,7 @@ export async function mockApi(page: Page, opts: { hosts?: number; notices?: Noti
     if (path === '/api/meta') return json(route, META)
     if (path === '/api/activity') return json(route, ACTIVITY)
     if (path === '/api/activity/cancel' || path === '/api/context') return json(route, {})
-    if (path === '/api/documents') return json(route, [])
+    if (path === '/api/documents') return json(route, new URL(req.url()).searchParams.get('type') === 'dashboard' ? DOCS : [])
     if (path.startsWith('/api/dql/')) return json(route, path.endsWith('verify') ? { valid: true, notifications: [] } : { suggestions: [] })
     if (path === '/api/batch') {
       const specs = req.postDataJSON() as Spec[]

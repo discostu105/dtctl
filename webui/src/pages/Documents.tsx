@@ -15,13 +15,18 @@ interface Doc {
   name: string
   type: string
   owner: string
+  /** resolved through IAM; absent without iam:users:read */
+  ownerName?: string
   modified: string
   isPrivate: boolean
   lastOpened?: string
 }
 
 const opened = (d: Doc) => !!d.lastOpened && !d.lastOpened.startsWith('0001')
+/** The owner's name, or a short id when IAM could not name them. */
+const ownerLabel = (d: Doc) => d.ownerName || (d.owner ? `${d.owner.slice(0, 8)}…` : '')
 const DOC_FACETS: Facet<Doc>[] = [
+  { key: 'owner', label: 'Owner', value: ownerLabel },
   { key: 'opened', label: 'Opened by you', value: (d) => (opened(d) ? 'Yes' : 'Never'), order: ['Yes', 'Never'] },
   { key: 'visibility', label: 'Visibility', value: (d) => (d.isPrivate ? 'Private' : 'Shared'), order: ['Shared', 'Private'] },
 ]
@@ -33,7 +38,7 @@ export default function Documents() {
   const res = useQuery({ queryKey: ['docs', type], queryFn: () => getJSON<Doc[]>(`/api/documents?type=${type}`), staleTime: 60_000 })
   // warm the other tab
   useQuery({ queryKey: ['docs', type === 'dashboard' ? 'notebook' : 'dashboard'], queryFn: () => getJSON<Doc[]>(`/api/documents?type=${type === 'dashboard' ? 'notebook' : 'dashboard'}`), staleTime: 60_000 })
-  const fc = useFacets(res.data, DOC_FACETS, { text: (d) => d.name })
+  const fc = useFacets(res.data, DOC_FACETS, { text: (d) => `${d.name} ${d.ownerName ?? ''}` })
   const href = (d: Doc) => (meta ? dtLinks.document(meta.environment, d.type, d.id) : '#')
 
   return (
@@ -87,6 +92,21 @@ export default function Documents() {
                   </span>
                 ),
                 sort: (d) => d.name.toLowerCase(),
+              },
+              {
+                key: 'owner',
+                header: 'Owner',
+                width: 'minmax(140px,1fr)',
+                facet: 'owner',
+                render: (d) =>
+                  d.ownerName ? (
+                    <span className="truncate text-ink-2">{d.ownerName}</span>
+                  ) : (
+                    <Tip content={<span className="font-mono text-2xs">{d.owner}</span>}>
+                      <span className="truncate font-mono text-xs text-ink-3">{ownerLabel(d)}</span>
+                    </Tip>
+                  ),
+                sort: (d) => ownerLabel(d).toLowerCase(),
               },
               { key: 'modified', header: 'Modified', width: '110px', align: 'right', render: (d) => <TimeAgo value={d.modified} className="text-ink-2" />, sort: (d) => d.modified },
               {

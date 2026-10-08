@@ -149,3 +149,13 @@ test('a partial result says so in plain language', async ({ page }) => {
   await expect(page.getByRole('status').filter({ hasText: 'Partial result: Grail stopped after scanning 500 GB. Narrow the timeframe or add a filter.' })).toBeVisible()
   expect(errors).toEqual([])
 })
+
+test('documents name their owners, or show a short id', async ({ page }) => {
+  const errors = watchErrors(page)
+  await mockApi(page)
+  await page.goto('/docs')
+  const main = page.locator('main')
+  await expect(main.getByText('Ada Example')).toBeVisible()
+  await expect(main.getByText('00000000…')).toBeVisible()
+  expect(errors).toEqual([])
+})

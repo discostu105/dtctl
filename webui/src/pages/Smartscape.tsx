@@ -8,7 +8,8 @@ import { EntityLink, TypeIcon } from '../components/Entity'
 import { FilterInput, PageHeader, Panel } from '../components/Panel'
 import { FacetSearch, FacetSummary, useAttrs, useFacets } from '../components/Facets'
 import type { Facet } from '../lib/facets'
-import { Empty, ErrorBox, Skeleton, TimeAgo } from '../components/ui'
+import { Empty, ErrorBox, Skeleton, TimeAgo, Tip } from '../components/ui'
+import { useAzureSubscriptions } from '../lib/accounts'
 import { num, prefetchDql, useDql, type Rec } from '../lib/api'
 import { censusQuery, instancesQuery, INSTANCES_LIMIT } from '../lib/dql'
 import { nodesSource, withAttrs } from '../lib/attrs'
@@ -98,11 +99,21 @@ const INSTANCE_FACETS: Facet<Rec>[] = [
   { key: 'ns', label: 'Namespace', value: (r) => r['k8s.namespace.name'], aliases: ['namespace'], field: 'k8s.namespace.name' },
   { key: 'cluster', label: 'Cluster', value: (r) => r['k8s.cluster.name'], field: 'k8s.cluster.name' },
   { key: 'region', label: 'Region', value: (r) => r.region, aliases: ['location'] },
-  { key: 'account', label: 'Account', value: (r) => r.account, aliases: ['subscription', 'project'] },
+  { key: 'account', label: 'Account', value: (r) => r.accountName ?? r.account, aliases: ['subscription', 'project'] },
 ]
 
 /** What the cloud calls the account a resource belongs to. */
 const accountWord = (type: string) => (type.startsWith('AZURE_') ? 'Subscription' : type.startsWith('GCP_') ? 'Project' : 'Account')
+
+/** The account's name when known (Azure subscriptions), its id otherwise. */
+function AccountCell({ r }: { r: Rec }) {
+  if (!r.accountName) return <span className="truncate font-mono text-xs text-ink-3">{r.account}</span>
+  return (
+    <Tip content={<span className="font-mono text-2xs">{r.account}</span>}>
+      <span className="truncate text-ink-2">{r.accountName}</span>
+    </Tip>
+  )
+}
 
 function Instances({ type }: { type: string }) {
   useTitle(shortType(type))
@@ -110,7 +121,12 @@ function Instances({ type }: { type: string }) {
   const attrs = useAttrs(source)
   const spec = { query: withAttrs(instancesQuery(type), attrs.filters), ttl: 120 }
   const res = useDql(spec)
-  const fc = useFacets(res.data?.records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id}`, attrs, limit: INSTANCES_LIMIT })
+  const subs = useAzureSubscriptions(type.startsWith('AZURE_'))
+  const records = useMemo(
+    () => (subs.size ? res.data?.records.map((r) => (subs.has(r.account) ? { ...r, accountName: subs.get(r.account) } : r)) : res.data?.records),
+    [res.data, subs],
+  )
+  const fc = useFacets(records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id} ${r.accountName ?? ''}`, attrs, limit: INSTANCES_LIMIT })
   const hasNs = res.data?.records.some((r) => r['k8s.namespace.name'])
   const hasRegion = res.data?.records.some((r) => r.region)
   const hasAccount = res.data?.records.some((r) => r.account)
@@ -141,7 +157,7 @@ function Instances({ type }: { type: string }) {
               ...(hasNs ? [{ key: 'ns', header: 'Namespace', width: 'minmax(120px,1fr)', facet: 'ns', render: (r: Rec) => <span className="text-ink-2">{r['k8s.namespace.name']}</span>, sort: (r: Rec) => r['k8s.namespace.name'] }] : []),
               ...(hasRegion ? [{ key: 'region', header: 'Region', width: '130px', facet: 'region', render: (r: Rec) => <span className="text-ink-2">{r.region}</span>, sort: (r: Rec) => r.region }] : []),
               ...(hasAccount
-                ? [{ key: 'account', header: accountWord(type), width: 'minmax(130px,1fr)', facet: 'account', render: (r: Rec) => <span className="truncate font-mono text-xs text-ink-3">{r.account}</span>, sort: (r: Rec) => r.account }]
+                ? [{ key: 'account', header: accountWord(type), width: 'minmax(130px,1fr)', facet: 'account', render: (r: Rec) => <AccountCell r={r} />, sort: (r: Rec) => r.accountName ?? r.account }]
                 : []),
               { key: 'id', header: 'ID', width: '220px', render: (r) => <span className={clsx('font-mono text-xs text-ink-3')}>{r.id}</span> },
               { key: 'seen', header: 'Last seen', width: '100px', align: 'right', render: (r) => <TimeAgo value={r.lifetime?.end} className="text-ink-3" />, sort: (r) => r.lifetime?.end },

@@ -21,7 +21,9 @@ import (
 	"github.com/dynatrace-oss/dtctl/pkg/resources/document"
 	"github.com/dynatrace-oss/dtctl/pkg/version"
 	"github.com/dynatrace-oss/dtctl/pkg/webui"
+	sdkiam "github.com/dynatrace-oss/dtctl/sdk/api/iam"
 	sdkquery "github.com/dynatrace-oss/dtctl/sdk/api/query"
+	"github.com/dynatrace-oss/dtctl/sdk/httpclient"
 )
 
 // NewServeWebCommand builds `dtctl serve web`. It hangs under the
@@ -74,15 +76,21 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 				QuietCancel:           true,
 			})
 		},
-		Documents: func(_ context.Context, docType string) ([]webui.Document, error) {
-			list, err := tenants.current().docs.List(document.DocumentFilters{Type: docType, ChunkSize: 200})
+		Documents: func(ctx context.Context, docType string) ([]webui.Document, error) {
+			t := tenants.current()
+			list, err := t.docs.List(document.DocumentFilters{Type: docType, ChunkSize: 200})
 			if err != nil {
 				return nil, err
 			}
+			owners := make([]string, 0, len(list.Documents))
+			for _, d := range list.Documents {
+				owners = append(owners, d.Owner)
+			}
+			names := t.owners.resolve(ctx, owners)
 			out := make([]webui.Document, 0, len(list.Documents))
 			for _, d := range list.Documents {
 				wd := webui.Document{
-					ID: d.ID, Name: d.Name, Type: d.Type, Owner: d.Owner,
+					ID: d.ID, Name: d.Name, Type: d.Type, Owner: d.Owner, OwnerName: names[d.Owner],
 					Modified: d.ModificationInfo.LastModifiedTime, IsPrivate: d.IsPrivate,
 				}
 				if d.UserContext != nil {
@@ -181,6 +189,7 @@ type webTenant struct {
 	client   *client.Client
 	executor *exec.DQLExecutor
 	docs     *document.Handler
+	owners   *ownerDirectory
 
 	userOnce sync.Once
 	userName string
@@ -216,6 +225,7 @@ func (t *webTenants) use(name string) (*webTenant, error) {
 	wt := &webTenant{
 		name: name, env: nc.Context.Environment, safety: string(nc.Context.SafetyLevel),
 		client: c, executor: newDQLExecutor(t.ctx, c), docs: document.NewHandler(c),
+		owners: newOwnerDirectory(iamUserLookup(sdkiam.NewHandler(httpclient.Wrap(c.HTTP())))),
 	}
 	t.byID[name] = wt
 	t.cur = wt

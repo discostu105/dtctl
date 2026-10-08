@@ -7,6 +7,7 @@ import { EntityLink, TypeIcon } from '../components/Entity'
 import { Panel } from '../components/Panel'
 import { Inspector, LogDetail, LogStream, ProblemsTable, SidePanel, SpanTable } from '../components/signals'
 import { Badge, Empty, ErrorBox, Facts, Skeleton, SkeletonRows, TimeAgo } from '../components/ui'
+import { useAzureSubscriptions } from '../lib/accounts'
 import { arr, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
 import {
   changesQuery, detailQuery, edgesQuery, logsQuery, namesQuery, problemsQuery, signalFilter, signalFilterAll, spanFilter, spanScopable, spansQuery,
@@ -281,6 +282,8 @@ const FACT_KEYS: [string, string][] = [
   ['cloud.provider', 'Cloud'],
   ['aws.region', 'AWS region'],
   ['aws.account.id', 'AWS account'],
+  ['azure.location', 'Azure location'],
+  ['azure.subscription', 'Azure subscription'],
   ['aws.availability_zone', 'Zone'],
   ['dt.service.sdv1_type', 'Service type'],
   ['process.technology', 'Technology'],
@@ -300,7 +303,7 @@ function Overview({ rec, loading, type, classic }: { rec: Rec | undefined; loadi
   if (!rec) return <Empty title="Entity not found in Smartscape" hint="It may no longer exist, or the timeframe may be before it was created." />
   const facts: [string, React.ReactNode][] = FACT_KEYS.filter(([k]) => rec[k] != null && rec[k] !== '').map(([k, label]) => [
     label,
-    k === 'memory' ? fmtBytes(num(rec[k])) : Array.isArray(rec[k]) ? rec[k].join(', ') : String(rec[k]),
+    k === 'memory' ? fmtBytes(num(rec[k])) : k === 'azure.subscription' ? <Subscription id={String(rec[k])} /> : Array.isArray(rec[k]) ? rec[k].join(', ') : String(rec[k]),
   ])
   facts.push(['Type', shortType(type)])
   if (rec.lifetime?.start) facts.push(['First seen', fmtDateTime(rec.lifetime.start)])
@@ -325,6 +328,18 @@ function Overview({ rec, loading, type, classic }: { rec: Rec | undefined; loadi
         )}
       </div>
     </div>
+  )
+}
+
+/** An Azure subscription by name, with its id below. */
+function Subscription({ id }: { id: string }) {
+  const name = useAzureSubscriptions(true).get(id)
+  if (!name) return <span className="font-mono text-xs">{id}</span>
+  return (
+    <span className="flex flex-col">
+      <span>{name}</span>
+      <span className="font-mono text-2xs text-ink-3">{id}</span>
+    </span>
   )
 }
 

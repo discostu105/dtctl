@@ -63,8 +63,9 @@ export function signalFilterAll(es: Entity[]) {
   return es.map((e) => `(${signalFilter(e)})`).join(' or ')
 }
 
+/** Types whose id is stamped on spans as dt.smartscape.<type>. */
 export function spanScopable(type: string) {
-  return type === 'SERVICE' || type === 'CONTAINER' || type.startsWith('K8S_') || type.startsWith('GENAI_')
+  return type === 'SERVICE' || type === 'HOST' || type === 'CONTAINER' || type.startsWith('K8S_') || type.startsWith('GENAI_')
 }
 
 export function spanFilter(e: Entity) {
@@ -243,6 +244,11 @@ export function censusQuery() {
 }
 
 export const INSTANCES_LIMIT = 1000
+
+/** Azure resources carry only the subscription GUID; the subscription node has its name. */
+export const AZURE_SUBSCRIPTIONS_QUERY = `smartscapeNodes "AZURE_MICROSOFT_RESOURCES_SUBSCRIPTIONS"
+| fields azure.subscription, name
+| limit 4000`
 
 /** Any Smartscape type. Cloud resources often lack a name: fall back to their Name tag, resource name or ARN. */
 export function instancesQuery(type: string) {

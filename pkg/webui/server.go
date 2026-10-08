@@ -40,10 +40,12 @@ type QueryFunc func(ctx context.Context, query, from, to string, maxRecords int6
 
 // Document is the slim document shape the UI lists (dashboards, notebooks).
 type Document struct {
-	ID         string    `json:"id"`
-	Name       string    `json:"name"`
-	Type       string    `json:"type"`
-	Owner      string    `json:"owner"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Owner string `json:"owner"`
+	// OwnerName is the owner's name when IAM could resolve it.
+	OwnerName  string    `json:"ownerName,omitempty"`
 	Modified   time.Time `json:"modified"`
 	IsPrivate  bool      `json:"isPrivate"`
 	LastOpened time.Time `json:"lastOpened,omitempty"`
