@@ -104,7 +104,8 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
   }, [errs.data, fails.data])
 
   const eventIds = arr(p['dt.davis.event_ids'])
-  const evidence = useDql(eventIds.length ? { query: evidenceQuery(eventIds) } : null)
+  const evidenceSpec = eventIds.length ? { query: evidenceQuery(eventIds, p['event.start']) } : null
+  const evidence = useDql(evidenceSpec)
 
   const [tab, setTab] = useState<'logs' | 'traces' | 'events' | 'raw'>('logs')
   const logsSpec = sigFilter ? { query: logsQuery([sigFilter], 500), from: win.from, to: win.to } : null
@@ -241,7 +242,7 @@ function ProblemView({ p, id }: { p: Rec; id: string }) {
               )}
             </Panel>
 
-            <Panel title="Evidence" spec={eventIds.length ? { query: evidenceQuery(eventIds) } : null} result={evidence}>
+            <Panel title="Evidence" spec={evidenceSpec} result={evidence}>
               {evidence.error ? (
                 <ErrorBox error={evidence.error} />
               ) : evidence.isLoading ? (
