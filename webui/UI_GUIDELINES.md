@@ -109,6 +109,13 @@ Render in this order: **error → loading → empty → data**.
   timeframe phrase only for time-bound data. When facets hide everything, `DataTable` already says
   "Nothing matches these filters" with a **Clear all** button.
 - Counts in headers and tabs show `…` only while loading, never at 0.
+- **Partial:** Grail returns a scan-limit hit, a truncated result or a timeout as a *successful*
+  query with a notification, so it looks complete. `QueryWarning` turns it into one line that says
+  what happened and what helps ("Partial result: Grail stopped after scanning 500 GB. Narrow the
+  timeframe or add a filter."), with Grail's wording on hover. `Panel` shows it for its `result`
+  (pass `warn={[list, …]}` when its rows come from other queries too); a main query outside a
+  Panel renders `QueryWarning` right above its data. Sampling is not a warning: it has `SampledBadge`.
+  The categories live in `lib/notices.ts`.
 
 ---
 

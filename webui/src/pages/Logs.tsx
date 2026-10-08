@@ -3,7 +3,7 @@ import { Search, X } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useLocation, useSearch } from 'wouter'
 import { StackedBars, tsAxis } from '../components/Chart'
-import { QueryInfo, queryHref } from '../components/Panel'
+import { QueryInfo, queryHref, QueryWarning } from '../components/Panel'
 import { LogDetail, LogStream, SidePanel } from '../components/signals'
 import { ErrorBox, Kbd, Skeleton, Tip } from '../components/ui'
 import { useDql, type Rec } from '../lib/api'
@@ -203,6 +203,7 @@ export default function Logs() {
           <FacetSummary fc={fc} noun="records" fetching={stream.isFetching} />
           <QueryInfo spec={streamSpec} result={stream} />
         </div>
+        <QueryWarning result={stream} className="border-b border-warn/30" />
         {stream.error ? (
           <ErrorBox error={stream.error} />
         ) : (

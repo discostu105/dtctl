@@ -1,13 +1,16 @@
 import * as Popover from '@radix-ui/react-popover'
 import type { UseQueryResult } from '@tanstack/react-query'
 import clsx from 'clsx'
-import { Code2, Zap } from 'lucide-react'
+import { AlertTriangle, Code2, Zap } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useLocation } from 'wouter'
 import type { DqlResult, DqlSpec } from '../lib/api'
 import { fmtBytes, fmtCompact, fmtMs } from '../lib/format'
 import { highlightDql } from '../lib/highlight'
+import { noticesOf, warningOf } from '../lib/notices'
 import { CopyButton, Kbd, Tip } from './ui'
+
+type QueryResult = UseQueryResult<DqlResult, Error>
 
 /** Link target that opens a query in the workbench. */
 export function queryHref(spec: DqlSpec) {
@@ -71,12 +74,34 @@ export function QueryInfo({ spec, result, className }: { spec: DqlSpec | null | 
               {d.meta?.sampled && <span className="text-warn">sampled</span>}
             </div>
           )}
-          {d?.meta?.notifications?.length ? (
-            <div className="border-t border-line px-3 py-2 text-2xs text-warn">{d.meta.notifications.join(' · ')}</div>
-          ) : null}
+          {noticesOf(d?.meta).map((n) => (
+            <div key={n.kind} className={clsx('border-t border-line px-3 py-2 text-2xs', n.warn ? 'text-warn' : 'text-ink-3')}>
+              {n.text}
+              <div className="mt-0.5 text-ink-4">{n.raw}</div>
+            </div>
+          ))}
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+  )
+}
+
+/**
+ * One line that says a result may be incomplete (scan limit, truncation,
+ * timeout) and what helps. Panels show it for their own query; a page whose
+ * main query is not in a Panel renders it itself, right above the data.
+ */
+export function QueryWarning({ result, className }: { result?: QueryResult | QueryResult[]; className?: string }) {
+  // a dimmed previous result is about to be replaced; don't flash its warning
+  const n = [result ?? []].flat().reduce<ReturnType<typeof warningOf>>((w, r) => w ?? (r.isPlaceholderData ? null : warningOf(r.data?.meta)), null)
+  if (!n) return null
+  return (
+    <div role="status" className={clsx('flex items-start gap-2 bg-warn-wash px-3 py-1.5 text-xs text-ink-2', className)}>
+      <AlertTriangle className="mt-px size-3.5 shrink-0 text-warn" />
+      <Tip content={<div className="max-w-sm">{n.raw}</div>}>
+        <span className="cursor-help">{n.text}</span>
+      </Tip>
+    </div>
   )
 }
 
@@ -91,6 +116,7 @@ export function Panel({
   bodyClassName,
   hint,
   head,
+  warn,
 }: {
   title?: ReactNode
   /** Replaces the title with richer content (e.g. a count plus filter chips). */
@@ -103,6 +129,8 @@ export function Panel({
   className?: string
   bodyClassName?: string
   hint?: ReactNode
+  /** results whose incompleteness the panel warns about, when its rows come from more than `result` (main list first) */
+  warn?: QueryResult[]
 }) {
   const stale = result?.isPlaceholderData
   return (
@@ -118,6 +146,7 @@ export function Panel({
           </div>
         </header>
       )}
+      <QueryWarning result={warn ?? result} className="border-b border-warn/30" />
       <div className={clsx('min-h-0 flex-1 transition-opacity', stale && 'opacity-60', bodyClassName)}>{children}</div>
     </section>
   )

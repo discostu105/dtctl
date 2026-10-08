@@ -135,7 +135,7 @@ export default function Hosts() {
         sub={`${list.data ? fmtInt(rows.length) + (rows.length >= LIMIT ? '+' : '') : '…'} hosts · utilization · ${tf.label.toLowerCase()}`}
         actions={<FacetSearch fc={fc} placeholder="Filter hosts…" className="w-72" />}
       />
-      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" fetching={list.isFetching} />}>
+      <Panel spec={metricSpec} result={metrics} warn={[list, metrics]} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" fetching={list.isFetching} />}>
         {list.error ? (
           <ErrorBox error={list.error} />
         ) : (

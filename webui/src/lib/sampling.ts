@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { useDql, type DqlResult, type DqlSpec } from './api'
+import { noticesOf } from './notices'
 import { absolute, parseRel, type Timeframe } from './timeframe'
 
 // Adaptive sampling for data-heavy charts (log histograms, facet counts, error
@@ -45,7 +46,7 @@ function bump(key: string) {
 }
 
 export function hitScanLimit(d: DqlResult | undefined) {
-  return !!d?.meta?.notifications?.some((n) => /stopped after|scanLimitGBytes|scan limit/i.test(n))
+  return noticesOf(d?.meta).some((n) => n.kind === 'scan')
 }
 
 /** Insert `samplingRatio` into the query's fetch command. */

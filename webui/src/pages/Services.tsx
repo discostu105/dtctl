@@ -172,7 +172,7 @@ export default function Services() {
           </>
         }
       />
-      <Panel spec={redSpec} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} />}>
+      <Panel spec={redSpec} result={red} warn={[red, list]} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} />}>
         {red.error ? (
           <ErrorBox error={red.error} />
         ) : (

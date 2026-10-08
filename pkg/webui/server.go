@@ -287,6 +287,16 @@ type ResultMeta struct {
 	From           string   `json:"from,omitempty"`
 	To             string   `json:"to,omitempty"`
 	Notifications  []string `json:"notifications,omitempty"`
+	// Notices are the same notifications with their type and severity, so
+	// the UI can say what happened in plain language without matching text.
+	Notices []Notice `json:"notices,omitempty"`
+}
+
+// Notice is one Grail notification (scan limit, result limit, timeout, ...).
+type Notice struct {
+	Type     string `json:"type,omitempty"`
+	Severity string `json:"severity,omitempty"`
+	Message  string `json:"message"`
 }
 
 const maxBatch = 32
@@ -453,6 +463,7 @@ func convertResponse(resp *sdkquery.Response) QueryResult {
 		for _, n := range g.Notifications {
 			if n.Message != "" {
 				out.Meta.Notifications = append(out.Meta.Notifications, n.Message)
+				out.Meta.Notices = append(out.Meta.Notices, Notice{Type: n.NotificationType, Severity: n.Severity, Message: n.Message})
 			}
 		}
 	}

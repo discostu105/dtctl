@@ -5,7 +5,7 @@ import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearch } from 'wouter'
 import { TimeChart, tsAxis, SERIES } from '../components/Chart'
 import { DataTable, type Column } from '../components/DataTable'
-import { PageHeader, QueryInfo } from '../components/Panel'
+import { PageHeader, QueryInfo, QueryWarning } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
 import { CopyButton, Empty, ErrorBox, Kbd, Segmented, SkeletonRows, Tip } from '../components/ui'
 import { dqlKey, forceFresh, num, useDql, useMeta, type DqlSpec, type Rec } from '../lib/api'
@@ -168,6 +168,7 @@ export default function Query() {
             )}
             <QueryInfo spec={spec} result={res} />
           </div>
+          <QueryWarning result={res} className="border-b border-warn/30" />
           <div className="flex min-h-0 flex-1 flex-col">
             {!spec ? (
               <Examples history={history} onPick={(q) => (setText(q), run(q))} onClear={() => (setHistory([]), localStorage.removeItem(HIST_KEY))} />

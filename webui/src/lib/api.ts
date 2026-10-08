@@ -1,4 +1,5 @@
 import { keepPreviousData, QueryClient, useQuery, type UseQueryResult } from '@tanstack/react-query'
+import type { Notice } from './notices'
 
 export type Rec = Record<string, any>
 
@@ -10,6 +11,8 @@ export interface DqlMeta {
   from?: string
   to?: string
   notifications?: string[]
+  /** the notifications with Grail's type and severity (lib/notices.ts reads these) */
+  notices?: Notice[]
 }
 
 export interface DqlResult {

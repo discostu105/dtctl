@@ -138,3 +138,14 @@ for (const n of [6, 1000]) {
     expect(errors).toEqual([])
   })
 }
+
+// Grail reports a partial result as a notification on an otherwise successful
+// query; the list says so in words, with Grail's own text a hover away.
+test('a partial result says so in plain language', async ({ page }) => {
+  const errors = watchErrors(page)
+  await mockApi(page, { notices: [{ type: 'SCAN_LIMIT_GBYTES', severity: 'WARNING', message: 'Your execution was stopped after 500 gigabytes of data were scanned.' }] })
+  await page.goto('/hosts')
+  await expect(page.getByText('host-1.example.invalid')).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: 'Partial result: Grail stopped after scanning 500 GB. Narrow the timeframe or add a filter.' })).toBeVisible()
+  expect(errors).toEqual([])
+})

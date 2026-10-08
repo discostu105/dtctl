@@ -71,21 +71,33 @@ export function recordsFor(q: string, HOSTS: Rec[] = hosts(6)): Rec[] {
   return []
 }
 
-function result(spec: Spec, HOSTS: Rec[]) {
+interface Notice {
+  type?: string
+  severity?: string
+  message: string
+}
+
+function result(spec: Spec, HOSTS: Rec[], notices?: Notice[]) {
+  const records = recordsFor(spec.query, HOSTS)
+  // notices ride on the Hosts list query only
+  const list = spec.query.includes('| fields id, name, os.type')
   return {
     id: spec.id,
     ok: true,
-    records: recordsFor(spec.query, HOSTS),
+    records,
     types: {},
-    meta: { executionMs: 1, scannedRecords: 0, scannedBytes: 0, from: spec.from, to: spec.to },
+    meta: { executionMs: 1, scannedRecords: 0, scannedBytes: 0, from: spec.from, to: spec.to, ...(list && notices ? { notices } : {}) },
     elapsedMs: 1,
   }
 }
 
 const json = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
-/** Install the mock; returns the queries the page sent, for assertions. `hosts` sizes the Hosts list (1000 caps it). */
-export async function mockApi(page: Page, opts: { hosts?: number } = {}) {
+/**
+ * Install the mock; returns the queries the page sent, for assertions. `hosts`
+ * sizes the Hosts list (1000 caps it); `notices` are Grail notifications on it.
+ */
+export async function mockApi(page: Page, opts: { hosts?: number; notices?: Notice[] } = {}) {
   const HOSTS = hosts(opts.hosts ?? 6)
   const queries: string[] = []
   await page.route('**/api/**', async (route) => {
@@ -100,7 +112,7 @@ export async function mockApi(page: Page, opts: { hosts?: number } = {}) {
     if (path === '/api/batch') {
       const specs = req.postDataJSON() as Spec[]
       for (const s of specs) queries.push(s.query)
-      return route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: specs.map((s) => JSON.stringify(result(s, HOSTS))).join('\n') + '\n' })
+      return route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: specs.map((s) => JSON.stringify(result(s, HOSTS, opts.notices))).join('\n') + '\n' })
     }
     return json(route, { error: `unmocked ${path}` }, 404)
   })

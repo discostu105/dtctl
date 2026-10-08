@@ -273,3 +273,20 @@ func TestQueryAssistProxy(t *testing.T) {
 		t.Errorf("invalid body: %d", rec.Code)
 	}
 }
+
+// The UI classifies Grail notifications by type, so the type must survive.
+func TestConvertResponseKeepsNoticeTypes(t *testing.T) {
+	got := convertResponse(&sdkquery.Response{Metadata: &sdkquery.Metadata{Grail: &sdkquery.GrailMetadata{
+		Notifications: []sdkquery.Notification{
+			{Severity: "WARNING", NotificationType: "SCAN_LIMIT_GBYTES", Message: "Scan stopped after 500 gigabytes"},
+			{Severity: "INFO", Message: ""},
+		},
+	}}})
+	want := []Notice{{Type: "SCAN_LIMIT_GBYTES", Severity: "WARNING", Message: "Scan stopped after 500 gigabytes"}}
+	if len(got.Meta.Notices) != 1 || got.Meta.Notices[0] != want[0] {
+		t.Fatalf("notices = %+v, want %+v", got.Meta.Notices, want)
+	}
+	if len(got.Meta.Notifications) != 1 {
+		t.Fatalf("notifications = %v", got.Meta.Notifications)
+	}
+}
