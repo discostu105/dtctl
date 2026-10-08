@@ -292,6 +292,17 @@ type ResultMeta struct {
 	// Notices are the same notifications with their type and severity, so
 	// the UI can say what happened in plain language without matching text.
 	Notices []Notice `json:"notices,omitempty"`
+	// Metrics describe a timeseries result's value fields (unit, metric key),
+	// so a chart can format each axis in its own unit.
+	Metrics []Metric `json:"metrics,omitempty"`
+}
+
+// Metric is one timeseries value field of a result.
+type Metric struct {
+	Field string `json:"field"`
+	Key   string `json:"key,omitempty"`
+	Unit  string `json:"unit,omitempty"`
+	Name  string `json:"name,omitempty"`
 }
 
 // Notice is one Grail notification (scan limit, result limit, timeout, ...).
@@ -467,6 +478,11 @@ func convertResponse(resp *sdkquery.Response) QueryResult {
 				out.Meta.Notifications = append(out.Meta.Notifications, n.Message)
 				out.Meta.Notices = append(out.Meta.Notices, Notice{Type: n.NotificationType, Severity: n.Severity, Message: n.Message})
 			}
+		}
+	}
+	for _, m := range resp.GetMetrics() {
+		if m.FieldName != "" {
+			out.Meta.Metrics = append(out.Meta.Metrics, Metric{Field: m.FieldName, Key: m.MetricKey, Unit: m.Unit, Name: m.DisplayName})
 		}
 	}
 	return out

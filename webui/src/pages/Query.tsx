@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { AlertTriangle, BarChart3, CheckCircle2, Clock, ExternalLink, Play, Table2, Terminal, Trash2 } from 'lucide-react'
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
 import { useSearch } from 'wouter'
-import { TimeChart, tsAxis, SERIES } from '../components/Chart'
+import { ResultChart, chartModel } from '../components/ResultChart'
 import { DataTable, type Column } from '../components/DataTable'
 import { PageHeader, QueryInfo, QueryWarning } from '../components/Panel'
 import { Inspector, SidePanel } from '../components/signals'
@@ -96,8 +96,8 @@ export default function Query() {
   const res = useDql(spec)
   const records = res.data?.records
 
-  const ts = useMemo(() => detectTimeseries(records), [records])
-  const effective = view === 'auto' ? (ts ? 'chart' : 'table') : view
+  const model = useMemo(() => chartModel(res.data, spec?.query ?? ''), [res.data, spec?.query])
+  const effective = view === 'auto' ? (model?.kind === 'timeseries' ? 'chart' : 'table') : view
 
   // ⌘↑ / ⌘↓ walk the query history (newest first).
   const walkHistory = (dir: 1 | -1) => {
@@ -179,24 +179,7 @@ export default function Query() {
             ) : !records?.length ? (
               <Empty title="Query returned no records" />
             ) : effective === 'chart' ? (
-              ts ? (
-                <div className="p-3 pl-1">
-                  <TimeChart x={ts.x} series={ts.series} height={320} format={fmtCompact} />
-                  {ts.series.length > 1 && (
-                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 pl-3 text-xs text-ink-2">
-                      {ts.series.map((s) => (
-                        <span key={s.label} className="flex items-center gap-1.5">
-                          <i className="inline-block h-0.5 w-3 rounded" style={{ background: `var(${s.color})` }} />
-                          {s.label}
-                        </span>
-                      ))}
-                      {ts.more > 0 && <span className="text-ink-3">+{ts.more} more series (see table)</span>}
-                    </div>
-                  )}
-                </div>
-              ) : (
-                <Empty title="Not a timeseries" hint="Charts need a timeseries/makeTimeseries result. Switch to table." />
-              )
+              <ResultChart model={model} />
             ) : (
               <ResultTable records={records} types={res.data?.types} onOpen={setSel} />
             )}
@@ -243,25 +226,6 @@ function Examples({ history, onPick, onClear }: { history: string[]; onPick: (q:
       </div>
     </div>
   )
-}
-
-function detectTimeseries(records: Rec[] | undefined) {
-  if (!records?.length) return null
-  const r0 = records[0]
-  if (!r0.timeframe || r0.interval == null) return null
-  const arrayKeys = Object.keys(r0).filter((k) => Array.isArray(r0[k]) && r0[k].every((v: unknown) => v == null || typeof v === 'number'))
-  if (!arrayKeys.length) return null
-  const dimKeys = Object.keys(r0).filter((k) => !arrayKeys.includes(k) && k !== 'timeframe' && k !== 'interval')
-  const x = tsAxis(r0, arrayKeys[0])
-  const all = records.flatMap((r) =>
-    arrayKeys.map((k) => ({
-      label: [arrayKeys.length > 1 ? k : '', ...dimKeys.map((d) => String(r[d] ?? 'null'))].filter(Boolean).join(' · ') || k,
-      values: (r[k] as (number | null)[]).map((v) => (v == null ? null : num(v))),
-    })),
-  )
-  // ≤ 8 series, colors in fixed order; the rest stays in the table view.
-  const series = all.slice(0, 8).map((s, i) => ({ ...s, color: SERIES[i] }))
-  return { x, series, more: all.length - series.length }
 }
 
 function ResultTable({ records, types, onOpen }: { records: Rec[]; types?: Record<string, string>; onOpen: (r: Rec) => void }) {

@@ -107,8 +107,25 @@ bodies are pretty-printed; trace IDs are links.
 ### J6 — "Something weird — let me query" (power user)
 Query: a DQL editor with syntax highlighting and history (kept per environment), `⌘↵` to
 run. The result renders as a **table, or a chart when it is a timeseries**,
-chosen automatically. The editor shows scanned bytes and execution time, and any
-query in the app can be opened here.
+chosen automatically; a summarize result charts as bars on request. The editor
+shows scanned bytes and execution time, and any query in the app can be opened
+here.
+
+An arbitrary result has to be charted without help from its author, so
+`lib/chart.ts` decides what is plotted, and every rule there is a test:
+* **One value field at a time**, switchable, each in its own unit: requests,
+  failures and a response time share no axis, and on a shared one the smaller
+  two flatten to zero. Units come from Grail (`enrich=metric-metadata`); a field
+  the query derived (`req = coalesce(r[], s[])`) inherits the unit its metrics
+  share, unless the expression multiplies or divides.
+* **A series is named by what tells it apart.** Numbers the query added
+  (`total = arraySum(req)`), constants, and anything the kept dimensions already
+  determine (a service's type, its id beside its name) never reach the label. A
+  looked-up name stands in for its id, and the id comes back only where the
+  lookup missed or two services share a name.
+* **The largest eight series by the plotted field** are drawn, not the first
+  eight records; the legend says how many there are and what they are ranked by
+  (the total for counts, the average for anything with a unit).
 
 ### J7 — "What is this thing and what is it connected to?" (exploration)
 Smartscape: a census of entity types, then instances of a type, then the
@@ -238,10 +255,10 @@ logs per hour. Every heavy view is designed for that limit.
 * **Color roles:**
   - Status: critical `#f0505a`, warning `#f5a524`, ok `#3dd68c`, info `#7c83ff`. Status is always shown with an icon or label, never by color alone.
   - Log levels: ERROR/SEVERE → critical, WARN → warning, INFO → neutral, DEBUG/TRACE → muted.
-  - Chart series: the validated eight-slot categorical palette in fixed order (blue, orange, aqua, yellow, magenta, green, violet, red), with separate dark and light steps.
+  - Chart series: an eight-slot categorical palette in fixed order (blue, orange, green, yellow, magenta, cyan, violet, red), with separate dark and light steps. No two slots share a hue family.
 * **Charts** use uPlot (canvas, ~45 KB, renders 100k points in a few milliseconds).
-  - Marks: 2 px lines, a 10 % area wash, hairline grids, one y-axis.
-  - Interaction: a crosshair with a tooltip on every chart, and synchronized cursors within a page.
+  - Marks: 2 px lines (1.5 px beyond four series), a 10 % area wash on a lone series only, hairline grids, one y-axis as wide as its widest label. A value with a gap on both sides is drawn as a dot, since a line cannot show it.
+  - Interaction: a crosshair with a tooltip on every chart (with the date once a chart spans more than a day, largest value first), and synchronized cursors within a page. Legends of arbitrary results hover to focus a series, click to hide it, double-click to show only it.
   - Bars are ≤ 24 px with 4 px rounded data ends.
 * **Motion:** 120–160 ms ease-out, only for opening and closing panels. Data never animates in (it shouldn't look as if it is still loading).
 

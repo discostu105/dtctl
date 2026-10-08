@@ -290,3 +290,14 @@ func TestConvertResponseKeepsNoticeTypes(t *testing.T) {
 		t.Fatalf("notifications = %v", got.Meta.Notifications)
 	}
 }
+
+// Charts format each value field in its own unit, so units must survive.
+func TestConvertResponseKeepsMetricUnits(t *testing.T) {
+	got := convertResponse(&sdkquery.Response{Result: &sdkquery.Result{Metadata: &sdkquery.Metadata{
+		Metrics: []sdkquery.MetricInfo{{MetricKey: "dt.service.request.response_time", FieldName: "rt", Unit: "MicroSecond"}, {Unit: "Byte"}},
+	}}})
+	want := Metric{Field: "rt", Key: "dt.service.request.response_time", Unit: "MicroSecond"}
+	if len(got.Meta.Metrics) != 1 || got.Meta.Metrics[0] != want {
+		t.Fatalf("metrics = %+v, want [%+v]", got.Meta.Metrics, want)
+	}
+}

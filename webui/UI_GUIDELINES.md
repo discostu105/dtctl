@@ -86,6 +86,7 @@ Reach for these before writing markup. If you need a variant, extend the compone
 | Key-value facts | `Facts` | `components/ui.tsx` |
 | Time cell | `When` (relative + clock, absolute in tooltip); `TimeAgo` inline | `components/ui.tsx` |
 | Chart | `TimeChart`, `StackedBars`, `Legend` | `components/Chart.tsx` |
+| Chart of a query result | `ResultChart`, `chartModel` (rules in `lib/chart.ts`) | `components/ResultChart.tsx` |
 | Spans, problems, logs | `SpanTable`, `ProblemsTable`, `LogStream`, `RiskBadge` | `components/signals.tsx` |
 | States | `Skeleton`, `SkeletonRows`, `Empty`, `ErrorBox` | `components/ui.tsx` |
 | Sampling / scan notices | `SampledBadge`, `ScanNotice` | `components/Sampled.tsx` |
@@ -210,6 +211,10 @@ Sentence case everywhere ("Failure rate", not "Failure Rate"). Separate facts wi
   legend.
 - Charts always have a `Legend` when they show more than one series; the legend wording matches the
   column and tab wording.
+- One axis, one unit. Never plot a count and a duration (or two differently scaled counts) on the
+  same chart; give each its own chart or a field switch. Format values with `fmtUnit`, and map
+  Grail units through `canonicalUnit`.
+- A series label is what tells the series apart: a name, not an id, a type or a number.
 - Check every new screen in light and dark.
 
 ---

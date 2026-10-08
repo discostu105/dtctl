@@ -164,6 +164,8 @@ export function fmtUnit(unit: string) {
       return (v: number) => fmtBytes(v)
     case 'B/s':
       return (v: number) => `${fmtBytes(v)}/s`
+    case 'ns':
+      return (v: number) => fmtNs(v)
     case 'µs':
       return (v: number) => fmtUs(v)
     case 'ms':
@@ -175,4 +177,35 @@ export function fmtUnit(unit: string) {
     default:
       return (v: number) => fmtCompact(v)
   }
+}
+
+/**
+ * The fmtUnit spelling of a Grail metric unit. Grail mixes UCUM ("us", "By/s")
+ * with older names ("MicroSecond", "Byte"); anything unknown is '' and formats
+ * as a plain number, so an odd unit never formats a value as the wrong kind.
+ * 'count' formats like '' but tells a chart the values add up.
+ */
+export function canonicalUnit(unit: string | undefined | null): string {
+  const u = (unit ?? '').trim()
+  return CANONICAL[u] ?? CANONICAL[u.toLowerCase()] ?? ''
+}
+const CANONICAL: Record<string, string> = {
+  count: 'count',
+  '%': '%',
+  percent: '%',
+  ns: 'ns',
+  nanosecond: 'ns',
+  us: 'µs',
+  'µs': 'µs',
+  microsecond: 'µs',
+  ms: 'ms',
+  millisecond: 'ms',
+  s: 's',
+  second: 's',
+  by: 'B',
+  byte: 'B',
+  'by/s': 'B/s',
+  bytepersecond: 'B/s',
+  millicore: 'mCores',
+  mcores: 'mCores',
 }

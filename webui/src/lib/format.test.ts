@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { ago, fmtBytes, fmtCompact, fmtInt, fmtMs, fmtPct, shortType, span, titleCase, toDate } from './format'
+import { ago, canonicalUnit, fmtBytes, fmtCompact, fmtInt, fmtMs, fmtPct, fmtUnit, shortType, span, titleCase, toDate } from './format'
 
 describe('numbers', () => {
   it('formats integers and placeholders', () => {
@@ -88,5 +88,26 @@ describe('words', () => {
   it('title-cases enum values', () => {
     expect(titleCase('LINUX')).toBe('Linux')
     expect(titleCase('NOT_READY')).toBe('Not Ready')
+  })
+})
+
+describe('canonicalUnit', () => {
+  it('reads both of Grail\'s unit spellings', () => {
+    expect(canonicalUnit('us')).toBe('µs')
+    expect(canonicalUnit('MicroSecond')).toBe('µs')
+    expect(canonicalUnit('By')).toBe('B')
+    expect(canonicalUnit('Byte')).toBe('B')
+    expect(canonicalUnit('By/s')).toBe('B/s')
+    expect(canonicalUnit('Millicore')).toBe('mCores')
+    expect(canonicalUnit('%')).toBe('%')
+  })
+  it('treats unknown units as plain numbers', () => {
+    for (const u of ['ratio', 'bit', '', undefined, null]) expect(canonicalUnit(u)).toBe('')
+    expect(canonicalUnit('Count')).toBe('count')
+  })
+  it('formats through fmtUnit', () => {
+    expect(fmtUnit(canonicalUnit('us'))(1500)).toBe('1.5 ms')
+    expect(fmtUnit(canonicalUnit('By'))(3 * 1024 ** 3)).toBe('3 GiB')
+    expect(fmtUnit(canonicalUnit('count'))(12_900)).toBe('12.9K')
   })
 })

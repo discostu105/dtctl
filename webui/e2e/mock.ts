@@ -54,8 +54,26 @@ const hosts = (n: number): Rec[] => Array.from({ length: n }, (_, i) => ({
   'tags:aws': { team: i < 3 ? 'team-a' : 'team-b', env: 'test' },
 }))
 
+// A services timeseries as the Query page gets it: value arrays, scalars the
+// query derived from them, a looked-up name (missing for one service) and a
+// constant type. Only the name may label a series.
+const TF = { start: '2026-01-01T00:00:00Z', end: '2026-01-01T03:00:00Z' }
+const SERVICE_SERIES = [
+  { timeframe: TF, interval: String(3600e9), 'dt.smartscape.service': 'SERVICE-00000000000000A1', req: [10, 20, 30], rt: [1500, 2500, null], total: '60', 's.name': 'checkout', 's.type': 'WebRequest' },
+  { timeframe: TF, interval: String(3600e9), 'dt.smartscape.service': 'SERVICE-00000000000000B2', req: [100, 200, 300], rt: [800, 900, 1000], total: '600', 's.name': 'cart', 's.type': 'WebRequest' },
+  { timeframe: TF, interval: String(3600e9), 'dt.smartscape.service': 'SERVICE-00000000000000C3', req: [1, 2, 3], rt: [null, 400, null], total: '6', 's.name': null, 's.type': 'WebRequest' },
+]
+export const CHART_QUERY = `timeseries { req = sum(dt.service.request.count), rt = avg(dt.service.request.response_time) }, by:{dt.smartscape.service}
+| lookup [smartscapeNodes SERVICE | fields id, name, type], sourceField:dt.smartscape.service, lookupField:id, prefix:"s."
+| fieldsAdd total = arraySum(req)`
+const CHART_METRICS = [
+  { field: 'req', key: 'dt.service.request.count', unit: 'count' },
+  { field: 'rt', key: 'dt.service.request.response_time', unit: 'us' },
+]
+
 /** Records for one query, by what the query is asking for. */
 export function recordsFor(q: string, HOSTS: Rec[] = hosts(6)): Rec[] {
+  if (q === CHART_QUERY) return SERVICE_SERIES
   // filter popup: attribute discovery sample and value counts
   // the popup's source head quotes the type; the Hosts page's own query doesn't
   if (!/^smartscapeNodes "?HOST"?\n/.test(q)) return []
@@ -92,7 +110,15 @@ function result(spec: Spec, HOSTS: Rec[], notices?: Notice[]) {
     ok: true,
     records,
     types: {},
-    meta: { executionMs: 1, scannedRecords: 0, scannedBytes: 0, from: spec.from, to: spec.to, ...(list && notices ? { notices } : {}) },
+    meta: {
+      executionMs: 1,
+      scannedRecords: 0,
+      scannedBytes: 0,
+      from: spec.from,
+      to: spec.to,
+      ...(list && notices ? { notices } : {}),
+      ...(spec.query === CHART_QUERY ? { metrics: CHART_METRICS } : {}),
+    },
     elapsedMs: 1,
   }
 }

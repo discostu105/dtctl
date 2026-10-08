@@ -50,7 +50,9 @@ export interface Series {
   values: (number | null)[]
   /** CSS var name, e.g. '--s1' or '--crit' */
   color?: string
+  /** area under the line; default: only when it is the only series */
   fill?: boolean
+  hidden?: boolean
 }
 
 export interface Marker {
@@ -70,6 +72,7 @@ export function TimeChart({
   className,
   yMin,
   yMax,
+  focus,
 }: {
   x: number[]
   series: Series[]
@@ -82,6 +85,8 @@ export function TimeChart({
   className?: string
   yMin?: number
   yMax?: number
+  /** index of the series to emphasize (the others fade), e.g. while its legend entry is hovered */
+  focus?: number | null
 }) {
   const wrap = useRef<HTMLDivElement>(null)
   const tip = useRef<HTMLDivElement>(null)
@@ -107,13 +112,16 @@ export function TimeChart({
     const grid = cssVar('--grid')
     const surface = cssVar('--panel')
     const resolve = (c?: string, i = 0) => cssVar(c ?? SERIES[i % SERIES.length])
+    const font = '11px Inter Variable'
 
     const opts: uPlot.Options = {
       width,
       height,
       padding: [8, 8, 0, 0],
       legend: { show: false },
+      focus: { alpha: 0.25 },
       cursor: {
+        focus: { prox: -1 },
         sync: syncKey ? { key: syncKey } : undefined,
         drag: { x: !!onZoom, y: false, setScale: false },
         points: { size: 7, width: 2, stroke: () => surface, fill: (u, si) => (u.series[si].stroke as () => string)() },
@@ -128,7 +136,7 @@ export function TimeChart({
           stroke: ink3,
           grid: { show: false },
           ticks: { show: false },
-          font: '11px Inter Variable',
+          font,
           size: 24,
           space: 80,
           values: (u, splits) => {
@@ -140,8 +148,16 @@ export function TimeChart({
           stroke: ink3,
           grid: { stroke: grid, width: 1 },
           ticks: { show: false },
-          font: '11px Inter Variable',
-          size: 52,
+          font,
+          // as wide as the widest label: "1.25 GiB/s" must not be clipped, "5" needs no gutter
+          size: (u, values) => {
+            if (!values?.length) return 40
+            u.ctx.save()
+            u.ctx.font = font // CSS pixels, as measured
+            const w = Math.max(...values.map((v) => u.ctx.measureText(String(v ?? '')).width))
+            u.ctx.restore()
+            return Math.ceil(w) + 14
+          },
           space: 28,
           values: (_u, vals) => vals.map((v) => cbs.current.format(v)),
         },
@@ -153,9 +169,11 @@ export function TimeChart({
           return {
             label: s.label,
             stroke: () => c,
-            width: 2,
-            fill: s.fill === false ? undefined : c + '1a',
-            points: { show: false },
+            width: series.length > 4 ? 1.5 : 2,
+            fill: (s.fill ?? series.length === 1) ? c + '1a' : undefined,
+            show: !s.hidden,
+            // gaps stay gaps, but a value between two gaps has no line to draw: dot it
+            points: { show: false, size: 5, filter: isolatedPoints },
             spanGaps: false,
           } as uPlot.Series
         }),
@@ -206,15 +224,22 @@ export function TimeChart({
               return
             }
             const ts = u.data[0][idx]
-            const near = (cbs.current.markers ?? []).filter((m) => Math.abs(m.t - ts) <= (u.data[0][1] - u.data[0][0] || 60) / 2)
-            const rows = series
-              .map((s, i) => {
-                const v = u.data[i + 1][idx]
-                return `<div style="display:flex;align-items:center;gap:6px;justify-content:space-between"><span style="display:flex;align-items:center;gap:6px;color:var(--ink-2)"><i style="width:8px;height:2px;border-radius:1px;background:${resolve(s.color, i)}"></i>${escapeHtml(s.label)}</span><b class="tnum" style="font-weight:600;color:var(--ink)">${v == null ? '—' : escapeHtml(cbs.current.format(v as number))}</b></div>`
-              })
+            const xs = u.data[0]
+            const near = (cbs.current.markers ?? []).filter((m) => Math.abs(m.t - ts) <= (xs[1] - xs[0] || 60) / 2)
+            // largest first when there are several, so the tooltip reads like the legend
+            let shown = series.map((s, i) => ({ s, i, v: u.data[i + 1][idx] as number | null })).filter((r) => u.series[r.i + 1].show)
+            if (shown.length > 3) shown = shown.sort((a, b) => (b.v ?? -Infinity) - (a.v ?? -Infinity))
+            const more = shown.length - TIP_ROWS
+            const rows = shown
+              .slice(0, TIP_ROWS)
+              .map(
+                ({ s, i, v }) =>
+                  `<div style="display:flex;align-items:center;gap:12px;justify-content:space-between"><span style="display:flex;align-items:center;gap:6px;min-width:0;color:var(--ink-2)"><i style="flex:none;width:8px;height:2px;border-radius:1px;background:${resolve(s.color, i)}"></i><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:260px">${escapeHtml(s.label)}</span></span><b class="tnum" style="font-weight:600;color:var(--ink)">${v == null ? '—' : escapeHtml(cbs.current.format(v))}</b></div>`,
+              )
               .join('')
+            const tail = more > 0 ? `<div style="color:var(--ink-3);margin-top:2px">+${more} more</div>` : ''
             const mk = near.map((m) => `<div style="color:var(--accent-ink);margin-top:4px">◆ ${escapeHtml(m.label)}</div>`).join('')
-            t.innerHTML = `<div style="color:var(--ink-3);margin-bottom:4px">${fmtTime(new Date(ts * 1000)).slice(0, 8)}</div>${rows}${mk}`
+            t.innerHTML = `<div style="color:var(--ink-3);margin-bottom:4px">${escapeHtml(fmtTipTime(ts, xs[xs.length - 1] - xs[0]))}</div>${rows}${tail}${mk}`
             t.style.display = 'block'
             const w = t.offsetWidth
             const left = u.cursor.left + u.bbox.left / devicePixelRatio
@@ -244,11 +269,25 @@ export function TimeChart({
       plot.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [width, height, theme, series.length, syncKey, yMin, yMax, series.map((s) => s.color + s.label).join()])
+  }, [width, height, theme, series.length, syncKey, yMin, yMax, series.map((s) => s.color + s.label + s.fill).join()])
 
   useEffect(() => {
     plot.current?.setData(data)
   }, [data])
+
+  // hiding and focusing restyle the plot; neither rebuilds it
+  const hiddenKey = series.map((s) => (s.hidden ? 1 : 0)).join('')
+  useEffect(() => {
+    const u = plot.current
+    if (!u) return
+    series.forEach((s, i) => u.series[i + 1] && u.series[i + 1].show === !!s.hidden && u.setSeries(i + 1, { show: !s.hidden }))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hiddenKey, width, theme])
+  useEffect(() => {
+    const u = plot.current
+    if (!u) return
+    u.setSeries(focus == null ? null : focus + 1, { focus: true })
+  }, [focus])
 
   // Markers/bands often arrive after the data (separate queries): redraw.
   useEffect(() => {
@@ -264,6 +303,24 @@ export function TimeChart({
       />
     </div>
   )
+}
+
+const TIP_ROWS = 12
+
+/** uPlot points filter: the values with a gap on both sides, which a line cannot show. */
+function isolatedPoints(u: uPlot, si: number): number[] | null {
+  const ys = u.data[si] as (number | null)[]
+  const out: number[] = []
+  for (let i = 0; i < ys.length; i++) if (ys[i] != null && ys[i - 1] == null && ys[i + 1] == null) out.push(i)
+  return out.length ? out : null
+}
+
+/** The tooltip's time: with the date once the chart spans more than a day. */
+export function fmtTipTime(sec: number, rangeSec: number) {
+  const d = new Date(sec * 1000)
+  const hm = d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit', hour12: false })
+  if (rangeSec <= 20 * 3600) return fmtTime(d).slice(0, 8)
+  return `${d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' })}, ${hm}`
 }
 
 /** One-line axis labels: 14:05 · Oct 8 14:00 · Oct 8 */

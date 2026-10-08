@@ -74,6 +74,10 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 				IncludeTypes:          true,
 				ClientContext:         "dtctl-web",
 				QuietCancel:           true,
+				// units on metadata.metrics[], so charts format each axis in its own unit;
+				// the result is returned, never printed, so there is no -v to forward
+				MetadataFields: []string{"metrics"},
+				Verbose:        false,
 			})
 		},
 		Documents: func(ctx context.Context, docType string) ([]webui.Document, error) {

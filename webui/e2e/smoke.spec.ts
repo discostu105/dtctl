@@ -1,5 +1,5 @@
 import { expect, test, type Page } from '@playwright/test'
-import { mockApi } from './mock'
+import { CHART_QUERY, mockApi } from './mock'
 
 // Every route renders its header without console errors or uncaught
 // exceptions, on empty data — the state a new or quiet tenant shows. List pages
@@ -157,5 +157,24 @@ test('documents name their owners, or show a short id', async ({ page }) => {
   const main = page.locator('main')
   await expect(main.getByText('Ada Example')).toBeVisible()
   await expect(main.getByText('00000000…')).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+// A chart names series by what tells them apart (the service name, its id
+// where the lookup missed), plots one field in its own unit, and its legend
+// hides a series on click.
+test('the query chart labels series by name and plots one field in its unit', async ({ page }) => {
+  const errors = watchErrors(page)
+  await mockApi(page)
+  await page.goto('/query?dql=' + encodeURIComponent(CHART_QUERY))
+  const legend = page.getByRole('button', { pressed: true })
+  await expect(legend).toHaveText([/^cart.*600$/, /^checkout.*60$/, /^SERVICE-00000000000000C3.*6$/])
+  await expect(page.getByText('WebRequest')).toHaveCount(0)
+
+  await page.locator('button span.font-mono', { hasText: /^rt$/ }).click()
+  await expect(legend.first()).toHaveText(/^checkout.*2 ms$/)
+
+  await legend.first().click()
+  await expect(page.locator('button[aria-pressed="false"]')).toHaveText(/^checkout/)
   expect(errors).toEqual([])
 })

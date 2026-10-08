@@ -13,6 +13,8 @@ export interface DqlMeta {
   notifications?: string[]
   /** the notifications with Grail's type and severity (lib/notices.ts reads these) */
   notices?: Notice[]
+  /** a timeseries result's value fields: unit and metric key (lib/chart.ts reads these) */
+  metrics?: { field: string; key?: string; unit?: string; name?: string }[]
 }
 
 export interface DqlResult {
