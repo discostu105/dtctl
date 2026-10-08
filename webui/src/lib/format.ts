@@ -19,7 +19,9 @@ export function fmtCompact(n: number) {
 
 export function fmtPct(n: number, digits = 1) {
   if (!Number.isFinite(n)) return '—'
+  // never round a non-zero share down to 0
   if (n > 0 && n < 0.1) return '<0.1%'
+  if (n > 0 && digits === 0 && n < 0.5) return '<1%'
   return n.toFixed(digits).replace(/\.0+$/, '') + '%'
 }
 

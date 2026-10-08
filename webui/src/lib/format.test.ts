@@ -25,6 +25,8 @@ describe('numbers', () => {
     expect(fmtPct(5)).toBe('5%')
     expect(fmtPct(0.05)).toBe('<0.1%')
     expect(fmtPct(0)).toBe('0%')
+    expect(fmtPct(0.4, 0)).toBe('<1%')
+    expect(fmtPct(0.6, 0)).toBe('1%')
   })
 
   it('formats bytes in binary units', () => {
