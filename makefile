@@ -254,3 +254,9 @@ sdk-check: test-sdk vet-sdk sdk-check-deps sdk-check-imports
 .PHONY: build-webui
 build-webui:
 	cd webui && npm ci && npm run build
+
+# Unit tests (vitest) and the Playwright smoke suite against a mocked /api.
+# First run needs a browser: cd webui && npx playwright install chromium
+.PHONY: test-webui
+test-webui:
+	cd webui && npm ci && npm test && npm run e2e
