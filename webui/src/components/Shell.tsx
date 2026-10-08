@@ -7,16 +7,16 @@ import {
 } from 'lucide-react'
 import { useEffect, useRef, type ReactNode } from 'react'
 import { Link, useLocation } from 'wouter'
-import { forceFresh, prefetchDql, useDql, useMeta, type DqlSpec } from '../lib/api'
+import { forceFresh, prefetchDql, useDql, type DqlSpec } from '../lib/api'
 import { problemsQuery } from '../lib/dql'
-import { frontendsSpec } from '../pages/Rum'
-import { aiKpiSpec } from '../pages/Ai'
 import { activeProblemsSpec, changesSpec, servicesSpec, tfSpec, vulnsSpec } from '../lib/shared'
 import { autoRefreshStore, helpStore, paletteStore, tfPickerStore, titleStore, toggleTheme, useStore } from '../lib/store'
 import { floorTf, getTimeframe, syncUrl, useTimeframe } from '../lib/timeframe'
 import { useThemeVersion } from './Chart'
+import { QueryActivity } from './Activity'
+import { TenantSwitcher } from './TenantSwitcher'
 import { TimeframePicker } from './TimeframePicker'
-import { Dot, Kbd, Tip } from './ui'
+import { Kbd, Tip } from './ui'
 
 export const NAV: { href: string; label: string; icon: typeof Activity; key: string; group: 0 | 1 | 2 }[] = [
   { href: '/', label: 'Pulse', icon: Activity, key: 'h', group: 0 },
@@ -54,8 +54,8 @@ function prefetchSection(href: string) {
     '/problems': () => tfSpec(floorTf(tf, '24h'), problemsQuery({ limit: 500 }), { ttl: 30 }),
     '/security': () => vulnsSpec(tf),
     '/changes': () => changesSpec(tf),
-    '/rum': () => frontendsSpec(tf),
-    '/ai': () => aiKpiSpec(tf),
+    // (AI and RUM are not prefetched: they scan spans and user events, which is
+    // too heavy to start on a mere hover in big tenants.)
   }
   const spec = specs[href]?.()
   if (spec) prefetchDql(spec)
@@ -116,57 +116,6 @@ function Rail() {
         </button>
       </div>
     </nav>
-  )
-}
-
-function EnvPill() {
-  const { data: meta } = useMeta()
-  if (!meta) return <div className="h-8 w-40 shimmer rounded-lg" />
-  const host = meta.environment.replace(/^https?:\/\//, '').replace(/\/$/, '')
-  const safe = meta.safetyLevel || 'readwrite'
-  const tone = safe.startsWith('readonly') ? 'ok' : safe.includes('dangerously') ? 'crit' : 'warn'
-  return (
-    <Popover.Root>
-      <Popover.Trigger asChild>
-        <button
-          type="button"
-          className="inline-flex h-8 max-w-60 items-center gap-2 rounded-lg border border-line bg-sunken px-2.5 text-sm text-ink-2 hover:border-line-strong"
-        >
-          <Dot tone={tone} />
-          <span className="truncate font-medium text-ink">{meta.context}</span>
-          <span className="truncate text-ink-3 max-xl:hidden">{host.split('.')[0]}</span>
-        </button>
-      </Popover.Trigger>
-      <Popover.Portal>
-        <Popover.Content align="end" sideOffset={6} className="anim-pop z-50 w-72 rounded-lg bg-raised p-3 text-sm shadow-pop">
-          <div className="text-2xs font-medium tracking-wide text-ink-3 uppercase">Connected via dtctl</div>
-          <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1">
-            <span className="text-ink-3">Context</span>
-            <span className="truncate">{meta.context}</span>
-            <span className="text-ink-3">Environment</span>
-            <a href={meta.environment} target="_blank" rel="noreferrer" className="truncate text-accent-ink hover:underline">
-              {host}
-            </a>
-            <span className="text-ink-3">Safety</span>
-            <span className="flex items-center gap-1.5">
-              <Dot tone={tone} />
-              {safe}
-            </span>
-            {meta.userEmail && (
-              <>
-                <span className="text-ink-3">User</span>
-                <span className="truncate">{meta.userEmail}</span>
-              </>
-            )}
-            <span className="text-ink-3">dtctl</span>
-            <span>{meta.version}</span>
-          </div>
-          <div className="mt-3 border-t border-line pt-2 text-xs text-ink-3">
-            Switch context: restart with <code className="font-mono text-ink-2">dtctl serve web --context &lt;name&gt;</code>
-          </div>
-        </Popover.Content>
-      </Popover.Portal>
-    </Popover.Root>
   )
 }
 
@@ -255,7 +204,8 @@ function TopBar() {
           <ThemeIcon />
         </button>
       </Tip>
-      <EnvPill />
+      <QueryActivity />
+      <TenantSwitcher />
     </header>
   )
 }

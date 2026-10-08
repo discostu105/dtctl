@@ -152,10 +152,13 @@ type DQLExecuteOptions struct {
 	// the agent-mode default (no -o given), so a non-JSON result carries the
 	// -o json opt-out suggestion.
 	AutoFormatByDefault bool
-	Decode              DecodeMode // Snapshot payload decoding mode
-	Width               int        // Chart width (0 = default)
-	Height              int        // Chart height (0 = default)
-	Fullscreen          bool       // Use terminal dimensions for chart
+	// QuietCancel suppresses the "Query cancelled." notice on stderr when ctx
+	// ends (for servers, where cancellation is routine rather than a user ^C).
+	QuietCancel bool
+	Decode      DecodeMode // Snapshot payload decoding mode
+	Width       int        // Chart width (0 = default)
+	Height      int        // Chart height (0 = default)
+	Fullscreen  bool       // Use terminal dimensions for chart
 
 	// Query limit options
 	MaxResultRecords       int64   // Maximum number of result records (0 = use default)
@@ -476,10 +479,12 @@ func (e *DQLExecutor) runQuery(ctx context.Context, query string, opts DQLExecut
 		// newline is needed. When it was not (--no-progress, --plain, non-TTY),
 		// emit one to separate the message from a shell's "^C" echo.
 		if ctx.Err() != nil {
-			if !drawing {
-				fmt.Fprintln(e.errW())
+			if !opts.QuietCancel {
+				if !drawing {
+					fmt.Fprintln(e.errW())
+				}
+				fmt.Fprintln(e.errW(), "Query cancelled.")
 			}
-			fmt.Fprintln(e.errW(), "Query cancelled.")
 			return nil, nil
 		}
 		// Enhance known error types with CLI-specific hints.

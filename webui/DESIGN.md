@@ -183,6 +183,14 @@ history, ⌘/ comments, ⌘F searches; brackets match and auto-close.
   entity's `dt.smartscape.<type>` dimension, such as CloudWatch metrics for RDS, EC2, ELB and EKS, or OTel and
   Kubernetes metrics. Types without curated vitals use the discovered metrics as headline charts.
 
+### Tenants
+The context pill in the top bar is a tenant switcher. It lists every context in the dtctl config
+(searchable, with safety level) and is also available from ⌘K ("Switch to …"). Switching affects
+only this server process; the config file's current context is unchanged. The page reloads on the
+same section and timeframe, and detail pages fall back to their list. Cached results and running
+queries of the previous tenant are dropped, and cache keys carry a tenant generation, so nothing
+leaks across tenants.
+
 ### Built for big tenants
 Grail scans are bounded: the default scan limit is 500 GB, and a big tenant writes hundreds of GB of
 logs per hour. Every heavy view is designed for that limit.
@@ -195,6 +203,14 @@ logs per hour. Every heavy view is designed for that limit.
   because sampling drops records. When the span volume is over budget, the AI page reads the most
   recent slice of the timeframe that fits the budget. A banner says so and offers to scan the full range.
   Where the app emits OTel GenAI metrics (`gen_ai.client.*`), the call chart reads them over the full range.
+* **Abandoned work is cancelled.** Each distinct query runs once, shared by every panel that wants
+  it. The server counts how many callers are still waiting for it, and the browser aborts a batch
+  once every query in it has been abandoned (navigation, a new timeframe). When the last caller leaves,
+  the query is cancelled at Grail and frees its slot. Stale work never queues the next page.
+* **Query activity is visible.** A top-bar indicator shows queries running out of the 8 slots and
+  those waiting. Its popover lists in-flight queries (each cancellable), recent executions with duration,
+  scan size, queueing delay and outcome, and totals (requested, ran on Grail, served from cache or shared).
+  When every slot is busy and queries wait, it says so.
 * **Lookups by ID never scan a week.** Trace IDs aren't indexed. Traces are first located with a
   cheap aggregate over progressively wider windows: around the time the link carries (`?t=`),
   then the page timeframe, 24 hours and 7 days. Then they load from their own window. LLM-call and

@@ -46,6 +46,7 @@ interface Pending {
   fresh: boolean
   resolve: (r: DqlResult) => void
   reject: (e: Error) => void
+  signal?: AbortSignal
 }
 
 let queue: Pending[] = []
@@ -60,16 +61,37 @@ export function forceFresh() {
 
 function flush() {
   scheduled = false
-  const batch = queue
+  const batch = queue.filter((p) => !p.signal?.aborted)
   queue = []
   // The server accepts ≤32 per batch.
   for (let i = 0; i < batch.length; i += 32) sendBatch(batch.slice(i, i + 32))
 }
 
 async function sendBatch(batch: Pending[]) {
+  if (!batch.length) return
   const byId = new Map(batch.map((p) => [p.id, p]))
+  // When every query in this batch has been abandoned (the page changed, the
+  // timeframe moved on), abort the request: the server then cancels the work
+  // at Grail and frees its slot for what the user is looking at now.
+  const ctl = new AbortController()
+  const live = new Set(batch.map((p) => p.id))
+  // unsignalled callers (prefetch, name lookups) always keep the request alive
+  const pinned = batch.some((p) => !p.signal)
+  for (const p of batch) {
+    p.signal?.addEventListener(
+      'abort',
+      () => {
+        if (!live.delete(p.id)) return
+        byId.delete(p.id)
+        p.reject(new DOMException('abandoned', 'AbortError'))
+        if (!pinned && live.size === 0) ctl.abort()
+      },
+      { once: true },
+    )
+  }
   try {
     const res = await fetch('/api/batch', {
+      signal: ctl.signal,
       method: 'POST',
       headers: { ...HEADERS, 'Content-Type': 'application/json' },
       body: JSON.stringify(batch.map((p) => ({ id: p.id, ...p.spec, fresh: p.fresh || undefined }))),
@@ -91,6 +113,7 @@ async function sendBatch(batch: Pending[]) {
         const p = byId.get(msg.id)
         if (!p) continue
         byId.delete(msg.id)
+        live.delete(msg.id)
         if (msg.ok) p.resolve({ records: msg.records ?? [], types: msg.types, meta: msg.meta, cached: msg.cached, elapsedMs: msg.elapsedMs })
         else p.reject(new DqlError(cleanError(msg.error)))
       }
@@ -106,9 +129,10 @@ function cleanError(msg: string | undefined) {
   return msg.replace(/^query failed \(([A-Z_]+)\):\s*/, '$1: ')
 }
 
-export function runDql(spec: DqlSpec): Promise<DqlResult> {
+export function runDql(spec: DqlSpec, signal?: AbortSignal): Promise<DqlResult> {
   return new Promise((resolve, reject) => {
-    queue.push({ id: String(++seq), spec, fresh: Date.now() < freshUntil, resolve, reject })
+    if (signal?.aborted) return reject(new DOMException('abandoned', 'AbortError'))
+    queue.push({ id: String(++seq), spec, fresh: Date.now() < freshUntil, resolve, reject, signal })
     if (!scheduled) {
       scheduled = true
       // A macrotask, not a microtask: lets every component in the same
@@ -136,7 +160,8 @@ export const dqlKey = (s: DqlSpec) => ['dql', s.query, s.from ?? '', s.to ?? '',
 export function useDql(spec: DqlSpec | null | undefined, opts?: { refetchInterval?: number }): UseQueryResult<DqlResult, Error> {
   return useQuery({
     queryKey: spec ? dqlKey(spec) : ['dql-disabled'],
-    queryFn: () => runDql(spec!),
+    // React Query aborts the signal once nobody uses this query any more.
+    queryFn: ({ signal }) => runDql(spec!, signal),
     enabled: !!spec,
     // Changing the timeframe keeps the old data on screen (dimmed) instead
     // of flashing back to placeholders.
@@ -172,6 +197,7 @@ export interface Meta {
   userName?: string
   userEmail?: string
   contexts?: string[]
+  tenants?: { name: string; environment: string; safetyLevel?: string }[]
 }
 
 export function useMeta() {

@@ -25,6 +25,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	sdkquery "github.com/dynatrace-oss/dtctl/sdk/api/query"
@@ -60,6 +61,15 @@ type Meta struct {
 	UserName    string   `json:"userName,omitempty"`
 	UserEmail   string   `json:"userEmail,omitempty"`
 	Contexts    []string `json:"contexts,omitempty"`
+	// Tenants lists the switchable contexts (no credentials).
+	Tenants []Tenant `json:"tenants,omitempty"`
+}
+
+// Tenant is one configured dtctl context the UI can switch to.
+type Tenant struct {
+	Name        string `json:"name"`
+	Environment string `json:"environment"`
+	SafetyLevel string `json:"safetyLevel,omitempty"`
 }
 
 // Options configures a Server.
@@ -71,6 +81,9 @@ type Options struct {
 	// QueryAssist forwards a DQL editor request (op is "autocomplete" or
 	// "verify") to Grail and returns the raw JSON response and status.
 	QueryAssist func(ctx context.Context, op string, body []byte) ([]byte, int, error)
+	// SwitchContext points every later request at another configured dtctl
+	// context (in this process only; the config file is not changed). Optional.
+	SwitchContext func(name string) error
 	// MaxConcurrent bounds concurrent DQL executions against the tenant.
 	MaxConcurrent int
 	// Now is injectable for tests.
@@ -84,8 +97,11 @@ type Server struct {
 	sem   chan struct{}
 	cache *queryCache
 
-	metaOnce sync.Once
-	meta     Meta
+	metaMu sync.Mutex
+	meta   *Meta
+	// gen changes on every tenant switch and is part of every cache key, so
+	// a result from the previous tenant can never be served after a switch.
+	gen atomic.Int64
 
 	static map[string]staticFile
 }
@@ -121,6 +137,9 @@ func New(opts Options) (*Server, error) {
 	s.mux.HandleFunc("POST /api/batch", s.handleBatch)
 	s.mux.HandleFunc("GET /api/documents", s.handleDocuments)
 	s.mux.HandleFunc("POST /api/dql/{op}", s.handleQueryAssist)
+	s.mux.HandleFunc("GET /api/activity", s.handleActivity)
+	s.mux.HandleFunc("POST /api/activity/cancel", s.handleCancel)
+	s.mux.HandleFunc("POST /api/context", s.handleContext)
 	s.mux.HandleFunc("/", s.handleStatic)
 	return s, nil
 }
@@ -160,12 +179,17 @@ func isLoopbackHost(hostport string) bool {
 }
 
 func (s *Server) handleMeta(w http.ResponseWriter, _ *http.Request) {
-	s.metaOnce.Do(func() {
+	s.metaMu.Lock()
+	if s.meta == nil {
+		m := Meta{}
 		if s.opts.Meta != nil {
-			s.meta = s.opts.Meta()
+			m = s.opts.Meta()
 		}
-	})
-	writeJSON(w, http.StatusOK, s.meta)
+		s.meta = &m
+	}
+	m := *s.meta
+	s.metaMu.Unlock()
+	writeJSON(w, http.StatusOK, m)
 }
 
 // handleQueryAssist proxies the DQL editor's read-only helpers (autocomplete,
@@ -185,7 +209,7 @@ func (s *Server) handleQueryAssist(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid JSON body"})
 		return
 	}
-	key := "assist:" + op + ":" + string(body)
+	key := fmt.Sprintf("assist%d:%s:%s", s.gen.Load(), op, body)
 	if v, ok := s.cache.get(key, 5*time.Minute); ok {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(v.([]byte))
@@ -214,7 +238,7 @@ func (s *Server) handleDocuments(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "type must be dashboard or notebook"})
 		return
 	}
-	key := "docs:" + docType
+	key := fmt.Sprintf("docs%d:%s", s.gen.Load(), docType)
 	if v, ok := s.cache.get(key, 60*time.Second); ok {
 		writeJSON(w, http.StatusOK, v)
 		return
@@ -317,30 +341,33 @@ func (s *Server) runOne(ctx context.Context, q QueryRequest) QueryResult {
 	if ttl <= 0 {
 		ttl = 20 * time.Second
 	}
-	key := fmt.Sprintf("q:%s|%s|%s|%d", q.Query, q.From, q.To, q.MaxRecords)
+	key := fmt.Sprintf("q%d:%s|%s|%s|%d", s.gen.Load(), q.Query, q.From, q.To, q.MaxRecords)
 
 	if !q.Fresh {
 		if v, ok := s.cache.get(key, ttl); ok {
 			out := v.(QueryResult)
 			out.ID, out.Cached = q.ID, true
 			out.ElapsedMs = s.opts.Now().Sub(start).Milliseconds()
+			s.cache.record(FinishedQuery{Query: q.Query, At: start, ElapsedMs: out.ElapsedMs, Records: len(out.Records), Outcome: "cached"}, false)
 			return out
 		}
 	}
 
 	// Single-flight: identical concurrent queries (e.g. two panels, or a
 	// hover-prefetch racing the click) share one Grail execution.
-	v, err := s.cache.do(key, func() (any, error) {
-		// Detach from the first requester: other waiters share this flight,
-		// so it must not die when that one tab navigates away.
-		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-		defer cancel()
+	// The flight is shared by every caller asking for the same query and is
+	// cancelled when the last of them goes away (see activity.go).
+	var queuedMs atomic.Int64
+	v, shared, err := s.cache.do(ctx, key, ActiveQuery{Query: q.Query, From: q.From, To: q.To}, func(ctx context.Context, markRunning func()) (any, error) {
+		queued := s.opts.Now()
 		select {
 		case s.sem <- struct{}{}:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 		defer func() { <-s.sem }()
+		queuedMs.Store(s.opts.Now().Sub(queued).Milliseconds())
+		markRunning()
 
 		from, to, err := resolveTimeframe(q.From, q.To, s.opts.Now())
 		if err != nil {
@@ -350,6 +377,14 @@ func (s *Server) runOne(ctx context.Context, q QueryRequest) QueryResult {
 		if err != nil {
 			return nil, err
 		}
+		// A cancelled execution may come back as (nil, nil): never let that
+		// become a cached empty result.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		if resp == nil {
+			return nil, errors.New("query returned no response")
+		}
 		out := convertResponse(resp)
 		out.OK = true
 		if out.Meta != nil && out.Meta.From == "" {
@@ -357,14 +392,28 @@ func (s *Server) runOne(ctx context.Context, q QueryRequest) QueryResult {
 		}
 		return out, nil
 	})
+	elapsed := s.opts.Now().Sub(start).Milliseconds()
 	if err != nil {
 		res.Error = err.Error()
-		res.ElapsedMs = s.opts.Now().Sub(start).Milliseconds()
+		res.ElapsedMs = elapsed
+		outcome := "error"
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			outcome = "cancelled"
+		}
+		s.cache.record(FinishedQuery{Query: q.Query, At: start, ElapsedMs: elapsed, QueuedMs: queuedMs.Load(), Outcome: outcome, Error: err.Error()}, !shared)
 		return res
 	}
 	out := v.(QueryResult)
 	out.ID = q.ID
-	out.ElapsedMs = s.opts.Now().Sub(start).Milliseconds()
+	out.ElapsedMs = elapsed
+	fq := FinishedQuery{Query: q.Query, At: start, ElapsedMs: elapsed, QueuedMs: queuedMs.Load(), Records: len(out.Records), Outcome: "ok"}
+	if shared {
+		fq.Outcome = "shared"
+	}
+	if out.Meta != nil {
+		fq.ExecutionMs, fq.ScannedBytes = out.Meta.ExecutionMs, out.Meta.ScannedBytes
+	}
+	s.cache.record(fq, !shared)
 	return out
 }
 
@@ -578,75 +627,28 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // --- cache ----------------------------------------------------------------
 
-// queryCache is a tiny TTL cache with single-flight. Entries are evicted
-// lazily once they are older than maxAge.
-type queryCache struct {
-	now func() time.Time
-
-	mu       sync.Mutex
-	entries  map[string]cacheEntry
-	inflight map[string]*flight
-}
-
-type cacheEntry struct {
-	v  any
-	at time.Time
-}
-
-type flight struct {
-	done chan struct{}
-	v    any
-	err  error
-}
-
-const cacheMaxAge = 10 * time.Minute
-
-func newQueryCache(now func() time.Time) *queryCache {
-	return &queryCache{now: now, entries: map[string]cacheEntry{}, inflight: map[string]*flight{}}
-}
-
-func (c *queryCache) get(key string, ttl time.Duration) (any, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	e, ok := c.entries[key]
-	if !ok || c.now().Sub(e.at) > ttl {
-		return nil, false
+// handleContext switches the tenant this server queries. Cached results and
+// running queries of the previous tenant are dropped.
+func (s *Server) handleContext(w http.ResponseWriter, r *http.Request) {
+	if s.opts.SwitchContext == nil {
+		writeJSON(w, http.StatusNotImplemented, map[string]string{"error": "switching is not supported"})
+		return
 	}
-	return e.v, true
-}
-
-func (c *queryCache) put(key string, v any) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := c.now()
-	c.entries[key] = cacheEntry{v: v, at: now}
-	if len(c.entries) > 2000 {
-		for k, e := range c.entries {
-			if now.Sub(e.at) > cacheMaxAge {
-				delete(c.entries, k)
-			}
-		}
+	var body struct {
+		Name string `json:"name"`
 	}
-}
-
-func (c *queryCache) do(key string, fn func() (any, error)) (any, error) {
-	c.mu.Lock()
-	if f, ok := c.inflight[key]; ok {
-		c.mu.Unlock()
-		<-f.done
-		return f.v, f.err
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&body); err != nil || body.Name == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "name required"})
+		return
 	}
-	f := &flight{done: make(chan struct{})}
-	c.inflight[key] = f
-	c.mu.Unlock()
-
-	f.v, f.err = fn()
-	if f.err == nil {
-		c.put(key, f.v)
+	if err := s.opts.SwitchContext(body.Name); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
 	}
-	c.mu.Lock()
-	delete(c.inflight, key)
-	c.mu.Unlock()
-	close(f.done)
-	return f.v, f.err
+	s.gen.Add(1)
+	s.cache.reset()
+	s.metaMu.Lock()
+	s.meta = nil
+	s.metaMu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]string{"context": body.Name})
 }

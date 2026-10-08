@@ -1,8 +1,10 @@
 import { Command } from 'cmdk'
-import { AlertOctagon, ArrowRight, MessagesSquare, Clock, Link2, Moon, ScrollText, Terminal, Timer, Waypoints } from 'lucide-react'
+import { AlertOctagon, ArrowRight, Building2, MessagesSquare, Clock, Link2, Moon, ScrollText, Terminal, Timer, Waypoints } from 'lucide-react'
 import { useDeferredValue, useEffect, useMemo, useState } from 'react'
 import { useLocation } from 'wouter'
-import { useDql } from '../lib/api'
+import { toast } from 'sonner'
+import { useDql, useMeta } from '../lib/api'
+import { switchTenant } from './TenantSwitcher'
 import { searchEntitiesQuery, typeOfId } from '../lib/dql'
 import { shortType } from '../lib/format'
 import { entityHref, problemHref, traceHref } from '../lib/links'
@@ -19,6 +21,7 @@ export function Palette() {
   const [search, setSearch] = useState('')
   const [, navigate] = useLocation()
   const recents = useStore(recentStore)
+  const { data: meta } = useMeta()
   const deferred = useDeferredValue(search.trim())
 
   useEffect(() => {
@@ -146,6 +149,24 @@ export function Palette() {
               </Item>
             ))}
           </Command.Group>
+
+          {(meta?.tenants?.length ?? 0) > 1 && (
+            <Command.Group heading="Tenant">
+              {meta!.tenants!
+                .filter((t) => t.name !== meta!.context)
+                .map((t) => (
+                  <Item
+                    key={t.name}
+                    value={`switch tenant context ${t.name} ${t.environment}`}
+                    onSelect={() => switchTenant(t.name).catch((e) => toast.error(String(e instanceof Error ? e.message : e)))}
+                    icon={<Building2 className="size-4" />}
+                    hint={t.environment.replace(/^https?:\/\//, '').split('.')[0]}
+                  >
+                    Switch to {t.name}
+                  </Item>
+                ))}
+            </Command.Group>
+          )}
 
           <Command.Group heading="Timeframe">
             {PRESETS.map((p) => (

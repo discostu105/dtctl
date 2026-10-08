@@ -9,11 +9,14 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/dynatrace-oss/dtctl/pkg/client"
+	"github.com/dynatrace-oss/dtctl/pkg/config"
 	"github.com/dynatrace-oss/dtctl/pkg/exec"
 	"github.com/dynatrace-oss/dtctl/pkg/resources/document"
 	"github.com/dynatrace-oss/dtctl/pkg/version"
@@ -64,30 +67,24 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	c, err := NewClientFromConfig(cfg)
-	if err != nil {
+	tenants := newWebTenants(cfg)
+	if _, err := tenants.use(cfg.CurrentContext); err != nil {
 		return err
-	}
-	executor := exec.NewDQLExecutor(c)
-	docs := document.NewHandler(c)
-
-	contexts := make([]string, 0, len(cfg.Contexts))
-	for _, nc := range cfg.Contexts {
-		contexts = append(contexts, nc.Name)
 	}
 
 	srv, err := webui.New(webui.Options{
 		Query: func(ctx context.Context, q, from, to string, maxRecords int64) (*sdkquery.Response, error) {
-			return executor.ExecuteQueryWithContext(ctx, q, exec.DQLExecuteOptions{
+			return tenants.current().executor.ExecuteQueryWithContext(ctx, q, exec.DQLExecuteOptions{
 				DefaultTimeframeStart: from,
 				DefaultTimeframeEnd:   to,
 				MaxResultRecords:      maxRecords,
 				IncludeTypes:          true,
 				ClientContext:         "dtctl-web",
+				QuietCancel:           true,
 			})
 		},
 		Documents: func(_ context.Context, docType string) ([]webui.Document, error) {
-			list, err := docs.List(document.DocumentFilters{Type: docType, ChunkSize: 200})
+			list, err := tenants.current().docs.List(document.DocumentFilters{Type: docType, ChunkSize: 200})
 			if err != nil {
 				return nil, err
 			}
@@ -105,7 +102,7 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 			return out, nil
 		},
 		QueryAssist: func(ctx context.Context, op string, body []byte) ([]byte, int, error) {
-			resp, err := c.HTTP().R().
+			resp, err := tenants.current().client.HTTP().R().
 				SetContext(ctx).
 				SetHeader("Content-Type", "application/json").
 				SetBody(body).
@@ -115,18 +112,10 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 			}
 			return resp.Body(), resp.StatusCode(), nil
 		},
-		Meta: func() webui.Meta {
-			m := webui.Meta{
-				Context:     cfg.CurrentContext,
-				Environment: ctxObj.Environment,
-				SafetyLevel: string(ctxObj.SafetyLevel),
-				Version:     version.Version,
-				Contexts:    contexts,
-			}
-			if u, err := c.CurrentUser(); err == nil {
-				m.UserName, m.UserEmail = u.UserName, u.EmailAddress
-			}
-			return m
+		Meta: tenants.meta,
+		SwitchContext: func(name string) error {
+			_, err := tenants.use(name)
+			return err
 		},
 	})
 	if err != nil {
@@ -180,4 +169,87 @@ func listenLoopback(port int) (net.Listener, error) {
 		lastErr = err
 	}
 	return nil, fmt.Errorf("no free port in %d-%d: %w", port, port+19, lastErr)
+}
+
+// webTenants holds one API client per configured context, built on first
+// use, and which one the web UI currently queries. Switching only affects
+// this process: the config file's current context is left alone.
+type webTenants struct {
+	cfg *config.Config
+
+	mu   sync.Mutex
+	byID map[string]*webTenant
+	cur  *webTenant
+}
+
+type webTenant struct {
+	name     string
+	env      string
+	safety   string
+	client   *client.Client
+	executor *exec.DQLExecutor
+	docs     *document.Handler
+
+	userOnce sync.Once
+	userName string
+	email    string
+}
+
+func newWebTenants(cfg *config.Config) *webTenants {
+	return &webTenants{cfg: cfg, byID: map[string]*webTenant{}}
+}
+
+func (t *webTenants) use(name string) (*webTenant, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if wt, ok := t.byID[name]; ok {
+		t.cur = wt
+		return wt, nil
+	}
+	var nc *config.NamedContext
+	for i := range t.cfg.Contexts {
+		if t.cfg.Contexts[i].Name == name {
+			nc = &t.cfg.Contexts[i]
+		}
+	}
+	if nc == nil {
+		return nil, fmt.Errorf("context %q not found", name)
+	}
+	scoped := *t.cfg
+	scoped.CurrentContext = name
+	c, err := NewClientFromConfig(&scoped)
+	if err != nil {
+		return nil, fmt.Errorf("context %q: %w", name, err)
+	}
+	wt := &webTenant{
+		name: name, env: nc.Context.Environment, safety: string(nc.Context.SafetyLevel),
+		client: c, executor: exec.NewDQLExecutor(c), docs: document.NewHandler(c),
+	}
+	t.byID[name] = wt
+	t.cur = wt
+	return wt, nil
+}
+
+func (t *webTenants) current() *webTenant {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.cur
+}
+
+func (t *webTenants) meta() webui.Meta {
+	wt := t.current()
+	wt.userOnce.Do(func() {
+		if u, err := wt.client.CurrentUser(); err == nil {
+			wt.userName, wt.email = u.UserName, u.EmailAddress
+		}
+	})
+	m := webui.Meta{
+		Context: wt.name, Environment: wt.env, SafetyLevel: wt.safety, Version: version.Version,
+		UserName: wt.userName, UserEmail: wt.email,
+	}
+	for _, nc := range t.cfg.Contexts {
+		m.Contexts = append(m.Contexts, nc.Name)
+		m.Tenants = append(m.Tenants, webui.Tenant{Name: nc.Name, Environment: nc.Context.Environment, SafetyLevel: string(nc.Context.SafetyLevel)})
+	}
+	return m
 }
