@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -33,7 +34,8 @@ type RunOptions struct {
 	// Env sets environment variables for the duration of the invocation
 	// (restored afterwards), e.g. DTCTL_PROFILE to select a command profile
 	// per request. Applied after session scrubbing, so an explicit entry wins.
-	// The mutation is process-wide while the invocation runs — see
+	// For a serialized invocation the mutation is process-wide while it runs;
+	// a Concurrent one records the entries on itself instead — see
 	// applyRunEnvironment.
 	Env map[string]string
 
@@ -64,6 +66,28 @@ type RunOptions struct {
 	// command bodies can observe cancellation and deadlines via cmd.Context().
 	// nil defaults to context.Background(), preserving CLI behaviour.
 	Context context.Context
+
+	// Concurrent opts this invocation out of the whole-invocation lock, so it
+	// overlaps with other Concurrent invocations in the same process.
+	//
+	// The invocation runs on a
+	// command tree of its own (newCommandTree), with every flag bound to
+	// storage only it can reach, and its streams, environment, filesystem,
+	// session and capabilities travel on its context instead of being swapped
+	// process-wide. A panic in the command fails this invocation (exit code
+	// ExitError, message on its stderr) rather than the embedding process.
+	//
+	// Requires a Session: config resolution reads the host's contexts, which a
+	// tree of its own cannot select (--context), so Run refuses the combination
+	// with ExitUsageError.
+	//
+	// Its wait for a serialized invocation to finish ends with Context: Run
+	// then returns ExitError without having started (OnStart is not called).
+	Concurrent bool
+
+	// OnStart, when set, is called on Run's goroutine once the invocation holds
+	// the invocation lock, before anything else of it runs.
+	OnStart func()
 }
 
 // runCtx holds the active invocation's context, threaded into the Cobra tree
@@ -75,7 +99,15 @@ var runCtx = context.Background()
 // flag values and tree mutations. In-process callers therefore queue;
 // parallelism comes from running more instances or more processes.
 // See docs/dev/SERVICE_ENGINE_DESIGN.md ("Serialization").
-var runMu sync.Mutex
+//
+// RunOptions.Concurrent opts out of that: such an invocation builds a tree of
+// its own instead of borrowing the singleton, and takes the lock shared, so
+// concurrent invocations overlap with each other but never with a serialized
+// one, which takes it exclusively. A process therefore runs either one
+// serialized invocation or any number of concurrent ones, never a mix — which
+// is what lets the global OnInitialize hook tell them apart (initConfigHook).
+// See docs/dev/CONCURRENT_EXECUTION.md.
+var runMu sync.RWMutex
 
 // runActive counts the invocations currently executing. A counter rather
 // than a flag: concurrent invocations overlap, and the first to finish must
@@ -99,16 +131,34 @@ func RunActive() bool {
 // unlike Execute it never terminates the process, and every invocation starts
 // from a pristine command tree — flag values reset to declared defaults, and
 // per-run tree mutations (command-profile masks, scope-preflight wraps)
-// undone. Concurrent calls are safe; they execute one at a time.
-func Run(argv []string, opts RunOptions) int {
-	runMu.Lock()
-	defer runMu.Unlock()
-	runActive.Add(1)
-	defer runActive.Add(-1)
-
+// undone. Concurrent calls are safe; they execute one at a time unless
+// opts.Concurrent is set, in which case each runs on a tree of its own.
+func Run(argv []string, opts RunOptions) (code int) {
+	if opts.Concurrent && opts.Session == nil {
+		reportOptionsError(context.Background(), opts, errors.New("RunOptions.Concurrent requires a Session"))
+		return client.ExitUsageError
+	}
 	ctx := opts.Context
 	if ctx == nil {
 		ctx = context.Background()
+	}
+
+	if opts.Concurrent {
+		if err := rlockRun(ctx); err != nil {
+			reportOptionsError(ctx, opts, fmt.Errorf("gave up waiting for a serialized invocation to finish: %w", err))
+			return client.ExitError
+		}
+		defer runMu.RUnlock()
+		concurrentActive.Add(1)
+		defer concurrentActive.Add(-1)
+	} else {
+		runMu.Lock()
+		defer runMu.Unlock()
+	}
+	runActive.Add(1)
+	defer runActive.Add(-1)
+	if opts.OnStart != nil {
+		opts.OnStart()
 	}
 
 	granted := AllCapabilities()
@@ -120,27 +170,30 @@ func Run(argv []string, opts RunOptions) int {
 	// every accessor below — streams, environment, capabilities, session —
 	// resolves to it rather than to the package globals.
 	inv := &invocation{
-		session: opts.Session,
-		blocked: opts.BlockedCommands,
-		caps:    granted,
+		session:    opts.Session,
+		blocked:    opts.BlockedCommands,
+		caps:       granted,
+		concurrent: opts.Concurrent,
 	}
 	ctx = withInvocation(ctx, inv)
 	// Registered first, so it runs last: nothing the deferred cleanups below
 	// resolve through ctx may see the invocation already ended.
 	defer inv.ended.Store(true)
 
-	// The package globals are kept up to date as well, so that a caller
+	// The serialized path keeps mutating the package globals, so that a caller
 	// reaching for them directly (tests, SetCapabilities) sees what it always
-	// did.
-	prevCtx := runCtx
-	runCtx = ctx
-	defer func() { runCtx = prevCtx }()
+	// did. The concurrent path leaves them alone and reads from inv.
+	if !opts.Concurrent {
+		prevCtx := runCtx
+		runCtx = ctx
+		defer func() { runCtx = prevCtx }()
 
-	prev := SetCapabilities(granted)
-	defer SetCapabilities(prev)
+		prev := SetCapabilities(granted)
+		defer SetCapabilities(prev)
 
-	runBlocked = opts.BlockedCommands
-	defer func() { runBlocked = nil }()
+		runBlocked = opts.BlockedCommands
+		defer func() { runBlocked = nil }()
+	}
 
 	cleanup, err := applyRunEnvironment(ctx, opts)
 	if err != nil {
@@ -158,8 +211,64 @@ func Run(argv []string, opts RunOptions) int {
 	}
 	defer restoreStdio()
 
+	if opts.Concurrent {
+		// Colour is decided once per process from the host (pkg/output: its
+		// NO_COLOR and FORCE_COLOR, and whether its stdout is a terminal), and
+		// this invocation prints to none of that: its stdout is the caller's
+		// writer. Pin colour off, so a host started from a terminal or with
+		// FORCE_COLOR set does not colour a tenant's response. A serialized run
+		// resets the cache for itself (restorePristineTree).
+		output.PinColorOff()
+
+		// In a process serving many tenants, one command's panic must fail
+		// that request, not every request in flight. Registered after the
+		// stream redirect so the report lands on this invocation's stderr, and
+		// before the deferred unwinding above, which still runs.
+		defer func() {
+			if r := recover(); r != nil {
+				fmt.Fprintf(currentStderr(ctx), "Error: internal error: %v\n", r)
+				code = client.ExitError
+			}
+		}()
+
+		// A tree of its own: newCommandTree binds every flag to storage on
+		// this invocation or local to a constructor, so nothing parsed here is
+		// visible to a concurrent invocation, and no restore is needed.
+		tree := newCommandTree(ctx)
+		inv.treeRoot = tree.root
+		// Cobra writes help, usage and its own errors to the command's
+		// writers, falling back to the process streams. The process streams
+		// are not this invocation's, so bind the tree to its own.
+		tree.root.SetOut(currentStdout(ctx))
+		tree.root.SetErr(currentStderr(ctx))
+		tree.root.SetIn(currentStdin(ctx))
+		return executeTree(tree.root, tree.get, argv)
+	}
 	restorePristineTree(ctx)
 	return executeArgs(argv)
+}
+
+// rlockRun takes runMu shared, or gives up when ctx ends first; a lock acquired
+// after giving up is released at once.
+func rlockRun(ctx context.Context) error {
+	if runMu.TryRLock() {
+		return nil
+	}
+	acquired := make(chan struct{})
+	go func() {
+		runMu.RLock()
+		close(acquired)
+	}()
+	select {
+	case <-acquired:
+		return nil
+	case <-ctx.Done():
+		go func() {
+			<-acquired
+			runMu.RUnlock()
+		}()
+		return ctx.Err()
+	}
 }
 
 // reportOptionsError surfaces a RunOptions problem on the invocation's stderr

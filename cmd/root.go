@@ -80,7 +80,8 @@ func cmdContext(cmd *cobra.Command) context.Context {
 // while concurrent invocations run, and has none, would resolve the process's
 // state instead of its invocation's: code that prepares a command before cobra
 // has handed it the invocation's context (a constructor, say) must be given the
-// invocation, or the storage, explicitly.
+// invocation, or the storage, explicitly. See
+// TestConcurrentRunNeverLacksACommandContext.
 var onMissingCommandContext func(cmd *cobra.Command)
 
 // rootCmd represents the base command
@@ -1951,7 +1952,12 @@ func NewDQLExecutorFromConfig(cfg *config.Config, c *client.Client) *exec.DQLExe
 // fresh token and retries without aborting the query.
 func newDQLExecutorFromConfig(ictx context.Context, cfg *config.Config, c *client.Client) *exec.DQLExecutor {
 	executor := newDQLExecutor(ictx, c)
-	if config.IsOAuthStorageAvailable() {
+	// A sealed config (a Session's) carries its token inline and resolves it
+	// from nowhere else, so a refresher could never hand back a different one.
+	// Asking first also keeps IsOAuthStorageAvailable's keyring probe off the
+	// request path: a concurrent invocation scrubs DTCTL_DISABLE_KEYRING into
+	// its own environment overlay, which that probe does not read.
+	if !cfg.InlineCredentialsOnly() && config.IsOAuthStorageAvailable() {
 		ctx, err := cfg.CurrentContextObj()
 		if err == nil && ctx.TokenRef != "" {
 			tokenRef := ctx.TokenRef
