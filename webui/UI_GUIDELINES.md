@@ -264,7 +264,7 @@ Inconsistencies we know about and accept for now. Remove an item when you fix it
 - Logs has its own toolbar layout without `PageHeader`.
 - Rows on Experience → Pages do nothing on click (no page detail view yet).
 - Some `Segmented` lenses have no counts.
-- `FilterChip` exists in Logs, Ai and Rum as near-duplicates of the facet chips.
+- `FilterChip` exists in Ai and Rum as near-duplicates of the facet chips.
 - The session stat tiles in Experience are hand-rolled instead of `Kpi`.
 - The trace span detail (`AttrSections`) duplicates parts of `Inspector`.
 - The selected row is in the URL only on Security and Trace.

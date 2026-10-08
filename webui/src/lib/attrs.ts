@@ -212,14 +212,19 @@ export function groupRank(group: string) {
  *   service-metrics  the services roster: dimensions of the four service
  *                    metrics (primary tags live there, not on SERVICE nodes);
  *                    values count distinct services
+ *   logs             `fetch logs` plus the view's own filters (scope, level,
+ *                    search): discovery samples the newest records, values
+ *                    count records and are sampled on big tenants
  */
 export interface AttrSource {
-  kind: 'nodes' | 'service-metrics'
-  /** nodes: the source command, e.g. `smartscapeNodes "K8S_POD"` */
+  kind: 'nodes' | 'service-metrics' | 'logs'
+  /** nodes: the source command, e.g. `smartscapeNodes "K8S_POD"`; logs: `fetch logs` and the view's filter lines */
   head: string
-  /** timeframe for metric-backed sources */
+  /** timeframe for metric- and record-backed sources */
   from?: string
   to?: string
+  /** fields the popup offers first, under "Suggested", by their everyday name */
+  suggested?: { field: string; label: string }[]
 }
 
 export const SERVICE_METRICS = `{"dt.service.request.count", "dt.service.faas_invoke.count", "dt.service.messaging.process.count", "dt.service.request.service_mesh.count"}`
@@ -234,12 +239,17 @@ const SAMPLE = 300
 /** A bounded raw sample: every tag map and scalar is visible, manifests stripped. */
 export function discoveryQuery(src: AttrSource): string {
   if (src.kind === 'service-metrics') return `metrics\n| filter in(metric.key, ${SERVICE_METRICS})\n| limit ${SAMPLE}`
+  if (src.kind === 'logs') return `${src.head}\n| limit ${SAMPLE}`
   // fieldsRemove tolerates absent fields, so every heavy manifest can be listed
   return `${src.head}\n| fieldsRemove k8s.object, aws.object, azure.object, gcp.object, references\n| limit ${SAMPLE}`
 }
 
 /** Fields that are identities, plumbing or noise as filters. */
-const SKIP = new Set(['id', 'id_classic', 'metric.key', 'interval', 'lifetime', 'dt.security_context', 'k8s.cluster.uid', 'k8s.pod.uid', 'dt.process_group.id'])
+const SKIP = new Set([
+  'id', 'id_classic', 'metric.key', 'interval', 'lifetime', 'dt.security_context', 'k8s.cluster.uid', 'k8s.pod.uid', 'dt.process_group.id',
+  // log records: the message and its timing are searched, not faceted
+  'content', 'timestamp', 'observed_timestamp', 'dt.ingest.size',
+])
 
 export interface AttrCandidate {
   field: string
@@ -282,6 +292,7 @@ export function valuesQuery(src: AttrSource, field: string, filters: AttrFilter[
       '| sort n desc',
       `| limit ${TOP_VALUES}`,
     ].join('\n')
+  if (src.kind === 'logs') return [src.head, ...others, `| summarize n = count(), by:{v = ${expr}}`, '| sort n desc', `| limit ${TOP_VALUES}`].join('\n')
   return [src.head, ...others, `| fieldsSummary ${expr}, topValues: ${TOP_VALUES}`].join('\n')
 }
 
@@ -294,7 +305,7 @@ export interface AttrValues {
 const str = (v: unknown) => (v == null ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v))
 
 export function parseValues(src: AttrSource, records: Record<string, any>[]): AttrValues {
-  if (src.kind === 'service-metrics') {
+  if (src.kind === 'service-metrics' || src.kind === 'logs') {
     return { values: records.map((r) => ({ value: r.v == null || r.v === '' ? UNSET : str(r.v), count: Number(r.n) || 0 })) }
   }
   const r = records[0]

@@ -93,9 +93,10 @@ spans are red, a gutter shows each span's self time, span attributes appear on
 click, and one more click goes to the service or to the logs for that trace.
 
 ### J5 — "Search the logs" (everyone)
-Logs explorer: a stacked level histogram (click a bar to zoom into it), facets
-(level, namespace, service, source) with counts, and a full-text search that
-compiles to DQL as you type (the DQL is visible). The stream is virtualized, and
+Logs explorer: a stacked level histogram (click a bar to zoom into it), the same
+filter popup (`F`) as every list (level, namespace, service and source first, then
+every field and primary tag in the logs, values counted from a sample on big
+tenants), and a full-text search that compiles to DQL as you type (the DQL is visible). The stream is virtualized, and
 clicking a record expands it. **Love:** log levels have consistent colors; JSON
 bodies are pretty-printed; trace IDs are links.
 

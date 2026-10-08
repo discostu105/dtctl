@@ -671,7 +671,8 @@ export function FacetSummary<T>({ fc, noun, fetching, limit }: { fc: FacetCtl<T>
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
       <h2 className="flex shrink-0 items-center gap-1.5 text-sm font-medium">
-        {shown == null ? '…' : fc.active ? (
+        {/* "x of y" only when filters here hide loaded rows; server-side filters already shaped the total */}
+        {shown == null ? '…' : shown !== fc.total ? (
           <span>
             {fmtInt(shown)} <span className="font-normal text-ink-3">of {fmtInt(fc.total)}{capped && '+'}</span>
           </span>
@@ -760,7 +761,8 @@ function FilterChip<T>({ fc, group }: { fc: FacetCtl<T>; group: FacetFilter[] })
 
 function AttrChip<T>({ fc, group, onOpen }: { fc: FacetCtl<T>; group: AttrFilter[]; onOpen: () => void }) {
   const neg = !!group[0].neg
-  const d = describeField(group[0].field)
+  const curated = fc.attrs?.source.suggested?.find((x) => x.field === group[0].field)
+  const d = curated ? { kind: '', name: curated.label } : describeField(group[0].field)
   const show = (v: string) => (v === UNSET ? <span className="italic">not set</span> : v)
   return (
     <span className={clsx('inline-flex h-6 shrink-0 items-center overflow-hidden rounded-md text-xs', neg ? 'bg-crit-wash text-crit' : 'bg-accent-wash text-accent-ink')}>

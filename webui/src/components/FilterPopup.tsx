@@ -3,6 +3,7 @@ import { Ban, Check, ChevronLeft, ChevronRight, ListFilter, Loader2, Minus, X } 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useDql } from '../lib/api'
+import { useAdaptiveDql } from '../lib/sampling'
 import {
   ATTRIBUTES,
   describeField,
@@ -17,7 +18,7 @@ import {
   type AttrCandidate,
 } from '../lib/attrs'
 import { NONE } from '../lib/facets'
-import { fmtInt, fmtPct } from '../lib/format'
+import { fmtCompact, fmtInt, fmtPct } from '../lib/format'
 import type { FacetCtl } from './Facets'
 import { Kbd } from './ui'
 
@@ -30,7 +31,7 @@ import { Kbd } from './ui'
 
 type Field =
   | { kind: 'facet'; id: string; key: string; name: string; group: string }
-  | { kind: 'attr'; id: string; field: string; name: string; group: string; tag: string; coverage?: number; typed?: boolean }
+  | { kind: 'attr'; id: string; field: string; name: string; group: string; tag: string; coverage?: number; typed?: boolean; curated?: boolean }
 
 interface Opt {
   value: string
@@ -44,6 +45,9 @@ const SUGGESTED = 'Suggested'
 
 export const facetFieldId = (key: string) => `f:${key}`
 export const attrFieldId = (field: string) => `a:${field}`
+
+/** Field paths read as code; curated everyday names (Level, Namespace) don't. */
+const rawName = (f: Field) => f.kind === 'attr' && !f.curated
 
 function attrField(c: AttrCandidate | { field: string; coverage?: number }, typed = false): Field {
   const d = describeField(c.field)
@@ -104,20 +108,34 @@ export function FilterPopup<T>({
     // A curated facet with nothing but "not set" in the loaded rows (a
     // namespace on EC2 instances) is noise, unless it is being filtered on.
     const useful = (key: string) => !fc.rows || fc.filters.some((x) => x.key === key) || fc.counts(key).some((c) => c.value !== NONE && c.count > 0)
-    const facetFields: Field[] = fc.facets
-      .filter((f) => useful(f.key))
-      .map((f) => ({ kind: 'facet', id: facetFieldId(f.key), key: f.key, name: f.label, group: SUGGESTED }))
+    const facetFields: Field[] = [
+      ...fc.facets.filter((f) => useful(f.key)).map((f): Field => ({ kind: 'facet', id: facetFieldId(f.key), key: f.key, name: f.label, group: SUGGESTED })),
+      // server-side sources can name their everyday fields too (Logs: level, namespace, …)
+      ...(src?.suggested ?? []).map((s): Field => ({
+        ...(attrField(candidates.find((c) => c.field === s.field) ?? { field: s.field }) as Extract<Field, { kind: 'attr' }>),
+        name: s.label,
+        group: SUGGESTED,
+        tag: '',
+        curated: true,
+      })),
+    ]
+    const suggestedAttrs = new Set((src?.suggested ?? []).map((s) => s.field))
     const discovered = candidates
+      .filter((c) => !suggestedAttrs.has(c.field))
       .map((c) => attrField(c))
       .sort((a, b) => groupRank(a.group) - groupRank(b.group) || a.group.localeCompare(b.group) || (b.kind === 'attr' && a.kind === 'attr' ? (b.coverage ?? 0) - (a.coverage ?? 0) : 0) || a.name.localeCompare(b.name))
     const activeKeys = [...new Set(fc.filters.map((f) => f.key))]
     const activeAttrs = [...new Set((attrs?.filters ?? []).map((f) => f.field))]
     const active: Field[] = [
       ...activeKeys.flatMap((k) => facetFields.filter((f) => f.kind === 'facet' && f.key === k)),
-      ...activeAttrs.map((field) => candidates.find((c) => c.field === field) ?? { field }).map((c) => attrField(c)),
+      ...activeAttrs.map((field) => {
+        const f = attrField(candidates.find((c) => c.field === field) ?? { field }) as Extract<Field, { kind: 'attr' }>
+        const s = src?.suggested?.find((x) => x.field === field)
+        return s ? { ...f, name: s.label, tag: '', curated: true } : f
+      }),
     ].map((f) => ({ ...f, group: ACTIVE }))
     return { active, facetFields, discovered }
-  }, [fc, attrs?.filters, candidates])
+  }, [fc, src, attrs?.filters, candidates])
 
   const rows: Field[] = useMemo(() => {
     const { active, facetFields, discovered } = all
@@ -164,7 +182,12 @@ export function FilterPopup<T>({
     return () => clearTimeout(t)
   }, [cur?.kind === 'attr' ? cur.field : null, pane]) // eslint-disable-line react-hooks/exhaustive-deps
   const valSpec = src && attrs && qAttr ? { query: valuesQuery(src, qAttr, attrs.filters), from: src.from, to: src.to, ttl: 60 } : null
-  const valRes = useDql(valSpec)
+  // Log values count records, which on a big tenant means sampling like every other log chart.
+  const logs = src?.kind === 'logs'
+  const plainRes = useDql(logs ? null : valSpec)
+  const sampledVals = useAdaptiveDql('logs', logs ? valSpec : null, ['n'])
+  const valRes = logs ? sampledVals.res : plainRes
+  const sampleRatio = logs ? sampledVals.ratio : 1
   const attrValues = valRes.data && !valRes.isPlaceholderData && qAttr ? parseValues(src!, valRes.data.records) : null
   const valuesLoading = cur?.kind === 'attr' && (!attrValues || qAttr !== cur.field) && !valRes.error
 
@@ -379,7 +402,7 @@ export function FilterPopup<T>({
           <div className={clsx('flex min-h-0 flex-col', pane === 'fields' && 'max-sm:hidden')}>
             {cur ? (
               <>
-                <ValuesHeader f={cur} fc={fc} noun={noun} total={attrValues?.total} n={cur.kind === 'facet' ? facetCount(cur.key) : attrValues?.values.filter((v) => v.value !== UNSET).length} />
+                <ValuesHeader f={cur} fc={fc} noun={noun} total={attrValues?.total} ratio={sampleRatio} n={cur.kind === 'facet' ? facetCount(cur.key) : attrValues?.values.filter((v) => v.value !== UNSET).length} />
                 <div className={clsx('min-h-0 flex-1 overflow-y-auto py-1', pane === 'fields' && 'opacity-80')}>
                   {cur.kind === 'attr' && valRes.error && <div className="px-3 py-3 text-xs text-crit">{valRes.error.message}</div>}
                   {valuesLoading && !opts.some((o) => o.special) && <ValueSkeleton />}
@@ -428,7 +451,7 @@ export function FilterPopup<T>({
           )}
           <span className="ml-auto flex items-center gap-1.5 text-ink-3">
             {fetching && <Loader2 className="size-3 animate-spin" />}
-            {shown == null ? '…' : fc.active ? `${fmtInt(shown)} of ${fmtInt(fc.total)} ${noun}` : `${fmtInt(shown)} ${noun}`}
+            {shown == null ? '…' : shown !== fc.total ? `${fmtInt(shown)} of ${fmtInt(fc.total)} ${noun}` : `${fmtInt(shown)} ${noun}`}
           </span>
         </div>
       </div>
@@ -458,7 +481,7 @@ function FieldName({ f }: { f: Field }) {
   return (
     <span className="flex min-w-0 items-baseline gap-1">
       {f.kind === 'attr' && f.tag && <span className="shrink-0 text-2xs opacity-70">{f.tag}</span>}
-      <span className={clsx('truncate', f.kind === 'attr' && 'font-mono text-[13px]')}>{f.name}</span>
+      <span className={clsx('truncate', rawName(f) && 'font-mono text-[13px]')}>{f.name}</span>
     </span>
   )
 }
@@ -504,7 +527,7 @@ function FieldRow<T>({
       {showGroup && f.group !== ACTIVE && f.group !== SUGGESTED && f.group !== ATTRIBUTES && f.kind === 'attr' && f.tag && (
         <span className="shrink-0 text-2xs text-ink-4">{f.tag}</span>
       )}
-      <span className={clsx('min-w-0 truncate', f.kind === 'attr' && 'font-mono text-[13px]')}>{f.name}</span>
+      <span className={clsx('min-w-0 truncate', rawName(f) && 'font-mono text-[13px]')}>{f.name}</span>
       {f.group === ACTIVE && <ActiveSummary f={f} fc={fc} />}
       <span className="ml-auto flex shrink-0 items-center gap-1 text-2xs text-ink-4">
         {right}
@@ -545,13 +568,14 @@ function ActiveSummary<T>({ f, fc }: { f: Field; fc: FacetCtl<T> }) {
   )
 }
 
-function ValuesHeader<T>({ f, fc, noun, total, n }: { f: Field; fc: FacetCtl<T>; noun: string; total?: number; n?: number }) {
+function ValuesHeader<T>({ f, fc, noun, total, n, ratio = 1 }: { f: Field; fc: FacetCtl<T>; noun: string; total?: number; n?: number; ratio?: number }) {
   const has = f.kind === 'facet' ? fc.filters.some((x) => x.key === f.key) : (fc.attrs?.filters ?? []).some((x) => x.field === f.field)
   const facts: string[] = []
   if (f.kind === 'attr') {
     if (f.coverage != null) facts.push(`on ${fmtPct(100 * f.coverage, 0)} of sampled ${noun}`)
     if (n != null) facts.push(`${fmtInt(n)}${n >= TOP_VALUES ? '+' : ''} ${n === 1 ? 'value' : 'values'}`)
     if (total != null) facts.push(`${fmtInt(total)} ${noun} in scope`)
+    if (ratio > 1) facts.push(`counts ≈ from a 1:${fmtInt(ratio)} sample`)
   } else {
     if (n != null) facts.push(`${fmtInt(n)} ${n === 1 ? 'value' : 'values'} in the loaded ${noun}`)
   }
@@ -560,7 +584,7 @@ function ValuesHeader<T>({ f, fc, noun, total, n }: { f: Field; fc: FacetCtl<T>;
       <div className="min-w-0">
         <div className="flex min-w-0 items-baseline gap-1.5 text-sm font-medium text-ink">
           {f.kind === 'attr' && f.tag && <span className="shrink-0 text-xs font-normal text-ink-3">{f.tag}</span>}
-          <span className={clsx('truncate', f.kind === 'attr' && 'font-mono text-[13px]')} title={f.kind === 'attr' ? f.field : undefined}>
+          <span className={clsx('truncate', rawName(f) && 'font-mono text-[13px]')} title={f.kind === 'attr' ? f.field : undefined}>
             {f.name}
           </span>
         </div>
@@ -673,7 +697,7 @@ function ValueOption({
           <span className="h-1 w-12 shrink-0 overflow-hidden rounded-full bg-line">
             <span className={clsx('block h-full rounded-full', o.state === 'exc' ? 'bg-crit/60' : 'bg-accent/70')} style={{ width: `${(100 * o.count) / max}%` }} />
           </span>
-          <span className="tnum w-12 shrink-0 text-right text-xs text-ink-3">{fmtInt(o.count)}</span>
+          <span className="tnum w-12 shrink-0 text-right text-xs text-ink-3">{o.count >= 1e5 ? fmtCompact(o.count) : fmtInt(o.count)}</span>
         </>
       ) : (
         <span className="w-[6.5rem] shrink-0 text-right text-2xs text-ink-4">{o.special ? (o.special === 'pattern' ? 'pattern' : 'typed') : ''}</span>
