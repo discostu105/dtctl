@@ -109,3 +109,32 @@ test('filter popup: open with f, browse a tag, pick a value, close with Esc', as
   await expect(dialog).toBeHidden()
   expect(errors).toEqual([])
 })
+
+for (const n of [6, 1000]) {
+  const capped = n >= 1000
+  test(`filter popup: a curated facet ${capped ? 'filters on the server when the list is capped' : 'filters the loaded rows'}`, async ({ page }) => {
+    const errors = watchErrors(page)
+    const queries = await mockApi(page, { hosts: n })
+    await page.goto('/hosts')
+    await expect(page.getByText('host-1.example.invalid')).toBeVisible()
+    if (capped) await expect(page.locator('main').getByText('capped', { exact: true })).toBeVisible()
+
+    await page.locator('main').click({ position: { x: 5, y: 5 } })
+    await page.keyboard.press('f')
+    const dialog = page.getByRole('dialog')
+    await page.keyboard.type('Instance type')
+    await expect(dialog.getByRole('option', { name: /^t3\.large/ })).toBeVisible()
+    await page.keyboard.press('Tab')
+    await page.keyboard.press('Enter')
+    await expect(dialog).toBeHidden()
+
+    if (capped) {
+      // every host's values, and the filter narrows the query rather than the 1000 loaded rows
+      await expect(page).toHaveURL(/[?&]a=host\.type%3D/)
+      await expect.poll(() => queries.some((q) => q.startsWith('smartscapeNodes HOST\n| filter host.type == '))).toBe(true)
+    } else {
+      await expect(page).toHaveURL(/[?&]f=instance%3At3\.large/)
+    }
+    expect(errors).toEqual([])
+  })
+}

@@ -19,7 +19,7 @@ import {
 import { describeField, parseAttrs, sameAttr, serializeAttr, UNSET, type AttrFilter, type AttrSource } from '../lib/attrs'
 import { fmtInt } from '../lib/format'
 import { closeFilterPopup, filterPopupStore, openFilterPopup, registerFilterHost, useStore } from '../lib/store'
-import { FilterPopup } from './FilterPopup'
+import { curatedLabel, FilterPopup } from './FilterPopup'
 import { Kbd, Tip } from './ui'
 
 // ── controller ──────────────────────────────────────────────────────────────
@@ -45,6 +45,16 @@ export interface FacetCtl<T = any> {
   active: boolean
   /** Server-side attribute and tag filters, when the list supports them. */
   attrs?: AttrCtl
+  /** The loaded rows are only part of the population (the query hit its limit). */
+  capped: boolean
+  /** The query's record limit, when known. */
+  limit?: number
+  /**
+   * The attribute a facet filters on the server instead: set while the list is
+   * capped and the facet mirrors an attribute (`Facet.field`), since client-side
+   * counts and filters would only see the loaded slice.
+   */
+  serverField: (key: string) => string | undefined
 }
 
 // ── server-side attribute filters ───────────────────────────────────────────
@@ -108,7 +118,15 @@ export function useAttrs(source: AttrSource, opts: { param?: string } = {}): Att
 export function useFacets<T>(
   rows: T[] | undefined,
   facets: Facet<T>[],
-  opts: { text?: (r: T) => string; param?: string; attrs?: AttrCtl } = {},
+  opts: {
+    text?: (r: T) => string
+    param?: string
+    attrs?: AttrCtl
+    /** the query's record limit: reaching it marks the list capped */
+    limit?: number
+    /** for lists merged from several capped queries, where no single limit applies */
+    capped?: boolean
+  } = {},
 ): FacetCtl<T> {
   const fName = opts.param ?? 'f'
   const qName = opts.param ? `${opts.param}q` : 'q'
@@ -186,6 +204,8 @@ export function useFacets<T>(
   const filtered = useMemo(() => (rows ? applyFacets(rows, facets, filters, match) : undefined), [rows, facets, filters, match])
 
   const facetOf = useCallback((key: string) => facets.find((f) => f.key === key), [facets])
+  const capped = opts.capped ?? (opts.limit != null && (rows?.length ?? 0) >= opts.limit)
+  const serverField = (key: string) => (capped && opts.attrs ? facetOf(key)?.field : undefined)
 
   return {
     facets,
@@ -193,13 +213,19 @@ export function useFacets<T>(
     text,
     setText,
     toggle: (key, value, neg) => {
+      const field = serverField(key)
+      if (field) return opts.attrs!.toggle(field, value, neg)
       const f = { key, value, neg: !!neg }
       const has = filters.some((x) => sameFilter(x, f))
       // include and exclude of the same value are mutually exclusive
       const rest = filters.filter((x) => !(x.key === key && x.value === value))
       write(has ? rest : [...rest, f], null)
     },
-    only: (key, value, neg) => write([...filters.filter((x) => x.key !== key), { key, value, neg: !!neg }], null),
+    only: (key, value, neg) => {
+      const field = serverField(key)
+      if (field) return opts.attrs!.only(field, value, neg)
+      write([...filters.filter((x) => x.key !== key), { key, value, neg: !!neg }], null)
+    },
     setKey: (key, values, neg) => write([...filters.filter((x) => x.key !== key), ...values.map((value) => ({ key, value, neg: !!neg }))], null),
     remove: (f) => {
       const list = Array.isArray(f) ? f : [f]
@@ -224,6 +250,9 @@ export function useFacets<T>(
     total: rows?.length ?? 0,
     active: filters.length > 0 || !!matchText.trim() || !!opts.attrs?.filters.length,
     attrs: opts.attrs,
+    capped,
+    limit: opts.limit,
+    serverField,
   }
 }
 
@@ -643,21 +672,7 @@ export function FacetValues<T>({ fc, facetKey }: { fc: FacetCtl<T>; facetKey: st
  * server-side attribute filters alike), each reopening its values. Also hosts
  * the list's filter popup ('f').
  */
-export function FacetSummary<T>({
-  fc,
-  noun,
-  fetching,
-  limit,
-  capped: cappedProp,
-}: {
-  fc: FacetCtl<T>
-  noun: string
-  fetching?: boolean
-  /** the query's record cap: reaching it marks the list capped */
-  limit?: number
-  /** for lists merged from several capped queries, where no single limit applies */
-  capped?: boolean
-}) {
+export function FacetSummary<T>({ fc, noun, fetching }: { fc: FacetCtl<T>; noun: string; fetching?: boolean }) {
   const groups = useMemo(() => {
     const m = new Map<string, FacetFilter[]>()
     for (const f of fc.filters) {
@@ -680,7 +695,7 @@ export function FacetSummary<T>({
   const popup = useStore(filterPopupStore)
 
   const shown = fc.rows?.length
-  const capped = cappedProp ?? (limit != null && fc.total >= limit)
+  const { capped, limit } = fc
   const nChips = groups.length + attrGroups.length
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1.5">
@@ -775,8 +790,8 @@ function FilterChip<T>({ fc, group }: { fc: FacetCtl<T>; group: FacetFilter[] })
 
 function AttrChip<T>({ fc, group, onOpen }: { fc: FacetCtl<T>; group: AttrFilter[]; onOpen: () => void }) {
   const neg = !!group[0].neg
-  const curated = fc.attrs?.source.suggested?.find((x) => x.field === group[0].field)
-  const d = curated ? { kind: '', name: curated.label } : describeField(group[0].field)
+  const curated = curatedLabel(fc, group[0].field)
+  const d = curated ? { kind: '', name: curated } : describeField(group[0].field)
   const show = (v: string) => (v === UNSET ? <span className="italic">not set</span> : v)
   return (
     <span className={clsx('inline-flex h-6 shrink-0 items-center overflow-hidden rounded-md text-xs', neg ? 'bg-crit-wash text-crit' : 'bg-accent-wash text-accent-ink')}>

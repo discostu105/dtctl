@@ -35,7 +35,7 @@ const ACTIVITY = {
   totals: { requested: 0, executed: 0, cached: 0, shared: 0, errors: 0, cancelled: 0, scannedBytes: 0 },
 }
 
-const HOSTS: Rec[] = Array.from({ length: 6 }, (_, i) => ({
+const hosts = (n: number): Rec[] => Array.from({ length: n }, (_, i) => ({
   id: `HOST-${String(i + 1).padStart(16, '0')}`,
   name: `host-${i + 1}.example.invalid`,
   'os.type': i % 2 ? 'WINDOWS' : 'LINUX',
@@ -49,11 +49,12 @@ const HOSTS: Rec[] = Array.from({ length: 6 }, (_, i) => ({
 }))
 
 /** Records for one query, by what the query is asking for. */
-export function recordsFor(q: string): Rec[] {
+export function recordsFor(q: string, HOSTS: Rec[] = hosts(6)): Rec[] {
   // filter popup: attribute discovery sample and value counts
   // the popup's source head quotes the type; the Hosts page's own query doesn't
   if (!/^smartscapeNodes "?HOST"?\n/.test(q)) return []
   if (q.includes('| fieldsRemove k8s.object')) return HOSTS
+  if (q.includes('| fieldsSummary host.type')) return [{ count: HOSTS.length, values: [{ value: 't3.large', count: HOSTS.length }] }]
   if (q.includes('| fieldsSummary')) {
     return [
       {
@@ -70,11 +71,11 @@ export function recordsFor(q: string): Rec[] {
   return []
 }
 
-function result(spec: Spec) {
+function result(spec: Spec, HOSTS: Rec[]) {
   return {
     id: spec.id,
     ok: true,
-    records: recordsFor(spec.query),
+    records: recordsFor(spec.query, HOSTS),
     types: {},
     meta: { executionMs: 1, scannedRecords: 0, scannedBytes: 0, from: spec.from, to: spec.to },
     elapsedMs: 1,
@@ -83,8 +84,9 @@ function result(spec: Spec) {
 
 const json = (route: Route, body: unknown, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) })
 
-/** Install the mock; returns the queries the page sent, for assertions. */
-export async function mockApi(page: Page) {
+/** Install the mock; returns the queries the page sent, for assertions. `hosts` sizes the Hosts list (1000 caps it). */
+export async function mockApi(page: Page, opts: { hosts?: number } = {}) {
+  const HOSTS = hosts(opts.hosts ?? 6)
   const queries: string[] = []
   await page.route('**/api/**', async (route) => {
     const req = route.request()
@@ -98,7 +100,7 @@ export async function mockApi(page: Page) {
     if (path === '/api/batch') {
       const specs = req.postDataJSON() as Spec[]
       for (const s of specs) queries.push(s.query)
-      return route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: specs.map((s) => JSON.stringify(result(s))).join('\n') + '\n' })
+      return route.fulfill({ status: 200, contentType: 'application/x-ndjson', body: specs.map((s) => JSON.stringify(result(s, HOSTS))).join('\n') + '\n' })
     }
     return json(route, { error: `unmocked ${path}` }, 404)
   })

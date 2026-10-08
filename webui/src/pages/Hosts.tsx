@@ -35,11 +35,11 @@ const FACETS: Facet<Rec>[] = [
   utilFacet('mem', 'Memory'),
   utilFacet('disk', 'Disk'),
   { key: 'os', label: 'OS', value: osName },
-  { key: 'ostype', label: 'OS family', value: (r) => r['os.type'], display: (v) => titleCase(v) },
-  { key: 'instance', label: 'Instance type', value: (r) => r['host.type'], aliases: ['type'] },
+  { key: 'ostype', label: 'OS family', value: (r) => r['os.type'], display: (v) => titleCase(v), field: 'os.type' },
+  { key: 'instance', label: 'Instance type', value: (r) => r['host.type'], aliases: ['type'], field: 'host.type' },
   { key: 'size', label: 'Size', value: (r) => (r.logical_cores ? `${r.logical_cores} vCPU` : null), aliases: ['cores'] },
-  { key: 'cloud', label: 'Cloud', value: (r) => r['cloud.provider'], display: (v) => v.toUpperCase() },
-  { key: 'group', label: 'Host group', value: (r) => r['dt.host_group.id'], aliases: ['hostgroup'] },
+  { key: 'cloud', label: 'Cloud', value: (r) => r['cloud.provider'], display: (v) => v.toUpperCase(), field: 'cloud.provider' },
+  { key: 'group', label: 'Host group', value: (r) => r['dt.host_group.id'], aliases: ['hostgroup'], field: 'dt.host_group.id' },
 ]
 
 const SOURCE = nodesSource('HOST')
@@ -76,7 +76,7 @@ export default function Hosts() {
       return { ...h, cpu: mr?.cpu, mem: mr?.mem, disk: mr?.disk, cpuNow: lastVal(mr?.cpu), memNow: lastVal(mr?.mem), diskNow: lastVal(mr?.disk) } as Rec
     })
   }, [list.data, metrics.data])
-  const fc = useFacets(list.data ? rows : undefined, FACETS, { text: (r) => `${r.name} ${r.id} ${arr(r.ip).join(' ')}`, attrs })
+  const fc = useFacets(list.data ? rows : undefined, FACETS, { text: (r) => `${r.name} ${r.id} ${arr(r.ip).join(' ')}`, attrs, limit: LIMIT })
 
   const pctCol = (key: 'cpu' | 'mem' | 'disk', label: string, color: string): Column => ({
     key,
@@ -135,7 +135,7 @@ export default function Hosts() {
         sub={`${list.data ? fmtInt(rows.length) + (rows.length >= LIMIT ? '+' : '') : '…'} hosts · utilization · ${tf.label.toLowerCase()}`}
         actions={<FacetSearch fc={fc} placeholder="Filter hosts…" className="w-72" />}
       />
-      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" fetching={list.isFetching} limit={LIMIT} />}>
+      <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" fetching={list.isFetching} />}>
         {list.error ? (
           <ErrorBox error={list.error} />
         ) : (

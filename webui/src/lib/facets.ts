@@ -23,6 +23,12 @@ export interface Facet<T = any> {
   order?: string[]
   /** Short words that also find this facet when typed, e.g. ['ns'] for Namespace. */
   aliases?: string[]
+  /**
+   * The record attribute whose raw value this facet shows, when there is one
+   * (`k8s.namespace.name`). A capped list only holds part of the population, so
+   * there the facet filters and counts this attribute on the server instead.
+   */
+  field?: string
 }
 
 export interface FacetFilter {

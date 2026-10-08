@@ -89,7 +89,7 @@ export default function Services() {
     () => (red.data || list.data ? rows.filter((r) => (lens === 'all' ? true : lens === 'failing' ? r.failed > 0 : r.total > 0)) : undefined),
     [rows, lens, red.data, list.data],
   )
-  const fc = useFacets(lensRows, FACETS, { text: (r) => `${r.name} ${r.id}`, attrs })
+  const fc = useFacets(lensRows, FACETS, { text: (r) => `${r.name} ${r.id}`, attrs, capped: capped[lens] })
 
   const cols: Column[] = [
     {
@@ -172,7 +172,7 @@ export default function Services() {
           </>
         }
       />
-      <Panel spec={redSpec} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} capped={capped[lens]} />}>
+      <Panel spec={redSpec} result={red} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="services" fetching={red.isFetching} />}>
         {red.error ? (
           <ErrorBox error={red.error} />
         ) : (

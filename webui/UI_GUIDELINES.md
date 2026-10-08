@@ -251,6 +251,8 @@ The UI must work on very large tenants. These rules aren't optional.
 - [ ] A capped list (`| limit N`, `FacetSummary limit=`) shows the badge when it is hit: Grail cuts at 1000 records unless the
       query ends in its limit or the spec sets `maxRecords`; a companion query joined to the list (metrics by entity) covers every
       entity, not its own first 1000; and on big tenants the cap keeps the interesting rows (sort trouble-first, then by name).
+- [ ] Pass the cap to `useFacets` (`limit:` or `capped:`), and give every curated facet that shows a raw attribute its `field:`:
+      on a capped list the popup and cell filters then count and filter it on the server, not in the loaded slice.
 - [ ] `make test-webui` passes (vitest for `lib/`, Playwright smoke over every route); a new route goes into `e2e/smoke.spec.ts`.
 - [ ] New keys are in the help overlay.
 - [ ] Looks right at 1280 px and 2560 px, light and dark; no console errors.

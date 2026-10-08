@@ -58,8 +58,8 @@ const LIMITS: Record<View, number> = { workloads: 2000, pods: 3000, nodes: 1000,
 /** Attribute filters that mean the same on every Kubernetes view survive a view switch. */
 const portableAttr = (field: string) => field.startsWith('tags:') || field.startsWith('primary_tags.') || field === 'k8s.namespace.name' || field === 'k8s.cluster.name'
 
-const nsFacet: Facet<Rec> = { key: 'ns', label: 'Namespace', value: (r) => r.namespace, aliases: ['namespace'] }
-const clusterFacet: Facet<Rec> = { key: 'cluster', label: 'Cluster', value: (r) => r.cluster }
+const nsFacet: Facet<Rec> = { key: 'ns', label: 'Namespace', value: (r) => r.namespace, aliases: ['namespace'], field: 'k8s.namespace.name' }
+const clusterFacet: Facet<Rec> = { key: 'cluster', label: 'Cluster', value: (r) => r.cluster, field: 'k8s.cluster.name' }
 
 const FACETS: Record<View, Facet<Rec>[]> = {
   workloads: [
@@ -76,10 +76,10 @@ const FACETS: Record<View, Facet<Rec>[]> = {
   pods: [
     nsFacet,
     { key: 'health', label: 'Health', value: podHealth, order: ['Failed', 'Pending', 'Not ready', 'Restarting', 'Healthy', 'Completed'] },
-    { key: 'phase', label: 'Phase', value: (r) => r.phase },
-    { key: 'workload', label: 'Workload', value: (r) => r.workload },
-    { key: 'kind', label: 'Owner kind', value: (r) => r.kind },
-    { key: 'node', label: 'Node', value: (r) => r.node },
+    { key: 'phase', label: 'Phase', value: (r) => r.phase, field: 'k8s.pod.phase' },
+    { key: 'workload', label: 'Workload', value: (r) => r.workload, field: 'k8s.workload.name' },
+    { key: 'kind', label: 'Owner kind', value: (r) => r.kind, field: 'k8s.workload.kind' },
+    { key: 'node', label: 'Node', value: (r) => r.node, field: 'k8s.node.name' },
   ],
   nodes: [
     { key: 'instance', label: 'Instance type', value: (r) => r.instance, aliases: ['type'] },
@@ -106,7 +106,7 @@ export default function Kubernetes() {
   useDql(tfSpec(tf, query('pods'), { ttl: 60, maxRecords: LIMITS.pods }))
   useDql(tfSpec(tf, query('workloads'), { ttl: 60, maxRecords: LIMITS.workloads }))
 
-  const fc = useFacets(res.data?.records, FACETS[view], { text: (r) => `${r.name} ${r.id}`, attrs })
+  const fc = useFacets(res.data?.records, FACETS[view], { text: (r) => `${r.name} ${r.id}`, attrs, limit: LIMITS[view] })
   const rows = fc.rows ?? []
 
   // Filters that also exist in the target view (namespace, cluster…) come along.
@@ -159,7 +159,7 @@ export default function Kubernetes() {
           </>
         }
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={view} fetching={res.isFetching} limit={LIMITS[view]} />}>
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun={view} fetching={res.isFetching} />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (

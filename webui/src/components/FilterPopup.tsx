@@ -17,7 +17,7 @@ import {
   valuesQuery,
   type AttrCandidate,
 } from '../lib/attrs'
-import { NONE } from '../lib/facets'
+import { NONE, type Facet } from '../lib/facets'
 import { fmtCompact, fmtInt, fmtPct } from '../lib/format'
 import type { FacetCtl } from './Facets'
 import { Kbd } from './ui'
@@ -64,6 +64,11 @@ function rank(f: Field, q: string) {
   return -1
 }
 
+/** The curated name of a server-side attribute: the source's suggestion or the facet that mirrors it. */
+export function curatedLabel(fc: FacetCtl, field: string): string | undefined {
+  return fc.attrs?.source.suggested?.find((x) => x.field === field)?.label ?? fc.facets.find((f) => f.field === field)?.label
+}
+
 export function FilterPopup<T>({
   fc,
   noun,
@@ -108,18 +113,24 @@ export function FilterPopup<T>({
     // A curated facet with nothing but "not set" in the loaded rows (a
     // namespace on EC2 instances) is noise, unless it is being filtered on.
     const useful = (key: string) => !fc.rows || fc.filters.some((x) => x.key === key) || fc.counts(key).some((c) => c.value !== NONE && c.count > 0)
+    const curatedAttr = (field: string, name: string): Field => ({
+      ...(attrField(candidates.find((c) => c.field === field) ?? { field }) as Extract<Field, { kind: 'attr' }>),
+      name,
+      group: SUGGESTED,
+      tag: '',
+      curated: true,
+    })
+    const facetField = (f: Facet<T>): Field => ({ kind: 'facet', id: facetFieldId(f.key), key: f.key, name: f.label, group: SUGGESTED })
     const facetFields: Field[] = [
-      ...fc.facets.filter((f) => useful(f.key)).map((f): Field => ({ kind: 'facet', id: facetFieldId(f.key), key: f.key, name: f.label, group: SUGGESTED })),
+      // on a capped list a facet that mirrors an attribute counts and filters it on the server
+      ...fc.facets.filter((f) => fc.serverField(f.key) || useful(f.key)).map((f) => {
+        const field = fc.serverField(f.key)
+        return field ? curatedAttr(field, f.label) : facetField(f)
+      }),
       // server-side sources can name their everyday fields too (Logs: level, namespace, …)
-      ...(src?.suggested ?? []).map((s): Field => ({
-        ...(attrField(candidates.find((c) => c.field === s.field) ?? { field: s.field }) as Extract<Field, { kind: 'attr' }>),
-        name: s.label,
-        group: SUGGESTED,
-        tag: '',
-        curated: true,
-      })),
+      ...(src?.suggested ?? []).map((s) => curatedAttr(s.field, s.label)),
     ]
-    const suggestedAttrs = new Set((src?.suggested ?? []).map((s) => s.field))
+    const suggestedAttrs = new Set(facetFields.flatMap((f) => (f.kind === 'attr' ? [f.field] : [])))
     const discovered = candidates
       .filter((c) => !suggestedAttrs.has(c.field))
       .map((c) => attrField(c))
@@ -127,11 +138,11 @@ export function FilterPopup<T>({
     const activeKeys = [...new Set(fc.filters.map((f) => f.key))]
     const activeAttrs = [...new Set((attrs?.filters ?? []).map((f) => f.field))]
     const active: Field[] = [
-      ...activeKeys.flatMap((k) => facetFields.filter((f) => f.kind === 'facet' && f.key === k)),
+      // a client filter stays editable as one, even when its facet now runs on the server
+      ...activeKeys.flatMap((k) => fc.facets.filter((f) => f.key === k).map(facetField)),
       ...activeAttrs.map((field) => {
-        const f = attrField(candidates.find((c) => c.field === field) ?? { field }) as Extract<Field, { kind: 'attr' }>
-        const s = src?.suggested?.find((x) => x.field === field)
-        return s ? { ...f, name: s.label, tag: '', curated: true } : f
+        const label = curatedLabel(fc, field)
+        return label ? curatedAttr(field, label) : attrField(candidates.find((c) => c.field === field) ?? { field })
       }),
     ].map((f) => ({ ...f, group: ACTIVE }))
     return { active, facetFields, discovered }

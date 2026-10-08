@@ -85,7 +85,7 @@ export default function Logs() {
   const histSpec = tfSpec(tf, withAttrs(logHistogramQuery(base, iv), attrs.filters))
   const stream = useDql(streamSpec)
   // no curated client facets: every log filter runs in the query (own params, so ?q= stays the content search)
-  const fc = useFacets(stream.data?.records, NO_FACETS, { param: 'lf', attrs })
+  const fc = useFacets(stream.data?.records, NO_FACETS, { param: 'lf', attrs, limit: LIMIT })
   // the histogram counts every record in the timeframe: adaptive sampling keeps it under the scan limit
   const histA = useAdaptiveDql('logs', histSpec, ['count'])
   const hist = histA.res
@@ -200,7 +200,7 @@ export default function Logs() {
               </button>
             </Tip>
           )}
-          <FacetSummary fc={fc} noun="records" fetching={stream.isFetching} limit={LIMIT} />
+          <FacetSummary fc={fc} noun="records" fetching={stream.isFetching} />
           <QueryInfo spec={streamSpec} result={stream} />
         </div>
         {stream.error ? (

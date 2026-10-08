@@ -95,8 +95,8 @@ function Census() {
 }
 
 const INSTANCE_FACETS: Facet<Rec>[] = [
-  { key: 'ns', label: 'Namespace', value: (r) => r['k8s.namespace.name'], aliases: ['namespace'] },
-  { key: 'cluster', label: 'Cluster', value: (r) => r['k8s.cluster.name'] },
+  { key: 'ns', label: 'Namespace', value: (r) => r['k8s.namespace.name'], aliases: ['namespace'], field: 'k8s.namespace.name' },
+  { key: 'cluster', label: 'Cluster', value: (r) => r['k8s.cluster.name'], field: 'k8s.cluster.name' },
   { key: 'region', label: 'Region', value: (r) => r.region, aliases: ['location'] },
   { key: 'account', label: 'Account', value: (r) => r.account, aliases: ['subscription', 'project'] },
 ]
@@ -110,7 +110,7 @@ function Instances({ type }: { type: string }) {
   const attrs = useAttrs(source)
   const spec = { query: withAttrs(instancesQuery(type), attrs.filters), ttl: 120 }
   const res = useDql(spec)
-  const fc = useFacets(res.data?.records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id}`, attrs })
+  const fc = useFacets(res.data?.records, INSTANCE_FACETS, { text: (r) => `${r.name} ${r.id}`, attrs, limit: INSTANCES_LIMIT })
   const hasNs = res.data?.records.some((r) => r['k8s.namespace.name'])
   const hasRegion = res.data?.records.some((r) => r.region)
   const hasAccount = res.data?.records.some((r) => r.account)
@@ -123,7 +123,7 @@ function Instances({ type }: { type: string }) {
         sub={<span className="font-mono text-xs">{type}</span>}
         actions={<FacetSearch fc={fc} placeholder="Filter by name or ID…" className="w-72" />}
       />
-      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="entities" fetching={res.isFetching} limit={INSTANCES_LIMIT} />}>
+      <Panel spec={spec} result={res} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="entities" fetching={res.isFetching} />}>
         {res.error ? (
           <ErrorBox error={res.error} />
         ) : (
