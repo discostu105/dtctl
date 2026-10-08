@@ -129,7 +129,14 @@ function cleanError(msg: string | undefined) {
   return msg.replace(/^query failed \(([A-Z_]+)\):\s*/, '$1: ')
 }
 
+/** A query's final `| limit N`, which Grail would otherwise cut at its 1000-record default. */
+export function trailingLimit(query: string): number | undefined {
+  const m = /\|\s*limit\s+(\d+)\s*$/.exec(query)
+  return m ? Number(m[1]) : undefined
+}
+
 export function runDql(spec: DqlSpec, signal?: AbortSignal): Promise<DqlResult> {
+  if (spec.maxRecords == null) spec = { ...spec, maxRecords: trailingLimit(spec.query) }
   return new Promise((resolve, reject) => {
     if (signal?.aborted) return reject(new DOMException('abandoned', 'AbortError'))
     queue.push({ id: String(++seq), spec, fresh: Date.now() < freshUntil, resolve, reject, signal })

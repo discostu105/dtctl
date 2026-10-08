@@ -44,6 +44,7 @@ const FACETS: Facet<Rec>[] = [
 
 const SOURCE = nodesSource('HOST')
 const LIMIT = 1000
+const SERIES_LIMIT = 20000
 
 export default function Hosts() {
   useTitle('Hosts')
@@ -62,6 +63,8 @@ export default function Hosts() {
   const metricSpec = tfSpec(
     tf,
     `timeseries { cpu = avg(dt.host.cpu.usage), mem = avg(dt.host.memory.usage), disk = max(dt.host.disk.used.percent) }, by:{dt.smartscape.host}, interval:${sparkInterval(tf.ms)}`,
+    // every host's series, not the first 1000: the list is a different (name-sorted) slice
+    { maxRecords: SERIES_LIMIT },
   )
   const list = useDql(listSpec)
   const metrics = useDql(metricSpec)
@@ -129,7 +132,7 @@ export default function Hosts() {
       <PageHeader
         title="Hosts"
         icon={<Server className="size-5" />}
-        sub={`${list.data ? fmtInt(rows.length) : '…'} hosts · utilization · ${tf.label.toLowerCase()}`}
+        sub={`${list.data ? fmtInt(rows.length) + (rows.length >= LIMIT ? '+' : '') : '…'} hosts · utilization · ${tf.label.toLowerCase()}`}
         actions={<FacetSearch fc={fc} placeholder="Filter hosts…" className="w-72" />}
       />
       <Panel spec={metricSpec} result={metrics} className="min-h-0 flex-1" bodyClassName="flex min-h-0 flex-col" head={<FacetSummary fc={fc} noun="hosts" fetching={list.isFetching} limit={LIMIT} />}>

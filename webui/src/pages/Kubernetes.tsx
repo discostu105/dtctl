@@ -22,14 +22,17 @@ const QUERIES: Record<View, string> = {
 | parse k8s.object, "JSON:obj"
 | fieldsAdd ready = toLong(coalesce(obj[status][readyReplicas], obj[status][numberReady], 0)), desired = toLong(coalesce(obj[spec][replicas], obj[status][desiredNumberScheduled], 0))
 | fields id, name, type, namespace = k8s.namespace.name, cluster = k8s.cluster.name, ready, desired, created = toTimestamp(obj[metadata][creationTimestamp])
-| sort namespace asc, name asc
-| limit 2000`,
+| sort ready >= desired asc, namespace asc, name asc
+| limit 2000
+| sort namespace asc, name asc`,
   pods: `smartscapeNodes "K8S_POD"
 | parse k8s.object, "JSON:obj"
 | expand cs = obj[status][containerStatuses]
 | summarize { name = takeFirst(name), phase = takeFirst(k8s.pod.phase), namespace = takeFirst(k8s.namespace.name), node = takeFirst(k8s.node.name), workload = takeFirst(k8s.workload.name), kind = takeFirst(k8s.workload.kind), ready = countIf(cs[ready] == true), total = count(), restarts = sum(toLong(cs[restartCount])), created = takeFirst(toTimestamp(obj[metadata][creationTimestamp])) }, by:{id}
-| sort namespace asc, name asc
-| limit 3000`,
+| fieldsAdd trouble = if(not(in(phase, {"Running", "Succeeded"})) or (phase == "Running" and ready < total), 0, else: if(restarts > 0, 1, else: 2))
+| sort trouble asc, namespace asc, name asc
+| limit 3000
+| sort namespace asc, name asc`,
   nodes: `smartscapeNodes "K8S_NODE"
 | parse k8s.object, "JSON:obj"
 | fields id, name, cluster = k8s.cluster.name, kubelet = obj[status][nodeInfo][kubeletVersion], os = obj[status][nodeInfo][osImage], cpu = obj[status][capacity][cpu], instance = \`tags:k8s.labels\`[\`node.kubernetes.io/instance-type\`], zone = \`tags:k8s.labels\`[\`topology.kubernetes.io/zone\`], created = toTimestamp(obj[metadata][creationTimestamp])
@@ -49,6 +52,7 @@ const SOURCES: Record<View, AttrSource> = {
   namespaces: nodesSource('K8S_NAMESPACE'),
 }
 
+// On big clusters the cap keeps the broken objects: the slice is taken trouble-first, then shown by name.
 const LIMITS: Record<View, number> = { workloads: 2000, pods: 3000, nodes: 1000, namespaces: 1000 }
 
 /** Attribute filters that mean the same on every Kubernetes view survive a view switch. */
@@ -95,12 +99,12 @@ export default function Kubernetes() {
   const view = (search.get('view') as View) || 'workloads'
   const attrs = useAttrs(SOURCES[view])
   const query = (v: View) => withAttrs(QUERIES[v], v === view ? attrs.filters : attrs.filters.filter((f) => portableAttr(f.field)))
-  const spec = tfSpec(tf, query(view), { ttl: 60 })
+  const spec = tfSpec(tf, query(view), { ttl: 60, maxRecords: LIMITS[view] })
   const res = useDql(spec)
 
   // prefetch the sibling views so switching is instant
-  useDql(tfSpec(tf, query('pods'), { ttl: 60 }))
-  useDql(tfSpec(tf, query('workloads'), { ttl: 60 }))
+  useDql(tfSpec(tf, query('pods'), { ttl: 60, maxRecords: LIMITS.pods }))
+  useDql(tfSpec(tf, query('workloads'), { ttl: 60, maxRecords: LIMITS.workloads }))
 
   const fc = useFacets(res.data?.records, FACETS[view], { text: (r) => `${r.name} ${r.id}`, attrs })
   const rows = fc.rows ?? []
@@ -129,11 +133,11 @@ export default function Kubernetes() {
         sub={
           view === 'pods' && unhealthyPods ? (
             <button type="button" onClick={() => fc.setKey('health', ['Failed', 'Pending', 'Not ready', 'Restarting'])} className="text-warn hover:underline">
-              {unhealthyPods} pods not ready or restarting
+              {fmtInt(unhealthyPods)} pods not ready or restarting
             </button>
           ) : view === 'workloads' && degraded ? (
             <button type="button" onClick={() => fc.setKey('health', ['Degraded'])} className="text-warn hover:underline">
-              {degraded} workloads below desired replicas
+              {fmtInt(degraded)} workloads below desired replicas
             </button>
           ) : (
             'Workloads, pods and nodes from Smartscape'
