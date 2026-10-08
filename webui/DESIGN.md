@@ -289,6 +289,7 @@ custom dashboards.
 
 ```bash
 make build-webui                  # npm ci + vite build → pkg/webui/dist (embedded via go:embed)
+export DTCTL_DEVELOPMENT=serve    # `serve` is a development-tier feature (or `development: {serve: true}` in config)
 go build -o dtctl . && ./dtctl serve web
 
 # UI hot reload: run the Go server for /api and Vite for the UI
@@ -296,7 +297,8 @@ go build -o dtctl . && ./dtctl serve web
 cd webui && npm run dev           # http://localhost:5173, /api proxied to :7878
 ```
 
-Code map: `pkg/webui` (HTTP server: batch, cache, guards, static), `cmd/serve.go` (command +
+Code map: `pkg/webui` (HTTP server: batch, cache, guards, static), `cmd/serve.go` (command, hung
+under the development-tier `dtctl serve` from `pkg/serve`, +
 wiring to `pkg/exec` / `pkg/resources/document`), `webui/src/lib/dql.ts` (every query the UI
 runs), `webui/src/pages/*` (one file per destination), `webui/src/components/*` (design system).
 

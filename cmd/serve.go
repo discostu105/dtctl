@@ -24,38 +24,29 @@ import (
 	sdkquery "github.com/dynatrace-oss/dtctl/sdk/api/query"
 )
 
-var serveCmd = &cobra.Command{
-	Use:   "serve",
-	Short: "Serve local user interfaces",
-	Long: `Serve local user interfaces backed by the current context.
-
-Servers bind to a loopback address only and never hand credentials to the
-browser.`,
-	Example: `  # Serve the web UI
-  dtctl serve web`,
-}
-
-var serveWebCmd = &cobra.Command{
-	Use:   "web",
-	Short: "[Experimental] Serve the dtctl web UI on localhost",
-	Long: `Serve the dtctl web UI — a fast, keyboard-first, read-only observability
+// NewServeWebCommand builds `dtctl serve web`. It hangs under the
+// development-tier `dtctl serve` (pkg/serve, wired in main) but, unlike the
+// agent servers there, runs as an ordinary invocation on the local config.
+func NewServeWebCommand() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "web",
+		Short: "Serve the dtctl web UI on localhost",
+		Long: `Serve the dtctl web UI — a fast, keyboard-first, read-only observability
 console for the current context — on a loopback address.
 
 The browser never receives your token: every query is executed by this
 process with the current context's credentials. The UI is read-only.`,
-	Example: `  # Serve on 127.0.0.1:7878 and open the browser
+		Example: `  # Serve on 127.0.0.1:7878 and open the browser
   dtctl serve web
 
   # Serve a specific context on another port, without opening a browser
   dtctl serve web --context prod --port 9000 --no-open`,
-	RunE: runServeWeb,
-}
-
-func init() {
-	rootCmd.AddCommand(serveCmd)
-	serveCmd.AddCommand(serveWebCmd)
-	serveWebCmd.Flags().Int("port", 7878, "port to listen on (the next free port is used if taken)")
-	serveWebCmd.Flags().Bool("no-open", false, "do not open the browser")
+		Args: cobra.NoArgs,
+		RunE: runServeWeb,
+	}
+	c.Flags().Int("port", 7878, "port to listen on (the next free port is used if taken)")
+	c.Flags().Bool("no-open", false, "do not open the browser")
+	return c
 }
 
 func runServeWeb(cmd *cobra.Command, _ []string) error {
@@ -67,7 +58,7 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	tenants := newWebTenants(cfg)
+	tenants := newWebTenants(cmd.Context(), cfg)
 	if _, err := tenants.use(cfg.CurrentContext); err != nil {
 		return err
 	}
@@ -137,7 +128,7 @@ func runServeWeb(cmd *cobra.Command, _ []string) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "dtctl web — context %q (%s)\n  ➜  %s\n  press Ctrl+C to stop\n",
 		cfg.CurrentContext, ctxObj.Environment, url)
 	if !noOpen {
-		_ = openBrowser(url)
+		_ = openBrowser(cmd.Context(), url)
 	}
 
 	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -175,6 +166,7 @@ func listenLoopback(port int) (net.Listener, error) {
 // use, and which one the web UI currently queries. Switching only affects
 // this process: the config file's current context is left alone.
 type webTenants struct {
+	ctx context.Context // the invocation: executors write to its streams
 	cfg *config.Config
 
 	mu   sync.Mutex
@@ -195,8 +187,8 @@ type webTenant struct {
 	email    string
 }
 
-func newWebTenants(cfg *config.Config) *webTenants {
-	return &webTenants{cfg: cfg, byID: map[string]*webTenant{}}
+func newWebTenants(ctx context.Context, cfg *config.Config) *webTenants {
+	return &webTenants{ctx: ctx, cfg: cfg, byID: map[string]*webTenant{}}
 }
 
 func (t *webTenants) use(name string) (*webTenant, error) {
@@ -223,7 +215,7 @@ func (t *webTenants) use(name string) (*webTenant, error) {
 	}
 	wt := &webTenant{
 		name: name, env: nc.Context.Environment, safety: string(nc.Context.SafetyLevel),
-		client: c, executor: exec.NewDQLExecutor(c), docs: document.NewHandler(c),
+		client: c, executor: newDQLExecutor(t.ctx, c), docs: document.NewHandler(c),
 	}
 	t.byID[name] = wt
 	t.cur = wt

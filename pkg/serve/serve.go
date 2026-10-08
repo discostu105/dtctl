@@ -102,6 +102,9 @@ Pick the protocol you want to speak:
 
   dtctl serve http    JSON over HTTP (POST /v1/execute)
 
+dtctl serve web is different: a read-only web UI for a person, on the local
+config and the current context, bound to localhost.
+
 These are reference implementations: they perform no authentication of their
 own (the per-request token only authenticates against Dynatrace) and bind to
 localhost by default. Put your own authentication and TLS in front before
@@ -120,6 +123,9 @@ exposing one, or embed pkg/engine directly.`,
 		},
 	}
 	c.AddCommand(newHTTPCommand())
+	// The local web UI rides along under serve but is an ordinary invocation on
+	// the local config; main keeps `serve web` out of the standalone dispatch.
+	c.AddCommand(cmd.NewServeWebCommand())
 	return c
 }
 
