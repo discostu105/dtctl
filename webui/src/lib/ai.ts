@@ -125,7 +125,7 @@ export function conversationsQuery(f: ConversationFilter = {}) {
   const search = t
     ? `| join [fetch spans
   | filter isNotNull(gen_ai.conversation.id)
-  | filter contains(gen_ai.input.messages, ${q(t)}, caseSensitive:false) or contains(gen_ai.output.messages, ${q(t)}, caseSensitive:false) or contains(span.name, ${q(t)}, caseSensitive:false) or gen_ai.conversation.id == ${q(t)} or toString(trace.id) == ${q(t.toLowerCase())}
+  | filter contains(gen_ai.input.messages, ${q(t)}, caseSensitive:false) or contains(gen_ai.output.messages, ${q(t)}, caseSensitive:false) or contains(span.name, ${q(t)}, caseSensitive:false) or gen_ai.conversation.id == ${q(t)}${/^[0-9a-f]{32}$/i.test(t) ? ` or trace.id == toUid(${q(t.toLowerCase())})` : ''}
   | summarize hits = count(), by:{c = gen_ai.conversation.id}], on:{left[gen_ai.conversation.id] == right[c]}, kind:inner, fields:{hits}\n`
     : ''
   return `fetch spans

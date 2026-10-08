@@ -7,7 +7,7 @@ import { q, smartscapeField, type Entity, type Vital } from './dql'
 
 export function metricDiscoveryQuery(e: Entity) {
   return `metrics
-| filter toString(${smartscapeField(e.type)}) == ${q(e.id)}
+| filter ${smartscapeField(e.type)} == toSmartscapeId(${q(e.id)})
 | summarize series = count(), by:{metric.key}
 | sort metric.key asc
 | limit 120`

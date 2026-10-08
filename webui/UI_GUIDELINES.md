@@ -248,6 +248,8 @@ The UI must work on very large tenants. These rules aren't optional.
 - [ ] Wording matches §6; colors are tokens only (§8).
 - [ ] Queries are in `lib/dql.ts`; heavy ones use `useAdaptiveDql` / `useScanWindow`.
 - [ ] Checked the Activity popover for redundant or slow queries.
+- [ ] Filters compare the field as stored: `dt.smartscape.host == toSmartscapeId("HOST-…")`, `trace.id == toUid("…")` —
+  never `toString(field) == "…"`, which skips Grail's indexes (5.5 s vs 0.8 s for metric discovery on a large tenant). `lib/dql-lint.test.ts` enforces it.
 - [ ] A capped list (`| limit N`, `FacetSummary limit=`) shows the badge when it is hit: Grail cuts at 1000 records unless the
       query ends in its limit or the spec sets `maxRecords`; a companion query joined to the list (metrics by entity) covers every
       entity, not its own first 1000; and on big tenants the cap keeps the interesting rows (sort trouble-first, then by name).
